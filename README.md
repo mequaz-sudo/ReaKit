@@ -68,7 +68,12 @@ ReaKit is the UI layer of the EON Swing drum-sampler ecosystem and 20+ ReaKit
 FX plugins. Discussion, screenshots and news:
 https://forum.cockos.com/showthread.php?p=2952442
 
-## License
+## License & credits
 
-MIT — see LICENSE. AI tools are used in ReaKit's development; design, testing
-and direction by Quaz / EON Studios.
+EON Studios' code is MIT — see LICENSE. Some widgets derive from other JSFX
+authors' work and are included with their authors' permission — see
+THIRD_PARTY_CREDITS.md for the full honor roll (ZenoMOD, Liteon, Tukan,
+BirdBird, Joanny/MacFizz, Spice, Witti Sound).
+
+AI tools are used in ReaKit's development; design, testing and direction by
+Quaz / EON Studios.

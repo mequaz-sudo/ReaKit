@@ -1,0 +1,2105 @@
+@init
+__knobs_kbsg_loaded = 1;
+
+// knobs_kbsg.jsfx-inc — EON Studios Knob Library (ReaKit) (16 Types)
+// ═══════════════════════════════════════════════════════════════════════════
+// All knob types except EQ1979 (which needs off-screen buffers, see knobs_eq1979.jsfx-inc).
+//
+// Types included:
+//   1. BirdBird VIC     — rainbow color cycling arc, needle, 3-pass inner ring
+//   2. Joanny/McFizz    — blue pot, 4-pass shadow, box hover, canChange gate
+//   3. Spice Pro        — blue arc fill, perpendicular sweep needle, inner pulse
+//   4. Witti Sound      — clean arc, dot indicator (3 color variants)
+//   5. SSL 4000E        — knurled body, colored cap, detented scroll
+//   6. Pultec EQP-1A    — cream bakelite, chicken-head pointer, shadow
+//   7. API 550 Dual     — chrome dual-concentric, drag=gain, scroll=freq
+//   8. Neve 1073        — blue body, full-diameter wedge stripe, detents
+//   9. Encoder          — grey metal, 16 green LEDs, wrapping 0-127
+//  10. MPC Rubber Pad   — black domed rubber cap, white indicator, 270° arc
+//  10b. Jog Wheel       — iMPC-style metallic jog with grip notches
+//  11. Vari-Mu          — Manley brushed-aluminium, concentric rings, pointer
+//  12. Ableton Live     — flat minimal device knob, thin arc, notch (is_sym=bipolar)
+//  13. Serum            — modern softsynth: beveled body, glow arc, tick ring
+//  14. Roland 808/909   — colored plastic cap, knurled edge, white pointer
+//  15. FabFilter        — ultra-minimal flat value ring + dot (is_sym=bipolar)
+//  16. Rotary Selector  — stepped chicken-head switch, snaps to N positions
+//                         (own interact: rotsel_interact; pos = integer 0..n-1)
+//
+// REQUIRED GLOBALS (set by caller each frame):
+//   mx, my        — mouse_x, mouse_y
+//   LMB           — mouse_cap & 1
+//   lmb_down      — LMB && !prev_LMB (edge detect, computed ONCE per frame)
+//   CTRL          — mouse_cap & 4
+//   SHIFT         — mouse_cap & 8
+//   dt            — frame delta time
+//   hv_speed      — hover animation speed (typ. 11)
+//   frame_wheel   — mouse_wheel / 120 (caller zeroes mouse_wheel after)
+//   tau           — 2 * $pi
+//
+// MEMORY CONVENTION (16 slots per instance):
+//   [0]  hover_t        [1]  is_dragging     [2]  drag_y / start_y
+//   [3]  drag_start_val [4]  last_click_time  [5]  automate_flag
+//   [6]  is_active      [7]  aux_value        [8..15] type-specific
+//
+// BirdBird extra:  [8]=run_time  [9]=whr  [10]=whg  [11]=whb
+// Joanny extra:    [8]=hasEntered (canChange gate)
+//
+// INTERACT RETURN: new slider value. Caller checks change, calls sliderchange/automate.
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────────────────
+function clamp(x, lo, hi) ( min(max(x, lo), hi); );
+function lerp(a, b, t) ( a + (b - a) * t; );
+function dist(x1, y1, x2, y2) ( sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)); );
+function sign_of(x) ( x < 0 ? -1 : x > 0 ? 1 : 0; );
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. BIRDBIRD VIC
+// ═══════════════════════════════════════════════════════════════════════════
+// Globals used: bb_brightness (set to 0 at init), bb_tr/bb_tg/bb_tb (set by palette)
+
+// Palette: call once per frame before bb_knob_draw. Sets bb_tr, bb_tg, bb_tb.
+function bb_palette(t) (
+  bb_b = 0.2;
+  bb_tr = min(0.5 + bb_brightness + cos((t) * tau) * 0.5, 1) + bb_b;
+  bb_tg = min(0.5 + bb_brightness + cos((t + 0.33) * tau) * 0.5, 1) + bb_b;
+  bb_tb = min(0.5 + bb_brightness + cos((t + 0.67) * tau) * 0.5, 1) + bb_b;
+);
+
+// Draw: arc ring with color cycling, 3-pass inner circle, needle
+// mem[8]=run_time, mem[9..11]=whr/whg/whb (persistent color state)
+function bb_knob_draw(cx, cy, r, value, mem)
+local(col_timer_len, t_col, whr, whg, whb, dim_r, dim_g, dim_b,
+      aw, kw, km_, ki, kr, kas, af,
+      t_anim, draw_w, draw_inner, i, polar_angle, xo_, yo_)
+(
+  // Color cycling
+  bb_palette(time_precise() * 1.75);
+  col_timer_len = 4;
+  t_col = min(mem[8] * col_timer_len, 1);
+  t_col = pow(t_col, 0.25);
+  mem[9]  = lerp(mem[9],  bb_tr, t_col);
+  mem[10] = lerp(mem[10], bb_tg, t_col);
+  mem[11] = lerp(mem[11], bb_tb, t_col);
+  whr = mem[9]; whg = mem[10]; whb = mem[11];
+  dim_r = whr / 6; dim_g = whg / 6; dim_b = whb / 6;
+
+  // Proportions from v6: w=20+anim_w, margin=10, anim_w=3, rad=0.6
+  aw = r * 3 / 55;       // anim_w scaled
+  kw = r * 23 / 55;      // knob_w + anim_w
+  km_ = r * 10 / 55;     // margin
+  ki = r - kw - km_;      // inner radius
+  kr = 0.6;               // arc coverage (fraction of tau)
+  kas = -tau * (1 + kr / 2);  // arc start angle
+  af = 6;                 // arc fill density
+
+  // Hover animation
+  t_anim = pow(mem[0], 2);
+  draw_w = lerp(kw, kw - aw, t_anim);
+  draw_inner = lerp(ki, ki + aw, t_anim);
+
+  // Arc ring — two-pass: all dim arcs then all bright arcs
+  // (avoids ~138 redundant gfx_set color switches per frame)
+  gfx_set(dim_r, dim_g, dim_b, 1);
+  i = r - draw_w;
+  loop(draw_w * af,
+    gfx_arc(cx, cy, i, kas, tau * kr + kas);
+    i += 1 / af;
+  );
+  gfx_set(whr, whg, whb, 1);
+  i = r - draw_w;
+  loop(draw_w * af,
+    gfx_arc(cx, cy, i, kas, value * tau * kr + kas);
+    i += 1 / af;
+  );
+
+  // Inner circle (3-pass outline)
+  gfx_set(whr, whg, whb, 1);
+  gfx_circle(cx, cy, draw_inner, 0);
+  gfx_circle(cx, cy, draw_inner - 0.25, 0);
+  gfx_circle(cx, cy, draw_inner - 0.5, 0);
+
+  // Needle
+  polar_angle = (value * 1.01) * tau * kr + kas;
+  xo_ = sin(polar_angle + tau / 2) * -1;
+  yo_ = cos(polar_angle + tau / 2);
+  gfx_line(cx, cy, cx + xo_ * (draw_inner - 1), cy + yo_ * (draw_inner - 1));
+
+  // Run time for color cycling trigger
+  value > 0 ? ( mem[8] += dt; ) : ( mem[8] = 0; );
+);
+
+// Interact: circular hover, drag, scroll, double-click reset to 0
+function bb_knob_interact(mem, cx, cy, r, cur_val)
+local(d, hover, new_val, now, sens, dy)
+(
+  d = dist(mx, my, cx, cy);
+  hover = (d <= r);
+  // Hover ramp (keep animating while dragging)
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  // Double-click reset (to 0, matching v6)
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0; mem[5] = 1; );
+    mem[4] = now;
+  );
+  // Start drag (skip if double-click just fired)
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;     // track last y for delta
+  );
+  // Continue drag (delta-per-frame, matching v6 bb_dy pattern)
+  mem[1] && LMB ? (
+    dy = mem[2] - my;
+    mem[2] = my;
+    sens = CTRL ? 1000 : 100;
+    new_val = clamp(cur_val + dy / sens, 0, 1);
+  );
+  // End drag
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  // Scroll wheel
+  hover && frame_wheel != 0 ? (
+    new_val = clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. JOANNY / McFIZZ
+// ═══════════════════════════════════════════════════════════════════════════
+// Blue pot with 4-pass shadow, box hover zone, canChange gate interaction.
+// Body color parameterized (cr, cg, cb). Pointer auto-selects black/white.
+
+// Draw: 4-pass shadow blur, blue body with blur, black outline, pointer
+function jo_knob_draw(cx, cy, r, value, ht, cr, cg, cb)
+local(shad_off, lift, dy, vr, angle, jxx, jyy, off, alpha)
+(
+  shad_off = lerp(3, 1, ht);
+  lift = lerp(0, -2, ht);
+
+  // 4-pass shadow (exact v6: off=0,1,2,3 with decreasing alpha)
+  off = 0; alpha = 0.20;
+  gfx_set(0, 0, 0, alpha);
+  gfx_circle(cx + shad_off + off, cy + 2 + off + lift, r + off, 1);
+  gfx_x = cx - shad_off - off*2 - r; gfx_y = cy - 2 - r - off*2 + lift;
+  gfx_blurto(cx + shad_off + r + off, cy + 2 + r + off + lift);
+
+  off = 1; alpha = 0.15;
+  gfx_set(0, 0, 0, alpha);
+  gfx_circle(cx + shad_off + off, cy + 2 + off + lift, r + off, 1);
+  gfx_x = cx - shad_off - off*2 - r; gfx_y = cy - 2 - r - off*2 + lift;
+  gfx_blurto(cx + shad_off + r + off, cy + 2 + r + off + lift);
+
+  off = 2; alpha = 0.10;
+  gfx_set(0, 0, 0, alpha);
+  gfx_circle(cx + shad_off + off, cy + 2 + off + lift, r + off, 1);
+  gfx_x = cx - shad_off - off*2 - r; gfx_y = cy - 2 - r - off*2 + lift;
+  gfx_blurto(cx + shad_off + r + off, cy + 2 + r + off + lift);
+
+  off = 3; alpha = 0.05;
+  gfx_set(0, 0, 0, alpha);
+  gfx_circle(cx + shad_off + off, cy + 2 + off + lift, r + off, 1);
+  gfx_x = cx - shad_off - off*2 - r; gfx_y = cy - 2 - r - off*2 + lift;
+  gfx_blurto(cx + shad_off + r + off, cy + 2 + r + off + lift);
+
+  // Body (lifted)
+  dy = cy + lift;
+  gfx_set(cr * 0.7, cg * 0.7, cb * 0.7, 0.8);
+  gfx_circle(cx, dy, r, 1);
+  gfx_set(cr, cg, cb, 1);
+  gfx_circle(cx, dy, r * 0.73, 1);
+  // Blur body for soft gradient
+  gfx_x = cx - r - 1; gfx_y = dy - r - 1;
+  gfx_blurto(cx + 1 + r, dy + 1 + r);
+  // Black outline
+  gfx_set(0, 0, 0, 1);
+  gfx_circle(cx, dy, r + 0.6, 0);
+
+  // Pointer (exact v6 formula)
+  vr = clamp(value, 0, 1);
+  angle = -2.3 + 4.6 * (vr * 0.98 + 0.02);
+  jxx = sin(angle) * r;
+  jyy = -cos(angle) * r;
+  // Brightness-dependent pointer color
+  (cr + cg + cb >= 2.3) ? gfx_set(0, 0, 0, 1) : gfx_set(1, 1, 1, 1);
+  gfx_line(cx, dy, cx + jxx, dy + jyy, 1);
+);
+
+// Interact: BOX hover zone, canChange gate, SHIFT for fine tune
+// mem[8] = hasEntered (canChange gate)
+function jo_knob_interact(mem, cx, cy, r, cur_val)
+local(hover, new_val, now, fine, nv, box_hw)
+(
+  // Box hover check (v6: jo_size/2 around center = ~1.3× radius)
+  box_hw = r * 1.3;
+  hover = (mx >= cx - box_hw && mx <= cx + box_hw &&
+           my >= cy - box_hw && my <= cy + box_hw);
+  // Hover ramp
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  // Scroll wheel
+  hover && frame_wheel != 0 ? (
+    new_val = clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+
+  );
+
+  // Double-click reset to 0.5
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+
+  // canChange gate (v6 exact pattern):
+  // Must hover first with no mouse button, THEN press to activate
+  hover ? (
+    !mouse_cap ? mem[8] = 1;  // hasEntered = true when hovering with no button
+  ) : (
+    mem[8] = 0;               // leave hover zone = reset gate
+  );
+
+  // Track start position when not dragging
+  mem[1] == 0 ? mem[2] = my;
+
+  // Activate drag only if canChange gate is open (skip if double-click just fired)
+  mem[8] && mouse_cap && !mem[5] ? ( mem[1] = 1; );
+
+  // Drag (delta-per-frame, SHIFT for fine)
+  mouse_cap && mem[1] ? (
+    fine = SHIFT ? 3000 : 300;
+    nv = 1 / fine * (mem[2] - my);
+    new_val = clamp(cur_val + nv, 0, 1);
+    mem[2] = my;
+  );
+
+  // Release
+  mouse_cap == 0 ? (
+    mem[1] ? mem[5] = 1;
+    mem[1] = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. SPICE PRO
+// ═══════════════════════════════════════════════════════════════════════════
+// Blue arc-fill knob with perpendicular sweep needle. Color animates on hover.
+
+// Draw: arc ring (w×fill passes), 3-pass inner circle with pulse, 60-line needle
+function sp_knob_draw(cx, cy, r, value, ht)
+local(kr, kg, kb, margin, w, inner, inner_pulse, arc_fill, knob_rad, kas,
+      arc_steps, ir, i, rr, polar, xo_, yo_, nthick, steps, s, off_x, off_y)
+(
+  // Color animation: dim blue → saturated blue on hover (exact v6)
+  kr = lerp(0, 0.15, ht);
+  kg = lerp(0.5, 0.65, ht);
+  kb = 1.0;
+
+  // Proportions from v6: margin=12, w=18, arc_fill=5, rad=0.6 (scaled to radius)
+  margin = r * 12 / 55;
+  w = r * 18 / 55;
+  arc_fill = 5;
+  knob_rad = 0.6;
+  kas = -tau * (1 + knob_rad / 2);
+  inner = r - w - margin;
+  inner_pulse = lerp(0, 2, ht);
+
+  // Arc ring (w * arc_fill passes)
+  arc_steps = (w * arc_fill) | 0;
+  i = 0;
+  while (i < arc_steps) (
+    gfx_set(kr, kg, kb, 1);
+    rr = r - w + (i / arc_fill);
+    gfx_arc(cx, cy, rr, kas, value * tau * knob_rad + kas);
+    i += 1;
+  );
+
+  // Inner circle (3-pass outline + hover pulse)
+  ir = inner + inner_pulse;
+  gfx_set(0.8, 0.8, 0.8, 1);
+  gfx_circle(cx, cy, ir, 0);
+  gfx_circle(cx, cy, ir - 0.5, 0);
+  gfx_circle(cx, cy, ir - 1, 0);
+
+  // Needle (perpendicular sweep, 60 lines — exact v6)
+  polar = (value * 1.01) * tau * knob_rad + kas;
+  xo_ = sin(polar + tau / 2) * -1;
+  yo_ = cos(polar + tau / 2);
+  gfx_set(kr, kg, kb, 1);
+  nthick = r * 0.15;
+  steps = 60;
+  s = -steps / 2;
+  while (s <= steps / 2) (
+    off_x = s / steps * yo_ * nthick;
+    off_y = -s / steps * xo_ * nthick;
+    gfx_line(cx + off_x, cy + off_y,
+             cx + off_x + xo_ * (ir - 1),
+             cy + off_y + yo_ * (ir - 1));
+    s += 1;
+  );
+);
+
+// Interact: circular hover, absolute drag, scroll, double-click reset to 0
+function sp_knob_interact(mem, cx, cy, r, cur_val)
+local(d, hover, new_val, now, sens, sensitivity)
+(
+  hover = (dist(mx, my, cx, cy) <= r);
+  // Hover ramp
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  // Scroll wheel
+  hover && frame_wheel != 0 ? (
+    new_val = clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+
+  );
+
+  // Double-click reset to 0
+  lmb_down && hover ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0; mem[5] = 1; );
+    mem[4] = now;
+  );
+
+  // Start drag (v6: absolute start position pattern, skip if double-click)
+  lmb_down && !mem[1] && hover && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;         // drag_start_y
+    mem[3] = cur_val;    // drag_start_val
+  );
+
+  // Continue drag (v6 exact: absolute offset from start)
+  mem[1] == 1 ? (
+    sens = CTRL ? 0.03 : 0.3;
+    sensitivity = (1 / r) * sens;
+    new_val = clamp(mem[3] + (mem[2] - my) * sensitivity, 0, 1);
+  );
+
+  // Release
+  !LMB ? (
+    mem[1] ? mem[5] = 1;
+    mem[1] = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. WITTI SOUND ARC KNOB
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: dark track arc, colored fill arc, inner circle, dot indicator
+function ws_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                       cr, cg, cb, bgr, bgg, bgb)
+local(n_passes, pass_gap, inner_r, dot_orbit, dot_r, dot_r_h,
+      scale, voffset, val_deg, val_rad, arc_alpha, start_rad, i, RAD130_)
+(
+  RAD130_ = 130 * $pi / 180;
+  n_passes = max(2, floor(radius / 5));
+  pass_gap = 0.5;
+  inner_r = radius * 0.75;
+  dot_orbit = radius * 0.5;
+  dot_r = radius * 0.15;
+  arc_alpha = lerp(0.6, 1.0, pow(hover_t, 2));
+  dot_r_h = dot_r * lerp(1.0, 1.3, pow(hover_t, 2));
+  scale = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_deg = value * scale + voffset;
+  val_rad = val_deg * $pi / 180;
+  // Background track arc
+  gfx_set(bgr, bgg, bgb, 1);
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * pass_gap, -RAD130_, RAD130_, 1);
+    i += 1;
+  );
+  // Inner circle
+  gfx_set(0.08, 0.08, 0.10, 1);
+  gfx_circle(cx, cy, inner_r, 1, 1);
+  // Active arc
+  gfx_set(cr, cg, cb, arc_alpha);
+  start_rad = is_sym ? 0 : -RAD130_;
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * pass_gap, start_rad, val_rad, 1);
+    i += 1;
+  );
+  // Dot indicator
+  gfx_set(cr, cg, cb, arc_alpha);
+  gfx_circle(cx - sin(-val_rad) * dot_orbit,
+             cy - cos(-val_rad) * dot_orbit, dot_r_h, 1);
+  // Hover ring
+  hover_t > 0.01 ? (
+    gfx_set(cr, cg, cb, 0.3 * arc_alpha);
+    gfx_circle(cx, cy, inner_r, 0);
+  );
+);
+
+// Interact: continuous drag, scroll, double-click
+function ws_knob_interact(mem, cx, cy, radius, cur_val, vmin, vmax, vdefault)
+local(hover, d, new_val, fine, step, now)
+(
+  d = dist(mx, my, cx, cy);
+  hover = (d <= radius);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+  // Double-click
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = vdefault; mem[5] = 1; );
+    mem[4] = now;
+  );
+  // Start drag (skip if double-click just fired)
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_val;
+  );
+  // Continue drag
+  mem[1] && LMB ? (
+    fine = CTRL ? 0.1 : 1;
+    step = (mem[2] - my) / (radius * 4) * (vmax - vmin) * fine;
+    new_val = clamp(mem[3] + step, vmin, vmax);
+  );
+  // End drag
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  // Scroll
+  hover && frame_wheel != 0 ? (
+    step = (vmax - vmin) * 0.02 * frame_wheel;
+    new_val = clamp(cur_val + step, vmin, vmax);
+    mem[5] = 1;
+
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. SSL 4000 E
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: knurled dark body, colored cap, white pointer, detent dots
+function ssl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                        cr, cg, cb, n_detents)
+local(ht, cap_a, ring_bright, scale, voffset, val_deg, val_rad,
+      i, da, dx, dy, active_det, det_step, px, py, ptr_len)
+(
+  ht = pow(hover_t, 2);
+  cap_a = lerp(0.7, 1.0, ht);
+  ring_bright = lerp(0.45, 0.70, ht);
+  scale = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_deg = value * scale + voffset;
+  val_rad = val_deg * $pi / 180;
+  // Knurled body
+  gfx_set(0.12, 0.12, 0.14, 1);
+  gfx_circle(cx, cy, radius, 1);
+  gfx_set(ring_bright, ring_bright, ring_bright + 0.02, 1);
+  gfx_circle(cx, cy, radius * 0.92, 0);
+  gfx_circle(cx, cy, radius * 0.85, 0);
+  gfx_circle(cx, cy, radius * 0.78, 0);
+  // Colored cap
+  gfx_set(cr, cg, cb, cap_a);
+  gfx_circle(cx, cy, radius * 0.55, 1);
+  gfx_set(cr * 0.6, cg * 0.6, cb * 0.6, cap_a);
+  gfx_circle(cx, cy, radius * 0.55, 0);
+  // Pointer (3 lines for thickness) — auto-contrast against the cap so it reads
+  // on light AND dark caps (e.g. a White or Black cap). Rec.601 luma; a light
+  // cap (>0.6) gets a dark pointer, otherwise the classic near-white pointer.
+  // Mid-tone accent caps stay white (luma < 0.6), so normal knobs are unchanged.
+  (cr * 0.299 + cg * 0.587 + cb * 0.114) > 0.6 ? gfx_set(0.12, 0.12, 0.14, 1) : gfx_set(0.95, 0.95, 0.95, 1);
+  ptr_len = radius * 0.82;
+  px = sin(val_rad) * ptr_len;
+  py = -cos(val_rad) * ptr_len;
+  gfx_line(cx, cy, cx + px, cy + py);
+  gfx_line(cx + cos(val_rad), cy + sin(val_rad),
+           cx + px + cos(val_rad), cy + py + sin(val_rad));
+  gfx_line(cx - cos(val_rad), cy - sin(val_rad),
+           cx + px - cos(val_rad), cy + py - sin(val_rad));
+  // Detent dots
+  det_step = (vmax - vmin) / max(1, n_detents - 1);
+  active_det = floor((value - vmin) / det_step + 0.5);
+  i = 0;
+  loop(n_detents,
+    da = (-130 + i * 260 / max(1, n_detents - 1)) * $pi / 180;
+    dx = cx + sin(da) * radius * 1.25;
+    dy = cy - cos(da) * radius * 1.25;
+    i == active_det ? (
+      gfx_set(cr, cg, cb, cap_a);
+      gfx_circle(dx, dy, radius * 0.08, 1);
+    ) : (
+      gfx_set(0.4, 0.4, 0.4, lerp(0.5, 0.8, ht));
+      gfx_circle(dx, dy, radius * 0.05, 1);
+    );
+    i += 1;
+  );
+);
+
+// Interact: continuous drag, DETENTED scroll, double-click
+function ssl_knob_interact(mem, cx, cy, radius, cur_val, vmin, vmax, vdefault, n_detents)
+local(hover, d, new_val, fine, step, now, det_step, cur_det, new_det)
+(
+  d = dist(mx, my, cx, cy);
+  hover = (d <= radius);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+  // Double-click
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = vdefault; mem[5] = 1; );
+    mem[4] = now;
+  );
+  // Start drag (skip if double-click just fired)
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_val;
+  );
+  // Continue drag (continuous)
+  mem[1] && LMB ? (
+    fine = CTRL ? 0.1 : 1;
+    // Scale drag travel so it always takes ~200px for full range (prevents snapping on large ranges)
+    step = (mem[2] - my) / max(radius * 4, 200) * (vmax - vmin) * fine;
+    new_val = clamp(mem[3] + step, vmin, vmax);
+  );
+  // End drag
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  // Scroll — detented or smooth
+  hover && frame_wheel != 0 ? (
+    n_detents > 1 ? (
+      // Detented: snap to discrete steps
+      det_step = (vmax - vmin) / max(1, n_detents - 1);
+      cur_det = floor((cur_val - vmin) / det_step + 0.5);
+      new_det = clamp(cur_det + sign_of(frame_wheel), 0, n_detents - 1);
+      new_val = vmin + new_det * det_step;
+    ) : (
+      // Smooth: 2% of range per scroll tick (fine with CTRL)
+      _scl = CTRL ? 0.005 : 0.02;
+      new_val = clamp(cur_val + frame_wheel * (vmax - vmin) * _scl, vmin, vmax);
+    );
+    mem[5] = 1;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. PULTEC EQP-1A
+// ═══════════════════════════════════════════════════════════════════════════
+// Uses ws_knob_interact for interaction.
+
+// Draw: authentic EQP-1A — black bakelite, ridged side wall, silver-white pointer
+function pultec_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t)
+local(ht, scale, voffset, val_rad, i, ta, ra, t, sh, hwv, pxp, pyp, sxp, cyp)
+(
+  ht = pow(hover_t, 2);
+  scale = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  // Warm-grey panel tick scale
+  i = 0;
+  loop(11,
+    ta = (-130 + i * 26) * $pi / 180;
+    gfx_set(0.55, 0.53, 0.47, lerp(0.40, 0.62, ht));
+    gfx_line(cx + sin(ta) * radius * 0.99, cy - cos(ta) * radius * 0.99,
+             cx + sin(ta) * radius * 1.12, cy - cos(ta) * radius * 1.12);
+    i += 1;
+  );
+  // Drop shadow + black side wall
+  gfx_set(0, 0, 0, 0.50);
+  gfx_circle(cx + 1, cy + 2, radius, 1);
+  gfx_set(0.05, 0.05, 0.055, 1);
+  gfx_circle(cx, cy, radius, 1);
+  // Fine side-wall ridges
+  i = 0;
+  loop(36,
+    ra = i / 36 * 2 * $pi;
+    gfx_set(1, 1, 1, 0.06);
+    gfx_line(cx + sin(ra) * radius * 0.86, cy - cos(ra) * radius * 0.86,
+             cx + sin(ra) * radius * 0.99, cy - cos(ra) * radius * 0.99);
+    i += 1;
+  );
+  // Charcoal top disc, light drifting top-left
+  i = 0;
+  loop(9,
+    t = i / 8;
+    sh = lerp(0.065, 0.235, t * t);
+    gfx_set(sh, sh, sh + 0.008, 1);
+    gfx_circle(cx - radius * 0.08 * t, cy - radius * 0.10 * t,
+               radius * 0.84 * (1 - t * 0.55), 1);
+    i += 1;
+  );
+  gfx_set(1, 1, 1, 0.10);
+  gfx_circle(cx, cy, radius * 0.84, 0);
+  // Silver-white pointer line w/ dark edging (quads)
+  pxp = cos(val_rad); pyp = sin(val_rad); sxp = sin(val_rad); cyp = cos(val_rad);
+  hwv = radius * 0.055;
+  gfx_set(0, 0, 0, 0.45);
+  gfx_triangle(cx + sxp * radius * 0.14 + pxp * hwv, cy - cyp * radius * 0.14 + pyp * hwv,
+               cx + sxp * radius * 0.14 - pxp * hwv, cy - cyp * radius * 0.14 - pyp * hwv,
+               cx + sxp * radius * 0.82 - pxp * hwv, cy - cyp * radius * 0.82 - pyp * hwv,
+               cx + sxp * radius * 0.82 + pxp * hwv, cy - cyp * radius * 0.82 + pyp * hwv);
+  hwv = radius * 0.0375;
+  gfx_set(0.85, 0.86, 0.89, 1);
+  gfx_triangle(cx + sxp * radius * 0.14 + pxp * hwv, cy - cyp * radius * 0.14 + pyp * hwv,
+               cx + sxp * radius * 0.14 - pxp * hwv, cy - cyp * radius * 0.14 - pyp * hwv,
+               cx + sxp * radius * 0.80 - pxp * hwv, cy - cyp * radius * 0.80 - pyp * hwv,
+               cx + sxp * radius * 0.80 + pxp * hwv, cy - cyp * radius * 0.80 + pyp * hwv);
+  // Hover glow (cool silver)
+  hover_t > 0.01 ? (
+    gfx_set(0.70, 0.72, 0.78, 0.14 * ht);
+    gfx_circle(cx, cy, radius + 2, 0);
+    gfx_circle(cx, cy, radius + 3, 0);
+    gfx_circle(cx, cy, radius + 4, 0);
+  );
+);
+
+// Draw: Pultec Cream (style 19) — Tube-Tech PE 1C: cream body, painted black pointer
+function pultec_cream_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t)
+local(ht, scale, voffset, val_rad, i, ta, t, hwv, pxp, pyp, sxp, cyp)
+(
+  ht = pow(hover_t, 2);
+  scale = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  // Warm panel tick scale
+  i = 0;
+  loop(11,
+    ta = (-130 + i * 26) * $pi / 180;
+    gfx_set(0.62, 0.60, 0.52, lerp(0.45, 0.68, ht));
+    gfx_line(cx + sin(ta) * radius * 0.99, cy - cos(ta) * radius * 0.99,
+             cx + sin(ta) * radius * 1.12, cy - cos(ta) * radius * 1.12);
+    i += 1;
+  );
+  // Drop shadow + cream body (vertical-ish gradient, light drifting up)
+  gfx_set(0, 0, 0, 0.35);
+  gfx_circle(cx + 1.5, cy + 2.5, radius * 0.92, 1);
+  i = 0;
+  loop(7,
+    t = i / 6;
+    gfx_set(lerp(0.80, 0.94, t), lerp(0.75, 0.91, t), lerp(0.60, 0.81, t), 1);
+    gfx_circle(cx, cy - radius * 0.09 * t, radius * 0.92 * (1 - t * 0.50), 1);
+    i += 1;
+  );
+  gfx_set(0.20, 0.18, 0.13, 0.8);
+  gfx_circle(cx, cy, radius * 0.92, 0);
+  gfx_circle(cx, cy, radius * 0.92 - 0.5, 0);
+  // Painted black pointer w/ soft edging (quads)
+  pxp = cos(val_rad); pyp = sin(val_rad); sxp = sin(val_rad); cyp = cos(val_rad);
+  hwv = radius * 0.058;
+  gfx_set(0.35, 0.32, 0.24, 0.5);
+  gfx_triangle(cx + sxp * radius * 0.06 + pxp * hwv, cy - cyp * radius * 0.06 + pyp * hwv,
+               cx + sxp * radius * 0.06 - pxp * hwv, cy - cyp * radius * 0.06 - pyp * hwv,
+               cx + sxp * radius * 0.86 - pxp * hwv, cy - cyp * radius * 0.86 - pyp * hwv,
+               cx + sxp * radius * 0.86 + pxp * hwv, cy - cyp * radius * 0.86 + pyp * hwv);
+  hwv = radius * 0.0425;
+  gfx_set(0.08, 0.075, 0.055, 1);
+  gfx_triangle(cx + sxp * radius * 0.06 + pxp * hwv, cy - cyp * radius * 0.06 + pyp * hwv,
+               cx + sxp * radius * 0.06 - pxp * hwv, cy - cyp * radius * 0.06 - pyp * hwv,
+               cx + sxp * radius * 0.84 - pxp * hwv, cy - cyp * radius * 0.84 - pyp * hwv,
+               cx + sxp * radius * 0.84 + pxp * hwv, cy - cyp * radius * 0.84 + pyp * hwv);
+  // Hover glow (warm)
+  hover_t > 0.01 ? (
+    gfx_set(0.6, 0.5, 0.25, 0.12 * ht);
+    gfx_circle(cx, cy, radius + 2, 0);
+    gfx_circle(cx, cy, radius + 3, 0);
+    gfx_circle(cx, cy, radius + 4, 0);
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. API 550 DUAL-CONCENTRIC
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw inner knob: chrome rim, dark body, thick pointer, colored dot
+function api_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                        dot_r, dot_g, dot_b)
+local(ht, chrome_bright, scale, voffset, val_deg, val_rad,
+      px, py, perp_x, perp_y, dot_d, dot_radius)
+(
+  ht = pow(hover_t, 2);
+  chrome_bright = lerp(0.72, 0.88, ht);
+  scale = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_deg = value * scale + voffset;
+  val_rad = val_deg * $pi / 180;
+  // Chrome rim
+  gfx_set(chrome_bright, chrome_bright, chrome_bright + 0.02, 1);
+  gfx_circle(cx, cy, radius, 1);
+  gfx_set(min(chrome_bright + 0.1, 1), min(chrome_bright + 0.1, 1),
+          min(chrome_bright + 0.12, 1), 0.6);
+  gfx_arc(cx, cy, radius - 1, -0.8 * $pi, -0.2 * $pi, 1);
+  gfx_arc(cx, cy, radius - 1.5, -0.8 * $pi, -0.2 * $pi, 1);
+  gfx_set(0.45, 0.45, 0.48, 1);
+  gfx_circle(cx, cy, radius, 0);
+  // Dark body
+  gfx_set(0.10, 0.10, 0.12, 1);
+  gfx_circle(cx, cy, radius * 0.82, 1);
+  gfx_set(0.16, 0.16, 0.18, 1);
+  gfx_circle(cx, cy, radius * 0.55, 1);
+  gfx_set(0.13, 0.13, 0.15, 1);
+  gfx_circle(cx, cy, radius * 0.35, 1);
+  // Thick white pointer (4 lines)
+  gfx_set(0.95, 0.95, 0.95, 1);
+  px = sin(val_rad) * radius * 0.75;
+  py = -cos(val_rad) * radius * 0.75;
+  perp_x = cos(val_rad);
+  perp_y = sin(val_rad);
+  gfx_line(cx - perp_x*1.5, cy - perp_y*1.5,
+           cx + px - perp_x*1.5, cy + py - perp_y*1.5);
+  gfx_line(cx - perp_x*0.5, cy - perp_y*0.5,
+           cx + px - perp_x*0.5, cy + py - perp_y*0.5);
+  gfx_line(cx + perp_x*0.5, cy + perp_y*0.5,
+           cx + px + perp_x*0.5, cy + py + perp_y*0.5);
+  gfx_line(cx + perp_x*1.5, cy + perp_y*1.5,
+           cx + px + perp_x*1.5, cy + py + perp_y*1.5);
+  // Colored dot
+  dot_d = radius * 0.62;
+  dot_radius = radius * lerp(0.10, 0.14, ht);
+  gfx_set(dot_r, dot_g, dot_b, 1);
+  gfx_circle(cx + sin(val_rad) * dot_d,
+             cy - cos(val_rad) * dot_d, dot_radius, 1);
+);
+
+// Draw outer freq ring: chrome ring with colored step dots
+function api_ring_draw(cx, cy, r_in, r_out, freq_val, fmin, fmax, n_steps, hover_t,
+                        rr, rg, rb)
+local(ht, cd, i, da, dx, dy, active, ss, dr_)
+(
+  ht = pow(hover_t, 2);
+  cd = lerp(0.35, 0.50, ht);
+  gfx_set(cd, cd, cd + 0.02, 1);
+  gfx_circle(cx, cy, r_out, 1);
+  gfx_set(0.08, 0.08, 0.10, 1);
+  gfx_circle(cx, cy, r_in + 1, 1);
+  gfx_set(0.50, 0.50, 0.52, 1);
+  gfx_circle(cx, cy, r_out, 0);
+  ss = (fmax - fmin) / max(1, n_steps - 1);
+  active = floor((freq_val - fmin) / ss + 0.5);
+  dr_ = (r_out - r_in) * 0.25;
+  i = 0;
+  loop(n_steps,
+    da = (-130 + i * 260 / max(1, n_steps - 1)) * $pi / 180;
+    dx = cx + sin(da) * (r_in + (r_out - r_in) * 0.5);
+    dy = cy - cos(da) * (r_in + (r_out - r_in) * 0.5);
+    i == active ? (
+      gfx_set(rr, rg, rb, 1);
+      gfx_circle(dx, dy, dr_ * 1.6, 1);
+    ) : (
+      gfx_set(0.55, 0.55, 0.55, lerp(0.5, 0.8, ht));
+      gfx_circle(dx, dy, dr_, 1);
+    );
+    i += 1;
+  );
+);
+
+// Interact dual-concentric: drag=inner (gain), scroll=outer (freq stepped)
+// Returns new inner value. Outer value stored in mo[7].
+function api_dual_interact(mi, mo, cx, cy, ri, ro,
+                           cur_i, imin, imax, idef,
+                           cur_o, omin, omax, odef, o_steps)
+local(d, hover, ni, no_, fine, step, now, ds, cd, nd)
+(
+  d = dist(mx, my, cx, cy);
+  hover = (d <= ro);
+  hover || mi[1] ? (
+    mi[0] = min(mi[0] + dt * hv_speed, 1);
+    mo[0] = mi[0];
+  ) : (
+    mi[0] = max(mi[0] - dt * hv_speed, 0);
+    mo[0] = mi[0];
+  );
+  mi[6] = hover || mi[1];
+  mo[6] = mi[6];
+  ni = cur_i;
+  no_ = cur_o;
+  mi[5] = 0;
+  mo[5] = 0;
+  // Double-click reset both
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mi[4] < 0.3) ? (
+      ni = idef; mi[5] = 1;
+      no_ = odef; mo[5] = 1;
+    );
+    mi[4] = now;
+  );
+  // Drag inner (skip if double-click just fired)
+  lmb_down && hover && !mi[1] && !mi[5] ? (
+    mi[1] = 1;
+    mi[2] = my;
+    mi[3] = cur_i;
+  );
+  mi[1] && LMB ? (
+    fine = CTRL ? 0.1 : 1;
+    step = (mi[2] - my) / (ri * 4) * (imax - imin) * fine;
+    ni = clamp(mi[3] + step, imin, imax);
+  );
+  mi[1] && !LMB ? (
+    mi[1] = 0;
+    mi[5] = 1;
+  );
+  // Scroll outer (stepped)
+  hover && frame_wheel != 0 ? (
+    ds = (omax - omin) / max(1, o_steps - 1);
+    cd = floor((cur_o - omin) / ds + 0.5);
+    nd = clamp(cd + sign_of(frame_wheel), 0, o_steps - 1);
+    no_ = omin + nd * ds;
+    mo[5] = 1;
+
+  );
+  mo[7] = no_;
+  ni;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. NEVE 1073
+// ═══════════════════════════════════════════════════════════════════════════
+// Uses ssl_knob_interact for interaction.
+
+// Draw: 1073 rotary — fluted satin cap (24 scallops), satin dome, cream pointer line
+function neve_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t,
+                         cr, cg, cb, n_det)
+local(ht, ba, scale, voffset, val_rad, i, ta, ca, cpx, cpy, csx, ccy, fw,
+      t, hwv, pxp, pyp, sxp, cyp, da, dx, dy, ad, ds)
+(
+  ht = pow(hover_t, 2);
+  ba = lerp(0.85, 1.0, ht);
+  scale = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  // Panel tick scale (skipped when detent dots are shown)
+  n_det == 0 ? (
+    i = 0;
+    loop(11,
+      ta = (-130 + i * 26) * $pi / 180;
+      gfx_set(0.63, 0.65, 0.70, lerp(0.30, 0.50, ht));
+      gfx_line(cx + sin(ta) * radius * 0.99, cy - cos(ta) * radius * 0.99,
+               cx + sin(ta) * radius * 1.12, cy - cos(ta) * radius * 1.12);
+      i += 1;
+    );
+  );
+  // Drop shadow + fluted cap base
+  gfx_set(0, 0, 0, 0.35);
+  gfx_circle(cx + 1, cy + 2, radius, 1);
+  gfx_set(cr * 0.62, cg * 0.62, cb * 0.62, ba);
+  gfx_circle(cx, cy, radius, 1);
+  // 24 flutes: light crest / dark trough quads on the rim band
+  fw = radius * 0.055;
+  i = 0;
+  loop(24,
+    ca = i / 24 * 2 * $pi;
+    cpx = cos(ca); cpy = sin(ca); csx = sin(ca); ccy = cos(ca);
+    gfx_set(min(cr * 1.10 + 0.10, 1), min(cg * 1.10 + 0.10, 1), min(cb * 1.10 + 0.10, 1), 0.45 * ba);
+    gfx_triangle(cx + csx * radius * 0.80 + cpx * fw, cy - ccy * radius * 0.80 + cpy * fw,
+                 cx + csx * radius * 0.80 - cpx * fw, cy - ccy * radius * 0.80 - cpy * fw,
+                 cx + csx * radius * 0.985 - cpx * fw, cy - ccy * radius * 0.985 - cpy * fw,
+                 cx + csx * radius * 0.985 + cpx * fw, cy - ccy * radius * 0.985 + cpy * fw);
+    ca = (i + 0.5) / 24 * 2 * $pi;
+    cpx = cos(ca); cpy = sin(ca); csx = sin(ca); ccy = cos(ca);
+    gfx_set(cr * 0.28, cg * 0.28, cb * 0.28, 0.60);
+    gfx_triangle(cx + csx * radius * 0.80 + cpx * fw, cy - ccy * radius * 0.80 + cpy * fw,
+                 cx + csx * radius * 0.80 - cpx * fw, cy - ccy * radius * 0.80 - cpy * fw,
+                 cx + csx * radius * 0.965 - cpx * fw, cy - ccy * radius * 0.965 - cpy * fw,
+                 cx + csx * radius * 0.965 + cpx * fw, cy - ccy * radius * 0.965 + cpy * fw);
+    i += 1;
+  );
+  gfx_set(cr * 0.30, cg * 0.30, cb * 0.30, 1);
+  gfx_circle(cx, cy, radius, 0);
+  gfx_circle(cx, cy, radius - 0.5, 0);
+  // Satin dome, light drifting top-left
+  i = 0;
+  loop(9,
+    t = i / 8;
+    gfx_set(lerp(cr * 0.62, min(cr * 1.20 + 0.10, 1), t * t),
+            lerp(cg * 0.62, min(cg * 1.20 + 0.10, 1), t * t),
+            lerp(cb * 0.62, min(cb * 1.20 + 0.10, 1), t * t), 1);
+    gfx_circle(cx - radius * 0.09 * t, cy - radius * 0.12 * t,
+               radius * 0.78 * (1 - t * 0.55), 1);
+    i += 1;
+  );
+  gfx_set(cr * 0.32, cg * 0.32, cb * 0.32, 0.9);
+  gfx_circle(cx, cy, radius * 0.78, 0);
+  // Cream pointer line w/ dark edging (quads)
+  pxp = cos(val_rad); pyp = sin(val_rad); sxp = sin(val_rad); cyp = cos(val_rad);
+  hwv = radius * 0.062;
+  gfx_set(0.05, 0.04, 0.03, 0.45);
+  gfx_triangle(cx + sxp * radius * 0.10 + pxp * hwv, cy - cyp * radius * 0.10 + pyp * hwv,
+               cx + sxp * radius * 0.10 - pxp * hwv, cy - cyp * radius * 0.10 - pyp * hwv,
+               cx + sxp * radius * 0.93 - pxp * hwv, cy - cyp * radius * 0.93 - pyp * hwv,
+               cx + sxp * radius * 0.93 + pxp * hwv, cy - cyp * radius * 0.93 + pyp * hwv);
+  hwv = radius * 0.0425;
+  gfx_set(0.93, 0.90, 0.82, 1);
+  gfx_triangle(cx + sxp * radius * 0.10 + pxp * hwv, cy - cyp * radius * 0.10 + pyp * hwv,
+               cx + sxp * radius * 0.10 - pxp * hwv, cy - cyp * radius * 0.10 - pyp * hwv,
+               cx + sxp * radius * 0.91 - pxp * hwv, cy - cyp * radius * 0.91 - pyp * hwv,
+               cx + sxp * radius * 0.91 + pxp * hwv, cy - cyp * radius * 0.91 + pyp * hwv);
+  // Hover glow
+  hover_t > 0.01 ? (
+    gfx_set(cr * 1.2, cg * 1.2, cb * 1.2, 0.3 * ht);
+    gfx_circle(cx, cy, radius + 2, 0);
+    gfx_circle(cx, cy, radius + 3, 0);
+  );
+  // Detent dots
+  n_det > 0 ? (
+    ds = (vmax - vmin) / max(1, n_det - 1);
+    ad = floor((value - vmin) / ds + 0.5);
+    i = 0;
+    loop(n_det,
+      da = (-130 + i * 260 / max(1, n_det - 1)) * $pi / 180;
+      dx = cx + sin(da) * radius * 1.25;
+      dy = cy - cos(da) * radius * 1.25;
+      i == ad ? (
+        gfx_set(1, 1, 1, ba);
+        gfx_circle(dx, dy, radius * 0.06, 1);
+      ) : (
+        gfx_set(0.4, 0.4, 0.4, lerp(0.4, 0.7, ht));
+        gfx_circle(dx, dy, radius * 0.04, 1);
+      );
+      i += 1;
+    );
+  );
+);
+
+// Draw: Neve Alt (style 20) — Heritage i73 concentric: chunky scalloped ring,
+// dark groove, separate satin dome, cream pointer crossing dome AND ring
+function neve_alt_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t,
+                             cr, cg, cb, n_det)
+local(ht, ba, scale, voffset, val_rad, i, ta, ca, cpx, cpy, csx, ccy, fw, fw2,
+      t, hwv, pxp, pyp, sxp, cyp, da, dx, dy, ad, ds)
+(
+  ht = pow(hover_t, 2);
+  ba = lerp(0.85, 1.0, ht);
+  scale = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  // Panel tick scale (skipped when detent dots are shown)
+  n_det == 0 ? (
+    i = 0;
+    loop(11,
+      ta = (-130 + i * 26) * $pi / 180;
+      gfx_set(0.65, 0.67, 0.72, lerp(0.30, 0.50, ht));
+      gfx_line(cx + sin(ta) * radius * 1.02, cy - cos(ta) * radius * 1.02,
+               cx + sin(ta) * radius * 1.15, cy - cos(ta) * radius * 1.15);
+      i += 1;
+    );
+  );
+  // Drop shadow + ring base
+  gfx_set(0, 0, 0, 0.42);
+  gfx_circle(cx + 1, cy + 2.5, radius, 1);
+  gfx_set(cr * 0.58, cg * 0.58, cb * 0.58, ba);
+  gfx_circle(cx, cy, radius, 1);
+  // 14 chunky scallops: crest/trough quads across the outer ring
+  fw = radius * 0.11;
+  fw2 = fw * 0.9;
+  i = 0;
+  loop(14,
+    ca = i / 14 * 2 * $pi;
+    cpx = cos(ca); cpy = sin(ca); csx = sin(ca); ccy = cos(ca);
+    gfx_set(min(cr * 1.15 + 0.10, 1), min(cg * 1.15 + 0.10, 1), min(cb * 1.15 + 0.10, 1), 0.40 * ba);
+    gfx_triangle(cx + csx * radius * 0.66 + cpx * fw, cy - ccy * radius * 0.66 + cpy * fw,
+                 cx + csx * radius * 0.66 - cpx * fw, cy - ccy * radius * 0.66 - cpy * fw,
+                 cx + csx * radius * 0.975 - cpx * fw, cy - ccy * radius * 0.975 - cpy * fw,
+                 cx + csx * radius * 0.975 + cpx * fw, cy - ccy * radius * 0.975 + cpy * fw);
+    ca = (i + 0.5) / 14 * 2 * $pi;
+    cpx = cos(ca); cpy = sin(ca); csx = sin(ca); ccy = cos(ca);
+    gfx_set(cr * 0.22, cg * 0.22, cb * 0.22, 0.60);
+    gfx_triangle(cx + csx * radius * 0.66 + cpx * fw2, cy - ccy * radius * 0.66 + cpy * fw2,
+                 cx + csx * radius * 0.66 - cpx * fw2, cy - ccy * radius * 0.66 - cpy * fw2,
+                 cx + csx * radius * 0.94 - cpx * fw2, cy - ccy * radius * 0.94 - cpy * fw2,
+                 cx + csx * radius * 0.94 + cpx * fw2, cy - ccy * radius * 0.94 + cpy * fw2);
+    i += 1;
+  );
+  // Top-light / bottom-shade on the ring
+  gfx_set(1, 1, 1, 0.10);
+  gfx_arc(cx, cy, radius - 1, -1.5, 1.5, 1);
+  gfx_arc(cx, cy, radius - 2, -1.4, 1.4, 1);
+  gfx_set(0, 0, 0, 0.16);
+  gfx_arc(cx, cy, radius - 1, 1.9, 2.9, 1);
+  gfx_arc(cx, cy, radius - 1, -2.9, -1.9, 1);
+  gfx_set(cr * 0.28, cg * 0.28, cb * 0.28, 1);
+  gfx_circle(cx, cy, radius, 0);
+  gfx_circle(cx, cy, radius - 0.5, 0);
+  // Dark groove between ring and dome
+  gfx_set(0, 0, 0, 0.55);
+  gfx_circle(cx, cy, radius * 0.64, 0);
+  gfx_circle(cx, cy, radius * 0.63, 0);
+  gfx_circle(cx, cy, radius * 0.62, 0);
+  // Inner satin dome, light drifting top-left
+  i = 0;
+  loop(9,
+    t = i / 8;
+    gfx_set(lerp(cr * 0.55, min(cr * 1.25 + 0.10, 1), t * t),
+            lerp(cg * 0.55, min(cg * 1.25 + 0.10, 1), t * t),
+            lerp(cb * 0.55, min(cb * 1.25 + 0.10, 1), t * t), 1);
+    gfx_circle(cx - radius * 0.08 * t, cy - radius * 0.11 * t,
+               radius * 0.58 * (1 - t * 0.55), 1);
+    i += 1;
+  );
+  gfx_set(1, 1, 1, 0.08);
+  gfx_circle(cx, cy, radius * 0.58, 0);
+  // Cream pointer crossing dome and ring, w/ dark edging (quads)
+  pxp = cos(val_rad); pyp = sin(val_rad); sxp = sin(val_rad); cyp = cos(val_rad);
+  hwv = radius * 0.062;
+  gfx_set(0.05, 0.04, 0.03, 0.45);
+  gfx_triangle(cx + sxp * radius * 0.06 + pxp * hwv, cy - cyp * radius * 0.06 + pyp * hwv,
+               cx + sxp * radius * 0.06 - pxp * hwv, cy - cyp * radius * 0.06 - pyp * hwv,
+               cx + sxp * radius * 0.96 - pxp * hwv, cy - cyp * radius * 0.96 - pyp * hwv,
+               cx + sxp * radius * 0.96 + pxp * hwv, cy - cyp * radius * 0.96 + pyp * hwv);
+  hwv = radius * 0.0425;
+  gfx_set(0.93, 0.90, 0.82, 1);
+  gfx_triangle(cx + sxp * radius * 0.06 + pxp * hwv, cy - cyp * radius * 0.06 + pyp * hwv,
+               cx + sxp * radius * 0.06 - pxp * hwv, cy - cyp * radius * 0.06 - pyp * hwv,
+               cx + sxp * radius * 0.95 - pxp * hwv, cy - cyp * radius * 0.95 - pyp * hwv,
+               cx + sxp * radius * 0.95 + pxp * hwv, cy - cyp * radius * 0.95 + pyp * hwv);
+  // Hover glow
+  hover_t > 0.01 ? (
+    gfx_set(cr * 1.2, cg * 1.2, cb * 1.2, 0.3 * ht);
+    gfx_circle(cx, cy, radius + 2, 0);
+    gfx_circle(cx, cy, radius + 3, 0);
+  );
+  // Detent dots
+  n_det > 0 ? (
+    ds = (vmax - vmin) / max(1, n_det - 1);
+    ad = floor((value - vmin) / ds + 0.5);
+    i = 0;
+    loop(n_det,
+      da = (-130 + i * 260 / max(1, n_det - 1)) * $pi / 180;
+      dx = cx + sin(da) * radius * 1.25;
+      dy = cy - cos(da) * radius * 1.25;
+      i == ad ? (
+        gfx_set(1, 1, 1, ba);
+        gfx_circle(dx, dy, radius * 0.06, 1);
+      ) : (
+        gfx_set(0.4, 0.4, 0.4, lerp(0.4, 0.7, ht));
+        gfx_circle(dx, dy, radius * 0.04, 1);
+      );
+      i += 1;
+    );
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. ENDLESS ROTARY ENCODER
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: grey metal body, 24 edge notches, 16 green LED ring, white pointer
+function encoder_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb)
+local(ht, _vn, i, a, led_orbit, led_r, led_pos, led_dist, led_bright,
+      notch_in, notch_out, val_rad, RAD130_, lx, ly)
+(
+  ht = pow(hover_t, 2);
+  _vn = clamp((value - vmin) / (vmax - vmin), 0, 1);
+  RAD130_ = 130 * $pi / 180;
+  led_orbit = radius * 1.3;
+  led_r = radius * 0.08;
+  led_pos = _vn * 15;  // 0–15 mapped across 16 LEDs
+
+  // LED ring (270° arc: -130° to +130°)
+  i = 0;
+  loop(16,
+    a = (-130 + i * 260 / 15) * $pi / 180;
+    led_dist = abs(i - led_pos);
+    led_bright = max(0, 1 - led_dist * 0.4) * lerp(0.7, 1.0, ht);
+    lx = cx + sin(a) * led_orbit;
+    ly = cy - cos(a) * led_orbit;
+    // LED housing (neutral dark)
+    gfx_set(0.12, 0.12, 0.13, 0.6);
+    gfx_circle(lx, ly, led_r * 1.2, 1);
+    // Lit LED (parameterized color)
+    led_bright > 0.05 ? (
+      gfx_set(cr * led_bright, cg * led_bright, cb * led_bright, 1);
+      gfx_circle(lx, ly, led_r * (0.8 + led_bright * 0.5), 1);
+      // Glow halo on bright LEDs
+      led_bright > 0.5 ? (
+        gfx_set(cr * led_bright, cg * led_bright, cb * led_bright, 0.2 * led_bright);
+        gfx_circle(lx, ly, led_r * 2, 1);
+      );
+    );
+    i += 1;
+  );
+
+  // Metal body
+  gfx_set(0.42 + 0.05 * ht, 0.42 + 0.05 * ht, 0.44 + 0.05 * ht, 1);
+  gfx_circle(cx, cy, radius, 1);
+  gfx_set(0.52 + 0.05 * ht, 0.52 + 0.05 * ht, 0.54 + 0.05 * ht, 1);
+  gfx_circle(cx, cy, radius * 0.75, 1);
+  gfx_set(0.46, 0.46, 0.48, 1);
+  gfx_circle(cx, cy, radius * 0.5, 1);
+
+  // Edge notches
+  notch_in = radius * 0.88;
+  notch_out = radius;
+  gfx_set(0.30, 0.30, 0.32, 1);
+  i = 0;
+  loop(24,
+    a = i * tau / 24;
+    gfx_line(cx + sin(a) * notch_in, cy - cos(a) * notch_in,
+             cx + sin(a) * notch_out, cy - cos(a) * notch_out);
+    i += 1;
+  );
+
+  // Outline + center
+  gfx_set(0.30, 0.30, 0.32, 1);
+  gfx_circle(cx, cy, radius, 0);
+  gfx_set(0.2, 0.2, 0.22, 1);
+  gfx_circle(cx, cy, radius * 0.12, 1);
+
+  // White pointer (270° arc)
+  val_rad = (_vn * 260 - 130) * $pi / 180;
+  gfx_set(0.85, 0.85, 0.85, 1);
+  gfx_line(cx + sin(val_rad) * radius * 0.3, cy - cos(val_rad) * radius * 0.3,
+           cx + sin(val_rad) * radius * 0.8, cy - cos(val_rad) * radius * 0.8);
+  gfx_line(cx + sin(val_rad) * radius * 0.3 + cos(val_rad),
+           cy - cos(val_rad) * radius * 0.3 + sin(val_rad),
+           cx + sin(val_rad) * radius * 0.8 + cos(val_rad),
+           cy - cos(val_rad) * radius * 0.8 + sin(val_rad));
+);
+
+// Interact: wrapping 0-127, scroll ±1, drag continuous, double-click → 64
+function encoder_interact(mem, cx, cy, radius, cur_val, vmin, vmax, vdefault, n_detents)
+local(hover, d, new_val, step, now, _range, _scl)
+(
+  d = dist(mx, my, cx, cy);
+  hover = (d <= radius);
+  _range = vmax - vmin;
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+  // Right-click reset
+  hover && rmb_down ? ( new_val = vdefault; mem[5] = 1; );
+  // Double-click reset
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = vdefault; mem[5] = 1; );
+    mem[4] = now;
+  );
+  // Start drag (skip if reset just fired)
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_val;
+  );
+  // Continue drag (CTRL=fine, SHIFT=extra-fine)
+  mem[1] && LMB ? (
+    step = (mem[2] - my) / max(radius * 4, 200) * _range * (CTRL ? 0.1 : SHIFT ? 0.025 : 1);
+    new_val = clamp(mem[3] + step, vmin, vmax);
+  );
+  // End drag
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  // Scroll (CTRL=fine 0.5%, SHIFT=extra-fine 0.2%, default=2%)
+  hover && frame_wheel != 0 ? (
+    _scl = CTRL ? 0.005 : SHIFT ? 0.002 : 0.02;
+    new_val = clamp(cur_val + frame_wheel * _range * _scl, vmin, vmax);
+    mem[5] = 1;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10. MPC RUBBER PAD KNOB
+// ═══════════════════════════════════════════════════════════════════════════
+// Black domed rubber cap, raised bevel rim, white indicator line, 270° arc.
+// Same 16-slot memory convention and ssl_knob_interact-compatible signature.
+// Draw args: cx, cy, r, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb
+// Interact: reuses ssl_knob_interact (continuous drag, detented scroll, dbl-click reset)
+
+function mpc_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                        cr, cg, cb, bgr, bgg, bgb)
+local(ht, scale, voffset, val_deg, val_rad, bevel_r, cap_r, dome_r,
+      ind_x1, ind_y1, ind_x2, ind_y2, n_passes, i, RAD130_, start_rad,
+      arc_step, rr, glow_a)
+(
+  ht = pow(hover_t, 2);
+  RAD130_ = 130 * $pi / 180;
+  scale    = 260 / (vmax - vmin);
+  voffset  = -vmin * 260 / (vmax - vmin) - 130;
+  val_deg  = value * scale + voffset;
+  val_rad  = val_deg * $pi / 180;
+
+  // ── Track arc (background) ──────────────────────────────────────────────
+  n_passes = max(2, floor(radius / 6));
+  gfx_set(bgr, bgg, bgb, 1);
+  i = 0; loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.6, -RAD130_, RAD130_, 1);
+    i += 1;
+  );
+
+  // ── Active arc (accent color) ────────────────────────────────────────────
+  gfx_set(cr, cg, cb, lerp(0.75, 1.0, ht));
+  start_rad = is_sym ? 0 : -RAD130_;
+  i = 0; loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.6, start_rad, val_rad, 1);
+    i += 1;
+  );
+
+  // ── Outer bevel rim ──────────────────────────────────────────────────────
+  bevel_r = radius * 0.80;
+  // Dark outer shell
+  gfx_set(0.10, 0.10, 0.11, 1);
+  gfx_circle(cx, cy, bevel_r, 1);
+  // Highlight rim (top-left catch light)
+  gfx_set(lerp(0.28, 0.38, ht), lerp(0.28, 0.38, ht), lerp(0.30, 0.40, ht), 1);
+  gfx_circle(cx, cy, bevel_r, 0);
+  gfx_circle(cx, cy, bevel_r - 0.5, 0);
+
+  // ── Rubber dome cap (tinted to cr/cg/cb) ───────────────────────────────
+  cap_r  = bevel_r * 0.82;
+  dome_r = cap_r  * 0.60;
+  // Base rubber body — color-tinted
+  gfx_set(lerp(cr*0.35, cr*0.50, ht), lerp(cg*0.35, cg*0.50, ht), lerp(cb*0.35, cb*0.50, ht), 1);
+  gfx_circle(cx, cy, cap_r, 1);
+  // Dome highlight — brighter tint, specular top-left
+  gfx_set(lerp(cr*0.65, cr*0.85, ht), lerp(cg*0.65, cg*0.85, ht), lerp(cb*0.65, cb*0.85, ht), 1);
+  gfx_circle(cx - cap_r * 0.18, cy - cap_r * 0.18, dome_r, 1);
+  // Center recessed dark spot
+  gfx_set(cr*0.12, cg*0.12, cb*0.12, 1);
+  gfx_circle(cx + cap_r * 0.08, cy + cap_r * 0.08, dome_r * 0.55, 1);
+
+  // ── Indicator line ───────────────────────────────────────────────────────
+  ind_x1 = cx + sin(val_rad) * cap_r * 0.30;
+  ind_y1 = cy - cos(val_rad) * cap_r * 0.30;
+  ind_x2 = cx + sin(val_rad) * cap_r * 0.88;
+  ind_y2 = cy - cos(val_rad) * cap_r * 0.88;
+  // Thick white line (3 passes for anti-alias weight)
+  gfx_set(0.92, 0.92, 0.92, lerp(0.80, 1.0, ht));
+  gfx_line(ind_x1, ind_y1, ind_x2, ind_y2, 1);
+  gfx_line(ind_x1 + cos(val_rad) * 0.5, ind_y1 + sin(val_rad) * 0.5,
+           ind_x2 + cos(val_rad) * 0.5, ind_y2 + sin(val_rad) * 0.5, 1);
+  gfx_line(ind_x1 - cos(val_rad) * 0.5, ind_y1 - sin(val_rad) * 0.5,
+           ind_x2 - cos(val_rad) * 0.5, ind_y2 - sin(val_rad) * 0.5, 1);
+
+  // ── Hover glow ring ──────────────────────────────────────────────────────
+  glow_a = 0.25 * ht;
+  glow_a > 0.01 ? (
+    gfx_set(cr, cg, cb, glow_a);
+    gfx_circle(cx, cy, bevel_r + 1.5, 0);
+    gfx_circle(cx, cy, bevel_r + 2.5, 0);
+  );
+);
+
+// Interact: identical signature to ssl_knob_interact
+// (continuous drag, CTRL=fine, detented scroll, dbl-click=reset)
+function mpc_knob_interact(mem, cx, cy, radius, cur_val, vmin, vmax, vdefault, n_detents)
+(
+  // Delegate entirely to ssl_knob_interact — same memory layout, same behavior
+  ssl_knob_interact(mem, cx, cy, radius, cur_val, vmin, vmax, vdefault, n_detents);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10b. JOG WHEEL KNOB  (iMPC-style metallic jog wheel)
+// ═══════════════════════════════════════════════════════════════════════════
+// Visual: metallic outer ring with grip notches, darker inner disc,
+// position indicator dot, subtle 3D shading. Uses standard knob interaction.
+
+function jog_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t,
+                       arc_r, arc_g, arc_b)
+local(ht, or_, ir_, val_norm, val_rad, jt, ja, tx1, ty1, tx2, ty2,
+      ix, iy, base_b, RAD130_, arc_w, n_arc, i, rr, start_rad)
+(
+  ht = pow(hover_t, 2);
+  or_ = radius;
+  ir_ = radius - 10;
+  base_b = lerp(0.0, 0.04, ht);  // hover brightness boost
+  RAD130_ = 130 * $pi / 180;
+
+  // ── Spice-style arc ring (outside the metallic body) ──────────────────
+  arc_w = max(3, radius * 0.14);
+  n_arc = (arc_w * 4)|0;
+  val_norm = (value - vmin) / (vmax - vmin);
+  val_rad = val_norm * 260 * $pi / 180 - RAD130_;
+
+  // Background track arc (dim)
+  gfx_set(arc_r * 0.15, arc_g * 0.15, arc_b * 0.15, 0.8);
+  i = 0; loop(n_arc,
+    rr = or_ + 3 + (i / 4);
+    gfx_arc(cx, cy, rr, -RAD130_, RAD130_, 1);
+    i += 1;
+  );
+
+  // Active arc (accent color, fills from left to current value)
+  gfx_set(arc_r, arc_g, arc_b, lerp(0.75, 1.0, ht));
+  start_rad = -RAD130_;
+  i = 0; loop(n_arc,
+    rr = or_ + 3 + (i / 4);
+    gfx_arc(cx, cy, rr, start_rad, val_rad, 1);
+    i += 1;
+  );
+
+  // ── Metallic jog body ────────────────────────────────────────────────
+  // Outer ring shadow
+  gfx_set(0.08 + base_b, 0.08 + base_b, 0.10 + base_b, 0.9);
+  gfx_circle(cx, cy, or_ + 2, 1);
+
+  // Outer ring (darker metallic)
+  gfx_set(0.30 + base_b, 0.30 + base_b, 0.32 + base_b, 1);
+  gfx_circle(cx, cy, or_, 1);
+
+  // Ring groove (darker inset)
+  gfx_set(0.18 + base_b, 0.18 + base_b, 0.20 + base_b, 1);
+  gfx_circle(cx, cy, or_ - 3, 1);
+
+  // Inner disc (3 concentric circles for gradient feel)
+  gfx_set(0.32 + base_b, 0.32 + base_b, 0.34 + base_b, 1);
+  gfx_circle(cx, cy, ir_ - 2, 1);
+  gfx_set(0.30 + base_b, 0.30 + base_b, 0.32 + base_b, 1);
+  gfx_circle(cx, cy, ir_ - 5, 1);
+  gfx_set(0.28 + base_b, 0.28 + base_b, 0.30 + base_b, 1);
+  gfx_circle(cx, cy, ir_ - 8, 1);
+
+  // Upper-left highlight reflection
+  gfx_set(0.42 + base_b, 0.42 + base_b, 0.44 + base_b, 0.3);
+  gfx_circle(cx - 2, cy - 3, ir_ - 4, 0);
+
+  // Center dot
+  gfx_set(0.50 + base_b, 0.50 + base_b, 0.52 + base_b, 1);
+  gfx_circle(cx, cy, 4, 1);
+
+  // Grip notches (12 ticks around outer ring with shadows)
+  jt = 0;
+  loop(12,
+    ja = jt / 12.0 * 2.0 * $pi;
+    tx1 = cx + cos(ja) * (or_ - 5);
+    ty1 = cy + sin(ja) * (or_ - 5);
+    tx2 = cx + cos(ja) * (or_ - 1);
+    ty2 = cy + sin(ja) * (or_ - 1);
+    // Shadow
+    gfx_set(0.15, 0.15, 0.17, 0.6);
+    gfx_line(tx1 + 0.5, ty1 + 0.5, tx2 + 0.5, ty2 + 0.5);
+    // Main notch (double thickness)
+    gfx_set(0.55 + base_b, 0.53 + base_b, 0.50 + base_b, 0.8);
+    gfx_line(tx1, ty1, tx2, ty2);
+    gfx_line(tx1 + 1, ty1, tx2 + 1, ty2);
+    jt += 1;
+  );
+
+  // Position indicator dot (maps value to 260° arc like other knobs)
+  val_rad = (-130 + val_norm * 260) * $pi / 180;
+  ix = cx + sin(val_rad) * (ir_ - 8);
+  iy = cy - cos(val_rad) * (ir_ - 8);
+  gfx_set(0.90 + ht * 0.1, 0.88 + ht * 0.1, 0.85 + ht * 0.1, 0.9);
+  gfx_circle(ix, iy, 3, 1);
+
+  // Hover glow (uses accent color)
+  ht > 0.01 ? (
+    gfx_set(arc_r, arc_g, arc_b, 0.2 * ht);
+    gfx_circle(cx, cy, or_ + arc_w + 4, 0);
+    gfx_circle(cx, cy, or_ + arc_w + 5, 0);
+  );
+);
+
+// Interact: delegates to ssl_knob_interact (drag, scroll, double-click reset)
+function jog_knob_interact(mem, cx, cy, radius, cur_val, vmin, vmax, vdefault, n_detents)
+(
+  ssl_knob_interact(mem, cx, cy, radius, cur_val, vmin, vmax, vdefault, n_detents);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11. VARI-MU KNOB  (Manley Silver brushed-aluminum)
+// ═══════════════════════════════════════════════════════════════════════════
+// Signature matches mode_knob_draw fallback: (cx, cy, r, val, vmin, vmax, ht, cr, cg, cb)
+// Brushed silver body with concentric ring texture, dark recessed center,
+// thin white pointer line, subtle warm-silver hover glow.
+
+function varimu_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t,
+                           cr, cg, cb)
+local(ht, ba, scale, voffset, val_rad,
+      i, ring_r, ring_a, ptr_in, ptr_out,
+      base_g, hi_g, lo_g, lum, atr, atg, atb)
+(
+  ht = pow(hover_t, 2);
+  ba = lerp(0.85, 1.0, ht);
+
+  // Value → angle  (270° arc, centered at bottom)
+  scale  = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+
+  // ── Anodised tint: push the accent's CHROMA into the silver (keeps the
+  //    brushed-metal luminance, just colours it — Manley-silver → coloured
+  //    aluminium so Neve/console themes read as multi-coloured Vari-Mu). ──
+  lum = (cr + cg + cb) * 0.33333;
+  atr = (cr - lum) * 0.5;
+  atg = (cg - lum) * 0.5;
+  atb = (cb - lum) * 0.5;
+
+  // ── Outer rim (dark ring) ──
+  gfx_set(0.22, 0.22, 0.24, 1);
+  gfx_circle(cx, cy, radius, 1);
+
+  // ── Silver body (anodised toward the accent) ──
+  base_g = 0.62 + 0.06 * ht;          // base silver grey
+  gfx_set(base_g + atr, base_g + atg, base_g + 0.01 + atb, ba);
+  gfx_circle(cx, cy, radius * 0.92, 1);
+
+  // ── Brushed-metal concentric rings ──
+  hi_g = base_g + 0.06;
+  lo_g = base_g - 0.05;
+  i = 0;
+  loop(6,
+    ring_r = radius * (0.85 - i * 0.09);
+    ring_r > radius * 0.35 ? (
+      ring_a = (i % 2 == 0) ? hi_g : lo_g;
+      gfx_set(ring_a + atr, ring_a + atg, ring_a + 0.01 + atb, 0.45);
+      gfx_circle(cx, cy, ring_r, 0);
+    );
+    i += 1;
+  );
+
+  // ── Recessed center hub ──
+  gfx_set(0.15, 0.15, 0.17, 1);
+  gfx_circle(cx, cy, radius * 0.22, 1);
+  gfx_set(0.10, 0.10, 0.12, 1);
+  gfx_circle(cx, cy, radius * 0.16, 1);
+
+  // ── Pointer line (thin white) ──
+  ptr_in  = radius * 0.28;
+  ptr_out = radius * 0.88;
+  gfx_set(0.95, 0.95, 0.97, 1);
+  gfx_line(cx + sin(val_rad) * ptr_in,  cy - cos(val_rad) * ptr_in,
+           cx + sin(val_rad) * ptr_out, cy - cos(val_rad) * ptr_out);
+  // Thicken by 1 px offset
+  gfx_line(cx + sin(val_rad) * ptr_in  + cos(val_rad),
+           cy - cos(val_rad) * ptr_in  + sin(val_rad),
+           cx + sin(val_rad) * ptr_out + cos(val_rad),
+           cy - cos(val_rad) * ptr_out + sin(val_rad));
+
+  // ── Hover glow (warm silver with accent tint) ──
+  hover_t > 0.01 ? (
+    gfx_set(cr * 0.6 + 0.4, cg * 0.6 + 0.4, cb * 0.6 + 0.4, 0.25 * ht);
+    gfx_circle(cx, cy, radius + 2, 0);
+    gfx_circle(cx, cy, radius + 3, 0);
+  );
+);
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12. ABLETON LIVE  (flat minimal device knob)
+// ═══════════════════════════════════════════════════════════════════════════
+// Flat dark body, thin 270° track arc, colored value arc, short radial notch.
+// is_sym = 1 → bipolar: arc fills from 12 o'clock center outward (pan/symmetric).
+// Draw args match ws/ssl family: (cx,cy,r,value,vmin,vmax,is_sym,hover_t,cr,cg,cb,bgr,bgg,bgb)
+// Interact: reuse ws_knob_interact (continuous drag/scroll/dbl-click reset).
+// For bipolar params, pass vdefault = center value so dbl-click snaps to centre.
+
+// Ableton Live macro knob: a flat disc whose BODY follows the theme (bgr/bgg/bgb =
+// the theme panel — light disc on light themes, dark on dark), a faint full-sweep
+// track, a bright perimeter VALUE arc in the accent (cr/cg/cb — any colour), and a
+// short indicator notch that auto-contrasts with the body. Interact: ws_knob_interact.
+function ableton_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                           cr, cg, cb, bgr, bgg, bgb)
+local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
+      start_rad, ht, _bl, ink, lift, nh, pxp, pyp, sxp, cyp)
+(
+  // 1:1 Live glyph: flat low-contrast body, thin rim track, thick value arc
+  // hugging the rim, needle joined to the arc in the same color/weight.
+  ht = pow(hover_t, 2);
+  RAD130_ = 130 * $pi / 180;
+  scale   = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  _bl = (bgr + bgg + bgb) * 0.33333;          // panel luminance -> contrasting ink
+  ink = _bl > 0.5 ? 0.0 : 1.0;                // dark ink on light panels, light on dark
+  lift = _bl > 0.5 ? -0.07 : 0.075;           // body sits just off the panel shade
+  body_r = radius * 0.86;
+
+  // Flat body disc + hairline outline
+  gfx_set(min(max(bgr + lift, 0), 1), min(max(bgg + lift, 0), 1), min(max(bgb + lift, 0), 1), 1);
+  gfx_circle(cx, cy, body_r, 1);
+  gfx_set(ink, ink, ink, 0.10);
+  gfx_circle(cx, cy, body_r, 0);
+
+  // Faint rim track (unswept portion)
+  gfx_set(ink, ink, ink, lerp(0.11, 0.17, ht));
+  gfx_arc(cx, cy, radius, -RAD130_, RAD130_, 1);
+  gfx_arc(cx, cy, radius - 0.7, -RAD130_, RAD130_, 1);
+
+  // Value arc hugging the rim; bipolar (center start) when is_sym
+  n_passes = max(3, floor(radius / 9));
+  gfx_set(cr, cg, cb, lerp(0.92, 1.0, ht));
+  start_rad = is_sym ? 0 : -RAD130_;
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1);
+    i += 1;
+  );
+
+  // Needle center→rim, same color/weight as the arc (one glyph) — quad
+  nh = max(1.0, n_passes * 0.35);
+  pxp = cos(val_rad); pyp = sin(val_rad); sxp = sin(val_rad); cyp = cos(val_rad);
+  gfx_triangle(cx + pxp * nh, cy + pyp * nh,
+               cx - pxp * nh, cy - pyp * nh,
+               cx + sxp * body_r - pxp * nh, cy - cyp * body_r - pyp * nh,
+               cx + sxp * body_r + pxp * nh, cy - cyp * body_r + pyp * nh);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 13. SERUM  (modern softsynth — beveled body, glow arc, tick ring)
+// ═══════════════════════════════════════════════════════════════════════════
+// Dark beveled body, glowing colored value arc, lit tick marks around the rim,
+// bright pointer line + dot, dark centre cap. is_sym → bipolar arc.
+// Interact: reuse ws_knob_interact.
+
+function serum_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                         cr, cg, cb, bgr, bgg, bgb)
+local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
+      ang, tick_a, tr_in, tr_out, glow_a, start_rad, n_ticks, frac,
+      px, py, pr)
+(
+  RAD130_ = 130 * $pi / 180;
+  scale   = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  body_r  = radius * 0.80;                       // large dark body, clean Serum look
+  glow_a  = lerp(0.75, 1.0, hover_t);
+
+  // Beveled dark body: darker outer → slightly lighter inner
+  i = 0;
+  loop(6,
+    frac = i / 5;
+    gfx_set(lerp(0.09, 0.20, frac), lerp(0.09, 0.20, frac), lerp(0.11, 0.23, frac), 1);
+    gfx_circle(cx, cy, body_r * (1 - frac * 0.32), 1, 1);
+    i += 1;
+  );
+  // Subtle rim
+  gfx_set(0.30, 0.32, 0.36, 0.6);
+  gfx_circle(cx, cy, body_r, 0);
+
+  // Faint unlit track ring hugging the rim
+  n_passes = max(2, floor(radius / 6));
+  start_rad = is_sym ? 0 : -RAD130_;
+  gfx_set(bgr, bgg, bgb, 0.22);
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.7, -RAD130_, RAD130_, 1);
+    i += 1;
+  );
+  // Glowing value arc: soft under-glow then crisp bright pass
+  gfx_set(cr, cg, cb, 0.22 * glow_a);
+  i = 0;
+  loop(max(3, n_passes + 1),
+    gfx_arc(cx, cy, radius - i * 0.9, start_rad, val_rad, 1);
+    i += 1;
+  );
+  gfx_set(cr, cg, cb, glow_a);
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1);
+    i += 1;
+  );
+
+  // Thin bright pointer + tip dot
+  px = cx + sin(val_rad) * body_r * 0.86;
+  py = cy - cos(val_rad) * body_r * 0.86;
+  pr = max(1.3, radius * 0.06);
+  gfx_set(cr, cg, cb, glow_a);
+  gfx_line(cx + sin(val_rad) * body_r * 0.18, cy - cos(val_rad) * body_r * 0.18, px, py);
+  gfx_circle(px, py, pr, 1, 1);
+
+  // Dark centre cap
+  gfx_set(0.05, 0.05, 0.07, 1);
+  gfx_circle(cx, cy, body_r * 0.22, 1, 1);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14. ROLAND 808/909  (colored plastic cap, knurled edge)
+// ═══════════════════════════════════════════════════════════════════════════
+// cr/cg/cb = cap colour (e.g. orange/yellow/red). Knurled dark rim, top
+// highlight, white pointer line, drop shadow. Continuous → ws_knob_interact.
+
+function roland_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                          cr, cg, cb, bgr, bgg, bgb)
+local(scale, voffset, val_rad, body_r, i, ang, n_knurl,
+      ptr_in, ptr_out, hl)
+(
+  scale   = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  body_r  = radius * 0.92;
+
+  // Drop shadow
+  gfx_set(0, 0, 0, 0.35);
+  gfx_circle(cx + 1, cy + 2, body_r, 1, 1);
+
+  // Knurled dark edge ring
+  gfx_set(cr * 0.40, cg * 0.40, cb * 0.40, 1);
+  gfx_circle(cx, cy, body_r, 1, 1);
+  n_knurl = 24;
+  i = 0;
+  loop(n_knurl,
+    ang = (i / n_knurl) * tau;
+    gfx_set(cr * 0.25, cg * 0.25, cb * 0.25, 1);
+    gfx_line(cx + sin(ang) * body_r * 0.88, cy - cos(ang) * body_r * 0.88,
+             cx + sin(ang) * body_r,        cy - cos(ang) * body_r);
+    i += 1;
+  );
+
+  // Colored cap
+  gfx_set(cr, cg, cb, 1);
+  gfx_circle(cx, cy, body_r * 0.80, 1, 1);
+
+  // Top highlight (offset toward upper-left)
+  hl = lerp(0.15, 0.30, hover_t);
+  gfx_set(1, 1, 1, hl);
+  gfx_circle(cx - body_r * 0.18, cy - body_r * 0.22, body_r * 0.42, 1, 1);
+
+  // White pointer line (2 px)
+  ptr_in  = body_r * 0.10;
+  ptr_out = body_r * 0.74;
+  gfx_set(0.97, 0.97, 0.97, 1);
+  gfx_line(cx + sin(val_rad) * ptr_in,  cy - cos(val_rad) * ptr_in,
+           cx + sin(val_rad) * ptr_out, cy - cos(val_rad) * ptr_out);
+  gfx_line(cx + sin(val_rad) * ptr_in  + 1, cy - cos(val_rad) * ptr_in,
+           cx + sin(val_rad) * ptr_out + 1, cy - cos(val_rad) * ptr_out);
+
+  // Hover ring
+  hover_t > 0.01 ? (
+    gfx_set(1, 1, 1, 0.20 * hover_t);
+    gfx_circle(cx, cy, body_r + 1, 0);
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 15. FABFILTER  (ultra-minimal flat value ring)
+// ═══════════════════════════════════════════════════════════════════════════
+// No body fill: faint background ring + bright value ring + dot. is_sym →
+// bipolar fill from centre. Hover adds a faint inner glow. ws_knob_interact.
+
+function fabfilter_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                             cr, cg, cb, bgr, bgg, bgb)
+local(RAD130_, scale, voffset, val_rad, n_passes, i,
+      start_rad, arc_a, body_r, frac, gr, gg, gb, n_in, n_out, rr, yo,
+      cap_r, n_teeth, ta, kn_in, perp_x, perp_y, fa, ar_lo, ar_hi, n_band)
+(
+  RAD130_ = 130 * $pi / 180;
+  scale   = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  n_passes = max(3, floor(radius / 4));        // BOLD halo
+  body_r   = radius * 0.76;
+  cap_r    = body_r * 0.80;
+
+  // Drop shadow
+  gfx_set(0, 0, 0, 0.30);
+  gfx_circle(cx, cy + 2, body_r, 1, 1);
+
+  // Knurled grip ring (accent-tinted): dark backing + alternating light/dark ridges.
+  gfx_set(cr * 0.18 + 0.10, cg * 0.18 + 0.10, cb * 0.18 + 0.12, 1);
+  gfx_circle(cx, cy, body_r, 1, 1);
+  kn_in   = body_r * 0.78;
+  n_teeth = max(20, floor(radius * 1.6));
+  i = 0;
+  loop(n_teeth,
+    ta = (i / n_teeth) * 2 * $pi;
+    (i % 2 == 0) ? gfx_set(cr * 0.35 + 0.34, cg * 0.35 + 0.34, cb * 0.35 + 0.36, 1)
+                 : gfx_set(cr * 0.28 + 0.14, cg * 0.28 + 0.14, cb * 0.28 + 0.16, 1);
+    gfx_line(cx + sin(ta) * kn_in,   cy - cos(ta) * kn_in,
+             cx + sin(ta) * body_r,  cy - cos(ta) * body_r);
+    i += 1;
+  );
+
+  // 2-TONE domed cap (accent-tinted): dark bottom → light top, stacked & shifted up.
+  gfx_set(cr * 0.38 + 0.10, cg * 0.38 + 0.10, cb * 0.38 + 0.10, 1);
+  gfx_circle(cx, cy, cap_r, 1, 1);
+  i = 0;
+  loop(8,
+    frac = i / 7;
+    rr = cap_r * (1 - frac * 0.58);
+    yo = -cap_r * 0.30 * frac;
+    gr = lerp(cr * 0.38 + 0.12, cr * 0.45 + 0.52, frac);
+    gg = lerp(cg * 0.38 + 0.12, cg * 0.45 + 0.52, frac);
+    gb = lerp(cb * 0.38 + 0.12, cb * 0.45 + 0.52, frac);
+    gfx_set(gr, gg, gb, 1);
+    gfx_circle(cx, cy + yo, rr, 1, 1);
+    i += 1;
+  );
+  // Specular gloss (tinted) + cap edge + outer rim
+  gfx_set(min(cr * 0.5 + 0.55, 1), min(cg * 0.5 + 0.55, 1), min(cb * 0.5 + 0.58, 1), 0.45);
+  gfx_circle(cx, cy - cap_r * 0.42, cap_r * 0.26, 1, 1);
+  gfx_set(0.10, 0.12, 0.16, 0.8);
+  gfx_circle(cx, cy, cap_r, 0);
+  gfx_circle(cx, cy, body_r, 0);
+
+  // Halo: ALWAYS-visible neutral track groove + BOLD accent value ring on top
+  gfx_set(0.32, 0.34, 0.39, lerp(0.55, 0.80, hover_t));
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.7, -RAD130_, RAD130_, 1);
+    i += 1;
+  );
+  arc_a = lerp(0.9, 1.0, hover_t);
+  gfx_set(cr, cg, cb, arc_a);
+  start_rad = is_sym ? 0 : -RAD130_;
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1);
+    i += 1;
+  );
+
+  // Indicator: a bright BEVELED FACET (angled flat catching light, narrow at the
+  // centre → wide at the rim) with a recessed line down the middle — the FabFilter
+  // "scoop" by the pointer.
+  // Indicator: a thick WHITE ARC band centred on the pointer, hugging the cap's curve
+  // (a true arc — not a pointy wedge). Filled by stacked arc passes. Recessed line.
+  fa     = 0.42;                 // half-angle of the band
+  ar_lo  = cap_r * 0.50;
+  ar_hi  = cap_r * 0.96;
+  n_band = max(8, floor((ar_hi - ar_lo) / 0.6));
+  gfx_set(0.90, 0.93, 0.97, lerp(0.72, 0.92, hover_t));
+  i = 0;
+  loop(n_band + 1,
+    rr = ar_lo + (ar_hi - ar_lo) * (i / n_band);
+    gfx_arc(cx, cy, rr, val_rad - fa, val_rad + fa, 1);
+    i += 1;
+  );
+  // Recessed centre line
+  gfx_set(0.20, 0.22, 0.28, lerp(0.6, 0.85, hover_t));
+  gfx_line(cx + sin(val_rad) * cap_r * 0.30, cy - cos(val_rad) * cap_r * 0.30,
+           cx + sin(val_rad) * cap_r * 0.96, cy - cos(val_rad) * cap_r * 0.96);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 16. ROTARY SELECTOR SWITCH  (stepped position picker)
+// ═══════════════════════════════════════════════════════════════════════════
+// Chicken-head beak pointer snapping to n_pos discrete positions across 270°.
+// `pos` is an integer 0..n_pos-1. Position pips light the active step.
+// Uses its OWN interact (rotsel_interact) — drag and scroll snap to integers.
+
+function rotsel_knob_draw(cx, cy, radius, pos, n_pos, hover_t, cr, cg, cb, bgr, bgg, bgb)
+local(i, ang, body_r, frac, dx, dy, tick_r1, tick_r2, sel_rad,
+      ph_out, beak, pip_r)
+(
+  body_r = radius * 0.62;
+
+  // Position pips (tick + dot); active one tinted
+  i = 0;
+  loop(n_pos,
+    frac = n_pos > 1 ? i / (n_pos - 1) : 0;
+    ang  = (-130 + frac * 260) * $pi / 180;
+    tick_r1 = radius * 1.02;
+    tick_r2 = radius * 1.18;
+    (i == pos) ? gfx_set(cr, cg, cb, 1) : gfx_set(bgr, bgg, bgb, 0.5);
+    gfx_line(cx + sin(ang) * tick_r1, cy - cos(ang) * tick_r1,
+             cx + sin(ang) * tick_r2, cy - cos(ang) * tick_r2);
+    pip_r = (i == pos) ? max(2, radius * 0.08) : max(1, radius * 0.05);
+    gfx_circle(cx + sin(ang) * radius * 0.92, cy - cos(ang) * radius * 0.92, pip_r, 1, 1);
+    i += 1;
+  );
+
+  // Selected angle
+  frac = n_pos > 1 ? pos / (n_pos - 1) : 0;
+  sel_rad = (-130 + frac * 260) * $pi / 180;
+
+  // Body (shadow + fill + rim)
+  gfx_set(0, 0, 0, 0.30);
+  gfx_circle(cx + 1, cy + 2, body_r, 1, 1);
+  gfx_set(0.14, 0.14, 0.16, 1);
+  gfx_circle(cx, cy, body_r, 1, 1);
+  gfx_set(0.30, 0.30, 0.33, lerp(0.5, 0.9, hover_t));
+  gfx_circle(cx, cy, body_r, 0);
+
+  // Chicken-head beak pointer (3 lines forming a wedge)
+  dx = sin(sel_rad);
+  dy = -cos(sel_rad);
+  ph_out = body_r * 1.15;
+  beak   = body_r * 0.22;
+  gfx_set(0.92, 0.92, 0.95, 1);
+  gfx_line(cx, cy, cx + dx * ph_out, cy + dy * ph_out);
+  gfx_line(cx + dx * ph_out, cy + dy * ph_out,
+           cx + dx * body_r * 0.5 - dy * beak, cy + dy * body_r * 0.5 + dx * beak);
+  gfx_line(cx + dx * ph_out, cy + dy * ph_out,
+           cx + dx * body_r * 0.5 + dy * beak, cy + dy * body_r * 0.5 - dx * beak);
+
+  // Centre cap
+  gfx_set(0.05, 0.05, 0.07, 1);
+  gfx_circle(cx, cy, body_r * 0.28, 1, 1);
+);
+
+// Interact: drag (vertical) and scroll snap to integer positions 0..n_pos-1.
+// Returns the new position. Sets mem[5]=1 on any change (caller commits).
+function rotsel_interact(mem, cx, cy, radius, cur_pos, n_pos)
+local(d, hover, new_pos, dragdelta)
+(
+  d = dist(mx, my, cx, cy);
+  hover = (d <= radius * 1.2);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_pos = cur_pos;
+  mem[5] = 0;
+
+  // Start drag
+  lmb_down && hover && !mem[1] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_pos;
+  );
+  // Continue drag — one position per radius of vertical travel, snapped
+  mem[1] && LMB ? (
+    dragdelta = (mem[2] - my) / radius;
+    new_pos = clamp(floor(mem[3] + dragdelta + 0.5), 0, n_pos - 1);
+    new_pos != cur_pos ? mem[5] = 1;
+  );
+  // End drag
+  mem[1] && !LMB ? ( mem[1] = 0; );
+  // Scroll steps one position
+  hover && frame_wheel != 0 ? (
+    new_pos = clamp(cur_pos + (frame_wheel > 0 ? 1 : -1), 0, n_pos - 1);
+    new_pos != cur_pos ? mem[5] = 1;
+  );
+  new_pos;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 17. FL STUDIO  (dark domed body, bright value arc, light centre notch)
+// ═══════════════════════════════════════════════════════════════════════════
+// FL "Fruity" knob: dark round body with a faint background track, a bright
+// accent value arc (270°, bipolar when is_sym), and a thin light notch pointer.
+// Args match the ws/ssl family. Interact: reuse ws_knob_interact.
+function fl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                      cr, cg, cb, bgr, bgg, bgb)
+local(RAD130_, scale, voffset, val_rad, body_r, n_passes, i, arc_a, start_rad,
+      notch_in, notch_out, ht)
+(
+  ht = pow(hover_t, 2);
+  RAD130_ = 130 * $pi / 180;
+  scale   = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  body_r  = radius * 0.70;
+  n_passes = max(2, floor(radius / 6));
+
+  // Faint background track arc
+  gfx_set(bgr, bgg, bgb, lerp(0.18, 0.30, ht));
+  i = 0;
+  loop(n_passes, gfx_arc(cx, cy, radius - i * 0.7, -RAD130_, RAD130_, 1); i += 1; );
+
+  // Dark domed body + inner highlight disc + rim
+  gfx_set(0, 0, 0, 0.30);
+  gfx_circle(cx, cy + 1, body_r, 1, 1);
+  gfx_set(0.13, 0.13, 0.15, 1);
+  gfx_circle(cx, cy, body_r, 1, 1);
+  gfx_set(0.22 + 0.06 * ht, 0.22 + 0.06 * ht, 0.24 + 0.06 * ht, 1);
+  gfx_circle(cx, cy, body_r * 0.66, 1, 1);
+  gfx_set(0.30, 0.30, 0.33, lerp(0.4, 0.8, ht));
+  gfx_circle(cx, cy, body_r, 0);
+
+  // Bright accent value arc (from left, or centre when bipolar)
+  arc_a = lerp(0.85, 1.0, ht);
+  gfx_set(cr, cg, cb, arc_a);
+  start_rad = is_sym ? 0 : -RAD130_;
+  i = 0;
+  loop(n_passes, gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1); i += 1; );
+
+  // Light centre notch pointer
+  notch_in  = body_r * 0.30;
+  notch_out = body_r * 0.92;
+  gfx_set(0.92, 0.92, 0.95, arc_a);
+  gfx_line(cx + sin(val_rad) * notch_in,  cy - cos(val_rad) * notch_in,
+           cx + sin(val_rad) * notch_out, cy - cos(val_rad) * notch_out);
+  gfx_line(cx + sin(val_rad) * notch_in  + 1, cy - cos(val_rad) * notch_in,
+           cx + sin(val_rad) * notch_out + 1, cy - cos(val_rad) * notch_out);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 18. PRO TOOLS  (old Digidesign / DigiRack EQ3 — glossy 3D sphere)
+// ═══════════════════════════════════════════════════════════════════════════
+// Glossy colour-tinted GLASS DOME (cr/cg/cb = band hue; grey accent → silver Q/FREQ
+// knob), strong specular reflection, metallic bevel rim, dark pointer, green LED arc.
+// Args match the ws/ssl family. Interact: reuse ws_knob_interact.
+function pt_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                      cr, cg, cb, bgr, bgg, bgb)
+local(scale, voffset, val_rad, body_r, ht, i, n_passes, RAD130_,
+      start_rad, ptr_in, ptr_out, frac, rr, yo, gr, gg, gb, cap_r)
+(
+  ht = pow(hover_t, 2);
+  RAD130_ = 130 * $pi / 180;
+  scale   = 260 / (vmax - vmin);
+  voffset = -vmin * 260 / (vmax - vmin) - 130;
+  val_rad = (value * scale + voffset) * $pi / 180;
+  body_r  = radius * 0.72;
+  n_passes = max(2, floor(radius / 8));
+
+  // Green LED value arc above the cap (DigiRack indicator): faint track + lit value
+  gfx_set(bgr, bgg, bgb, 0.35);
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.6, -RAD130_, RAD130_, 1);
+    i += 1;
+  );
+  gfx_set(0.40, 0.90, 0.42, lerp(0.8, 1.0, ht));
+  start_rad = is_sym ? 0 : -RAD130_;
+  i = 0;
+  loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.6, start_rad, val_rad, 1);
+    i += 1;
+  );
+
+  // Drop shadow
+  gfx_set(0, 0, 0, 0.32);
+  gfx_circle(cx, cy + 2, body_r, 1, 1);
+  // Grey metallic housing ring (DigiRack collar around the cap)
+  gfx_set(0.42, 0.43, 0.46, 1);
+  gfx_circle(cx, cy, body_r, 1, 1);
+
+  // Glossy colour dome — DARK TOP -> BRIGHT LOWER reflection (DigiRack lighting):
+  // light pools in the lower half, top stays saturated/shadowed.
+  cap_r = body_r * 0.86;
+  gfx_set(cr * 0.30, cg * 0.30, cb * 0.32, 1);
+  gfx_circle(cx, cy, cap_r, 1, 1);
+  i = 0;
+  loop(9,
+    frac = i / 8;
+    rr = cap_r * (1 - frac * 0.40);
+    yo = cap_r * 0.30 * frac;           // shift DOWN — reflection at the bottom
+    gr = lerp(cr * 0.30, min(cr * 1.25 + 0.20, 1), frac);
+    gg = lerp(cg * 0.30, min(cg * 1.25 + 0.20, 1), frac);
+    gb = lerp(cb * 0.32, min(cb * 1.25 + 0.20, 1), frac);
+    gfx_set(gr, gg, gb, 1);
+    gfx_circle(cx, cy + yo, rr, 1, 1);
+    i += 1;
+  );
+  // Bright glossy reflection crescent in the lower-middle
+  gfx_set(min(cr * 1.5 + 0.30, 1), min(cg * 1.5 + 0.30, 1), min(cb * 1.5 + 0.30, 1), 0.32);
+  gfx_circle(cx, cy + cap_r * 0.30, cap_r * 0.34, 1, 1);
+  // Dark separator between cap and housing
+  gfx_set(0.16, 0.17, 0.20, 1);
+  gfx_circle(cx, cy, cap_r, 0);
+
+  // Dark pointer line (3 passes for weight)
+  ptr_in  = cap_r * 0.12;
+  ptr_out = cap_r * 0.86;
+  gfx_set(0.08, 0.08, 0.09, 1);
+  gfx_line(cx + sin(val_rad) * ptr_in,  cy - cos(val_rad) * ptr_in,
+           cx + sin(val_rad) * ptr_out, cy - cos(val_rad) * ptr_out);
+  gfx_line(cx + sin(val_rad) * ptr_in  + cos(val_rad), cy - cos(val_rad) * ptr_in  + sin(val_rad),
+           cx + sin(val_rad) * ptr_out + cos(val_rad), cy - cos(val_rad) * ptr_out + sin(val_rad));
+  gfx_line(cx + sin(val_rad) * ptr_in  - cos(val_rad), cy - cos(val_rad) * ptr_in  - sin(val_rad),
+           cx + sin(val_rad) * ptr_out - cos(val_rad), cy - cos(val_rad) * ptr_out - sin(val_rad));
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THEME DISPATCHER  —  rk_knob_draw / rk_knob_interact
+// ═══════════════════════════════════════════════════════════════════════════
+// One entry point every themed plugin calls. The bridge publishes a style index
+// (GS_THEME_KNOB_P / GS_THEME_KNOB_S, sourced from rk_lua_theme T.KNOBS) and this
+// routes to the matching *_knob_draw. Style enum (MUST stay in lockstep with the
+// Lua T.KNOBS comment):
+//   1 ssl · 2 varimu · 3 api · 4 ws(witti) · 5 neve · 6 jo · 7 mpc · 8 jog
+//   · 10 sp · 11 encoder · 12 pultec · 13 ableton · 14 fl · 15 protools
+//   · 16 fabfilter · 17 serum · 18 roland · 19 pultec_cream · 20 neve_alt.
+//   1 / 9 (bb, needs mem) / 0 (bridge idle) / unknown fall back to ssl.
+//   IDs are persisted in ExtState (eon_knob_<theme>) — APPEND ONLY, never renumber.
+//
+// VISUAL DISPATCH ONLY: every style shares ssl_knob_interact via rk_knob_interact,
+// so feel is identical across consoles and only the look changes.
+//
+// Superset arg list — each underlying fn takes the subset it needs. value/vmin/
+// vmax are real units; the position-style knobs (jo, sp) get a normalised 0..1.
+
+function rk_knob_draw(style, cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                      cr, cg, cb, n_det, bgr, bgg, bgb)
+local(vn) (
+  vn = (value - vmin) / max(0.0000001, vmax - vmin);
+  style == 2  ? varimu_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
+  style == 3  ? api_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb) :
+  style == 4  ? ws_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
+  style == 5  ? neve_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb, n_det) :
+  style == 6  ? jo_knob_draw(cx, cy, radius, vn, hover_t, cr, cg, cb) :
+  style == 7  ? mpc_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
+  style == 8  ? jog_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
+  style == 10 ? sp_knob_draw(cx, cy, radius, vn, hover_t) :
+  style == 12 ? pultec_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
+  style == 13 ? ableton_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
+  style == 14 ? fl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
+  style == 15 ? pt_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
+  style == 11 ? encoder_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
+  style == 16 ? fabfilter_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
+  style == 17 ? serum_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
+  style == 18 ? roland_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
+  style == 19 ? pultec_cream_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
+  style == 20 ? neve_alt_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb, n_det) :
+                ssl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, n_det);
+);
+
+// Uniform interaction for every style (visual dispatch only — see above).
+function rk_knob_interact(style, mem, cx, cy, radius, cur_val, vmin, vmax, vdefault, n_detents) (
+  ssl_knob_interact(mem, cx, cy, radius, cur_val, vmin, vmax, vdefault, n_detents);
+);

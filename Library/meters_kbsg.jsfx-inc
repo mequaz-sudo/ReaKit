@@ -1,0 +1,1017 @@
+@init
+__meters_kbsg_loaded = 1;
+
+// meters_kbsg.jsfx-inc — EON Studios Meter Library (ReaKit) v4.0 (13 Types + DSP)
+// ═══════════════════════════════════════════════════════════════════════════
+// v4.0 changelog:
+//   - VU DSP ported from ZenoMOD VU Meter v1.7.7
+//     * Spring-damper with hard-stop clamping (speed zeroed, no bounce)
+//     * Configurable response (0-100, default 50) — controls momentum
+//     * Configurable damping (0-0.01, default 0.0053 = ZenoMOD exact), clamped to [0, 0.999999]
+//     * 10-sample peak accumulator (captures transients between physics steps)
+//     * Denormal protection on all needle speed integrators
+//     * Configurable warn level (default -6 dBFS) + peak LED over states
+//     * mtr_set_vu_warn(db), mtr_set_vu_led_hold(ds), mtr_set_vu_response/damping
+//   - VU drawing ported from ZenoMOD: 90° sweep, pos[] scale, hold arc, peak LED
+//   - All other DSP unchanged (peak, RMS, LUFS, phase, gonio, etc.)
+//
+// Types included:
+//   Page A — Level Meters:
+//     1.  LED Bar Graph (stereo) — vertical G/Y/R segments + peak hold
+//     2.  VU Needle              — spring-damper physics, non-linear IEC scale
+//     4.  Peak + RMS             — legacy single-bar + Mawi-style pro version
+//     5.  Gain Reduction         — horizontal bar, driven by compressor
+//     6.  Ring Meter             — circular arc fill, stereo pair
+//     7.  Clip Indicator         — red LED per channel, click to reset
+//   Page B — Analysis:
+//     8.  Plasma Bargraph        — horizontal soft capsules, wide color
+//     9.  Phase Correlation      — horizontal -1 to +1
+//     10. Goniometer             — X/Y Lissajous scatter plot (AGC)
+//     11. Waveform Display       — live signal trace
+//     12. Spectrum Mini          — 16-band bars with decay
+//     13. Loudness (LUFS)        — K-weighted short-term + numeric
+//     14. Threshold Overlay      — draggable horizontal reference line
+//
+// DSP GLOBALS (set by meter_process_sample):
+//   mtr_peak_l/r, mtr_pk_hold_l/r, mtr_rms_l/r, mtr_rms_hold_l/r
+//   mtr_vu_l/r, mtr_vu_hold_l/r, mtr_vu_m/s, mtr_vu_hold_m/s,
+//   mtr_gr_db, mtr_phase, mtr_lufs_s
+//   mtr_clip_l/r, mtr_vu_nd_pos_l/r/m/s, mtr_vu_ref_level
+//
+// MEMORY LAYOUT (mtr_base + offset):
+//   0..255    — goniometer ring buffer (128 x/y pairs)
+//   256..767  — waveform L ring buffer (512 samples)
+//   768..1279 — waveform R ring buffer (512 samples)
+//   1280..1295 — spectrum 16-band current magnitudes
+//   1296..1311 — spectrum 16-band peak magnitudes
+//   1312..1319 — LUFS sliding window (8 blocks of 0.4s)
+//   1320..1349 — true RMS L block history (30 blocks of 10ms)
+//   1350..1379 — true RMS R block history (30 blocks of 10ms)
+//   Total: 1380 slots
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// UTILITY HELPERS
+// ─────────────────────────────────────────────────────────────────────────
+function clamp(x, lo, hi) ( min(max(x, lo), hi); );
+function lerp(a, b, t) ( a + (b - a) * t; );
+function dist(x1, y1, x2, y2) ( sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)); );
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// DSP: Initialization and per-sample processing
+// ─────────────────────────────────────────────────────────────────────────
+
+function mtr_init_kweight()
+local(db, f0, Q, K, Vh, Vb, a0)
+(
+  db = 3.999843853973347;
+  f0 = 1681.974450955533;
+  Q  = 0.7071752369554196;
+  K  = tan($pi * f0 / srate);
+  Vh = pow(10, db / 20);
+  Vb = pow(Vh, 0.4996667741545416);
+  a0 = 1 + K / Q + K * K;
+  mtr_kw_f1a1 = 2 * (K * K - 1) / a0;
+  mtr_kw_f1a2 = (1 - K / Q + K * K) / a0;
+  mtr_kw_f1b0 = (Vh + Vb * K / Q + K * K) / a0;
+  mtr_kw_f1b1 = 2 * (K * K - Vh) / a0;
+  mtr_kw_f1b2 = (Vh - Vb * K / Q + K * K) / a0;
+
+  f0 = 38.13547087602444;
+  Q  = 0.5003270373238773;
+  K  = tan($pi * f0 / srate);
+  a0 = 1 + K / Q + K * K;
+  mtr_kw_f2a1 = 2 * (K * K - 1) / a0;
+  mtr_kw_f2a2 = (1 - K / Q + K * K) / a0;
+  mtr_kw_f2b0 = 1 / a0;
+  mtr_kw_f2b1 = -2 / a0;
+  mtr_kw_f2b2 = 1 / a0;
+);
+
+function meter_init(base)
+(
+  mtr_base = base;
+  memset(base, 0, 1380);
+
+  // ── Feature flags (default OFF — plugins enable what they need) ──
+  mtr_en_vu      = 0;   // VU spring-damper physics
+  mtr_en_rms     = 0;   // True RMS (300ms block)
+  mtr_en_lufs    = 0;   // K-weighted LUFS
+  mtr_en_phase   = 0;   // Phase correlation
+  mtr_en_gonio   = 0;   // Goniometer buffer
+  mtr_en_wave    = 0;   // Waveform buffer
+  mtr_en_spectrum = 0;  // Spectrum decay
+
+  mtr_peak_l = -100; mtr_peak_r = -100;
+  mtr_lin_peak_l = 0; mtr_lin_peak_r = 0;
+  mtr_lin_pk_hold_l = 0; mtr_lin_pk_hold_r = 0;
+  mtr_rms_l  = -100; mtr_rms_r  = -100;
+  mtr_vu_l   = -20;  mtr_vu_r   = -20;
+  mtr_vu_m   = -20;  mtr_vu_s   = -20;
+  mtr_gr_db  = 0;
+  mtr_phase  = 1;
+  mtr_lufs_s = -100;
+  mtr_clip_l = 0;    mtr_clip_r = 0;
+
+  mtr_pk_hold_l = -100; mtr_pk_hold_r = -100;
+  mtr_pk_hold_cnt_l = 0; mtr_pk_hold_cnt_r = 0;
+  mtr_rms_hold_l = -100; mtr_rms_hold_r = -100;
+  mtr_rms_hold_cnt_l = 0; mtr_rms_hold_cnt_r = 0;
+
+  mtr_rms_blk_acc_l = 0; mtr_rms_blk_acc_r = 0;
+  mtr_rms_blk_cnt   = 0;
+  mtr_rms_blk_pos   = 0;
+  mtr_rms_filled    = 0;
+
+  // ── VU spring-damper model (ZenoMOD port) ───────────────────
+  mtr_vu_nd_pos_l = 0;   mtr_vu_nd_pos_r = 0;
+  mtr_vu_nd_speed_l = 0; mtr_vu_nd_speed_r = 0;
+  mtr_vu_nd_pos_m = 0;   mtr_vu_nd_pos_s = 0;
+  mtr_vu_nd_speed_m = 0; mtr_vu_nd_speed_s = 0;
+  mtr_vu_scnt = 0;
+
+  mtr_vu_ref_level = -18;
+  mtr_vu_response  = 50;   // ZenoMOD: 0-100, default 50
+  mtr_vu_damping   = 0.0053; // ZenoMOD exact @init value: damp = 1 - 0.0053 * (48000/srate)
+  mtr_vu_dt     = 10 / srate;
+  mtr_vu_mom    = 0.00010 + 0.00032 * mtr_vu_response * mtr_vu_response * mtr_vu_response / 125000;
+  mtr_vu_damp   = min(max(1 - mtr_vu_damping * (48000 / srate), 0), 0.999999);
+  mtr_vu_offset = 0.0074;
+  mtr_vu_fact   = pow(10, (-mtr_vu_ref_level - 10) / 20) * 0.3785;
+
+  // Peak accumulator for 10-sample window (captures transients)
+  mtr_vu_pk_acc_l = 0; mtr_vu_pk_acc_r = 0;
+  mtr_vu_pk_acc_m = 0; mtr_vu_pk_acc_s = 0;
+
+  // Warn level LED (ZenoMOD peak LED)
+  mtr_vu_warn_level = -6;   // dBFS threshold, configurable
+  mtr_vu_warn_lim   = pow(10, mtr_vu_warn_level / 20);
+  mtr_vu_led_hold   = 3;    // deciseconds (ZenoMOD default)
+  mtr_vu_over_l = 0; mtr_vu_over_r = 0;
+  mtr_vu_over_m = 0; mtr_vu_over_s = 0;
+
+  mtr_vu_hold_l = -20; mtr_vu_hold_r = -20;
+  mtr_vu_hold_cnt_l = 0; mtr_vu_hold_cnt_r = 0;
+  mtr_vu_hold_m = -20; mtr_vu_hold_s = -20;
+  mtr_vu_hold_cnt_m = 0; mtr_vu_hold_cnt_s = 0;
+
+  mtr_ph_mid  = 0; mtr_ph_side = 0; mtr_ph_cnt = 0;
+
+  mtr_gonio_pos = 0; mtr_gonio_div = 0;
+  mtr_wave_pos  = 0; mtr_wave_div  = 0;
+  mtr_fft_acc   = 0;
+  mtr_gonio_gain = 1;
+
+  mtr_lufs_blk_acc = 0; mtr_lufs_blk_cnt = 0;
+  mtr_lufs_win_pos = 0;
+  mtr_lufs_filled  = 0;
+
+  mtr_kw_l_f1p1 = 0; mtr_kw_l_f1p2 = 0;
+  mtr_kw_l_f2p1 = 0; mtr_kw_l_f2p2 = 0;
+  mtr_kw_r_f1p1 = 0; mtr_kw_r_f1p2 = 0;
+  mtr_kw_r_f2p1 = 0; mtr_kw_r_f2p2 = 0;
+
+  mtr_pk_rel    = exp(-1 / (srate * 0.3));
+  mtr_pk_hold_time  = (srate * 2) | 0;
+  mtr_pk_hold_decay = 20 / (srate * 0.6);
+  // Linear-domain hold decay: equivalent to ~33 dB/s drop
+  // pow(10, -decay_dB_per_sample / 20) per sample
+  mtr_pk_hold_decay_lin = exp(-mtr_pk_hold_decay * 0.11512925465);
+  mtr_rms_blk_size = (srate * 0.01) | 0;
+  mtr_rms_n_blks   = 30;
+  mtr_init_kweight();
+  mtr_lufs_blk_size = (srate * 0.4) | 0;
+);
+
+function mtr_set_vu_ref(ref_db)
+(
+  mtr_vu_ref_level = ref_db;
+  mtr_vu_fact = pow(10, (-ref_db - 10) / 20) * 0.3785;
+);
+
+function mtr_set_vu_response(resp)
+(
+  mtr_vu_response = resp;
+  mtr_vu_mom = 0.00010 + 0.00032 * resp * resp * resp / 125000;
+);
+
+function mtr_set_vu_damping(dmp)
+(
+  mtr_vu_damping = dmp;
+  mtr_vu_damp = min(max(1 - dmp * (48000 / srate), 0), 0.999999);
+);
+
+function mtr_set_vu_warn(warn_db)
+(
+  mtr_vu_warn_level = warn_db;
+  mtr_vu_warn_lim = pow(10, warn_db / 20);
+);
+
+function mtr_set_vu_led_hold(ds)
+(
+  mtr_vu_led_hold = ds;
+);
+
+
+// ── Convert linear peak values to dB — call from @gfx before drawing ──
+function mtr_update_db()
+  local(lin_hold_l, lin_hold_r)
+(
+  mtr_peak_l = mtr_lin_peak_l > 0.000001 ? 20 * log10(mtr_lin_peak_l) : -100;
+  mtr_peak_r = mtr_lin_peak_r > 0.000001 ? 20 * log10(mtr_lin_peak_r) : -100;
+  mtr_pk_hold_l = mtr_lin_pk_hold_l > 0.000001 ? 20 * log10(mtr_lin_pk_hold_l) : -100;
+  mtr_pk_hold_r = mtr_lin_pk_hold_r > 0.000001 ? 20 * log10(mtr_lin_pk_hold_r) : -100;
+);
+
+function meter_process_sample(l, r)
+local(abs_l, abs_r,
+      abs_m, abs_s, force_m, force_s,
+      mid, side, kw_l, kw_r, f1p0, f2p0, band,
+      rms_sum_l, rms_sum_r, rms_cnt, agc_peak,
+      force_l, force_r)
+(
+  abs_l = abs(l);
+  abs_r = abs(r);
+
+  // ── Peak envelope (linear domain — no log10) ──────────────────
+  abs_l > mtr_lin_peak_l ? mtr_lin_peak_l = abs_l
+  : mtr_lin_peak_l = abs_l + mtr_pk_rel * (mtr_lin_peak_l - abs_l);
+  abs_r > mtr_lin_peak_r ? mtr_lin_peak_r = abs_r
+  : mtr_lin_peak_r = abs_r + mtr_pk_rel * (mtr_lin_peak_r - abs_r);
+
+  // ── Peak hold (linear domain) ──────────────────────────────────
+  mtr_lin_peak_l >= mtr_lin_pk_hold_l ? (
+    mtr_lin_pk_hold_l = mtr_lin_peak_l; mtr_pk_hold_cnt_l = mtr_pk_hold_time;
+  ) : mtr_pk_hold_cnt_l > 0 ? (
+    mtr_pk_hold_cnt_l -= 1;
+  ) : (
+    mtr_lin_pk_hold_l *= mtr_pk_hold_decay_lin;
+  );
+  mtr_lin_peak_r >= mtr_lin_pk_hold_r ? (
+    mtr_lin_pk_hold_r = mtr_lin_peak_r; mtr_pk_hold_cnt_r = mtr_pk_hold_time;
+  ) : mtr_pk_hold_cnt_r > 0 ? (
+    mtr_pk_hold_cnt_r -= 1;
+  ) : (
+    mtr_lin_pk_hold_r *= mtr_pk_hold_decay_lin;
+  );
+
+  // ── True RMS (300ms block-based) — gated by mtr_en_rms ────────
+  mtr_en_rms ? (
+    mtr_rms_blk_acc_l += l * l;
+    mtr_rms_blk_acc_r += r * r;
+    mtr_rms_blk_cnt += 1;
+    mtr_rms_blk_cnt >= mtr_rms_blk_size ? (
+      mtr_base[1320 + mtr_rms_blk_pos] = mtr_rms_blk_acc_l / mtr_rms_blk_cnt;
+      mtr_base[1350 + mtr_rms_blk_pos] = mtr_rms_blk_acc_r / mtr_rms_blk_cnt;
+      mtr_rms_blk_pos = (mtr_rms_blk_pos + 1) % mtr_rms_n_blks;
+      mtr_rms_filled = min(mtr_rms_filled + 1, mtr_rms_n_blks);
+      mtr_rms_blk_acc_l = 0; mtr_rms_blk_acc_r = 0; mtr_rms_blk_cnt = 0;
+      rms_sum_l = 0; rms_sum_r = 0;
+      rms_cnt = mtr_rms_filled;
+      band = 0;
+      loop(rms_cnt,
+        rms_sum_l += mtr_base[1320 + band];
+        rms_sum_r += mtr_base[1350 + band];
+        band += 1;
+      );
+      rms_cnt > 0 ? (
+        rms_sum_l /= rms_cnt;
+        rms_sum_r /= rms_cnt;
+        mtr_rms_l = rms_sum_l > 0.000000001 ? 10 * log10(rms_sum_l) : -100;
+        mtr_rms_r = rms_sum_r > 0.000000001 ? 10 * log10(rms_sum_r) : -100;
+      );
+    );
+
+    // ── RMS hold ─────────────────────────────────────────────────
+    mtr_rms_l >= mtr_rms_hold_l ? (
+      mtr_rms_hold_l = mtr_rms_l; mtr_rms_hold_cnt_l = mtr_pk_hold_time;
+    ) : mtr_rms_hold_cnt_l > 0 ? (
+      mtr_rms_hold_cnt_l -= 1;
+    ) : (
+      mtr_rms_hold_l = max(mtr_rms_hold_l - mtr_pk_hold_decay, -100);
+    );
+    mtr_rms_r >= mtr_rms_hold_r ? (
+      mtr_rms_hold_r = mtr_rms_r; mtr_rms_hold_cnt_r = mtr_pk_hold_time;
+    ) : mtr_rms_hold_cnt_r > 0 ? (
+      mtr_rms_hold_cnt_r -= 1;
+    ) : (
+      mtr_rms_hold_r = max(mtr_rms_hold_r - mtr_pk_hold_decay, -100);
+    );
+  );
+
+  // ── VU — gated by mtr_en_vu ────────────────────────────────────
+  mtr_en_vu ? (
+    // VU sum accumulator (ZenoMOD exact: smpL_sum += abs(smpL))
+    mtr_vu_pk_acc_l += abs_l;
+    mtr_vu_pk_acc_r += abs_r;
+
+    // VU warn LED detection (per-sample, like ZenoMOD)
+    abs_l > mtr_vu_warn_lim ? mtr_vu_over_l = srate;
+    abs_r > mtr_vu_warn_lim ? mtr_vu_over_r = srate;
+
+    // VU spring-damper — ZenoMOD physics (every 10 samples)
+    mtr_vu_scnt += 1;
+    mtr_vu_scnt >= 10 ? (
+      // L channel (ZenoMOD exact: average over 10-sample window)
+      force_l = (mtr_vu_pk_acc_l * 0.1) * mtr_vu_fact - (mtr_vu_nd_pos_l * 0.1 + mtr_vu_offset);
+      mtr_vu_nd_speed_l += force_l * mtr_vu_dt / mtr_vu_mom;
+      mtr_vu_nd_speed_l *= mtr_vu_damp;
+      mtr_vu_nd_pos_l += mtr_vu_nd_speed_l * mtr_vu_dt;
+      mtr_vu_nd_pos_l < 0 || mtr_vu_nd_pos_l > 1 ? mtr_vu_nd_speed_l = 0;
+      mtr_vu_nd_pos_l = min(max(mtr_vu_nd_pos_l, 0), 1);
+      abs(mtr_vu_nd_speed_l) < 0.0000001 ? mtr_vu_nd_speed_l = 0;
+
+      // R channel (ZenoMOD exact: average over 10-sample window)
+      force_r = (mtr_vu_pk_acc_r * 0.1) * mtr_vu_fact - (mtr_vu_nd_pos_r * 0.1 + mtr_vu_offset);
+      mtr_vu_nd_speed_r += force_r * mtr_vu_dt / mtr_vu_mom;
+      mtr_vu_nd_speed_r *= mtr_vu_damp;
+      mtr_vu_nd_pos_r += mtr_vu_nd_speed_r * mtr_vu_dt;
+      mtr_vu_nd_pos_r < 0 || mtr_vu_nd_pos_r > 1 ? mtr_vu_nd_speed_r = 0;
+      mtr_vu_nd_pos_r = min(max(mtr_vu_nd_pos_r, 0), 1);
+      abs(mtr_vu_nd_speed_r) < 0.0000001 ? mtr_vu_nd_speed_r = 0;
+
+      // M/S channels
+      abs_m = abs((l + r) * 0.5);
+      abs_s = abs((l - r) * 0.5);
+      mtr_vu_pk_acc_m += abs_m;
+      mtr_vu_pk_acc_s += abs_s;
+      // M/S warn detection
+      abs_m > mtr_vu_warn_lim ? mtr_vu_over_m = srate;
+      abs_s > mtr_vu_warn_lim ? mtr_vu_over_s = srate;
+
+      force_m = (mtr_vu_pk_acc_m * 0.1) * mtr_vu_fact - (mtr_vu_nd_pos_m * 0.1 + mtr_vu_offset);
+      mtr_vu_nd_speed_m += force_m * mtr_vu_dt / mtr_vu_mom;
+      mtr_vu_nd_speed_m *= mtr_vu_damp;
+      mtr_vu_nd_pos_m += mtr_vu_nd_speed_m * mtr_vu_dt;
+      mtr_vu_nd_pos_m < 0 || mtr_vu_nd_pos_m > 1 ? mtr_vu_nd_speed_m = 0;
+      mtr_vu_nd_pos_m = min(max(mtr_vu_nd_pos_m, 0), 1);
+      abs(mtr_vu_nd_speed_m) < 0.0000001 ? mtr_vu_nd_speed_m = 0;
+
+      force_s = (mtr_vu_pk_acc_s * 0.1) * mtr_vu_fact - (mtr_vu_nd_pos_s * 0.1 + mtr_vu_offset);
+      mtr_vu_nd_speed_s += force_s * mtr_vu_dt / mtr_vu_mom;
+      mtr_vu_nd_speed_s *= mtr_vu_damp;
+      mtr_vu_nd_pos_s += mtr_vu_nd_speed_s * mtr_vu_dt;
+      mtr_vu_nd_pos_s < 0 || mtr_vu_nd_pos_s > 1 ? mtr_vu_nd_speed_s = 0;
+      mtr_vu_nd_pos_s = min(max(mtr_vu_nd_pos_s, 0), 1);
+      abs(mtr_vu_nd_speed_s) < 0.0000001 ? mtr_vu_nd_speed_s = 0;
+
+      // Decay warn LEDs (ZenoMOD: overL -= 100 / led_hold every 10 samples)
+      mtr_vu_over_l -= 100 / mtr_vu_led_hold;
+      mtr_vu_over_r -= 100 / mtr_vu_led_hold;
+      mtr_vu_over_m -= 100 / mtr_vu_led_hold;
+      mtr_vu_over_s -= 100 / mtr_vu_led_hold;
+
+      // Reset sum accumulators (ZenoMOD: smpL_sum = 0)
+      mtr_vu_pk_acc_l = 0; mtr_vu_pk_acc_r = 0;
+      mtr_vu_pk_acc_m = 0; mtr_vu_pk_acc_s = 0;
+
+      mtr_vu_scnt = 0;
+    );
+    // Convert needle positions → VU dB via linear remap (ZenMod method)
+    mtr_vu_l = mtr_vu_nd_pos_l * 23 - 20;
+    mtr_vu_r = mtr_vu_nd_pos_r * 23 - 20;
+    mtr_vu_m = mtr_vu_nd_pos_m * 23 - 20;
+    mtr_vu_s = mtr_vu_nd_pos_s * 23 - 20;
+
+    // ── VU hold ──────────────────────────────────────────────────
+    mtr_vu_l >= mtr_vu_hold_l ? (
+      mtr_vu_hold_l = mtr_vu_l; mtr_vu_hold_cnt_l = mtr_pk_hold_time;
+    ) : mtr_vu_hold_cnt_l > 0 ? (
+      mtr_vu_hold_cnt_l -= 1;
+    ) : (
+      mtr_vu_hold_l = max(mtr_vu_hold_l - mtr_pk_hold_decay, -20);
+    );
+    mtr_vu_r >= mtr_vu_hold_r ? (
+      mtr_vu_hold_r = mtr_vu_r; mtr_vu_hold_cnt_r = mtr_pk_hold_time;
+    ) : mtr_vu_hold_cnt_r > 0 ? (
+      mtr_vu_hold_cnt_r -= 1;
+    ) : (
+      mtr_vu_hold_r = max(mtr_vu_hold_r - mtr_pk_hold_decay, -20);
+    );
+    mtr_vu_m >= mtr_vu_hold_m ? (
+      mtr_vu_hold_m = mtr_vu_m; mtr_vu_hold_cnt_m = mtr_pk_hold_time;
+    ) : mtr_vu_hold_cnt_m > 0 ? (
+      mtr_vu_hold_cnt_m -= 1;
+    ) : (
+      mtr_vu_hold_m = max(mtr_vu_hold_m - mtr_pk_hold_decay, -20);
+    );
+    mtr_vu_s >= mtr_vu_hold_s ? (
+      mtr_vu_hold_s = mtr_vu_s; mtr_vu_hold_cnt_s = mtr_pk_hold_time;
+    ) : mtr_vu_hold_cnt_s > 0 ? (
+      mtr_vu_hold_cnt_s -= 1;
+    ) : (
+      mtr_vu_hold_s = max(mtr_vu_hold_s - mtr_pk_hold_decay, -20);
+    );
+  );
+
+  // ── Clip detection ─────────────────────────────────────────────
+  abs_l >= 1.0 ? mtr_clip_l = 1;
+  abs_r >= 1.0 ? mtr_clip_r = 1;
+
+  // ── Phase correlation (50ms block) — gated by mtr_en_phase ────
+  mtr_en_phase ? (
+    mid  = (l + r) * 0.5;
+    side = (l - r) * 0.5;
+    mtr_ph_mid  += mid * mid;
+    mtr_ph_side += side * side;
+    mtr_ph_cnt  += 1;
+    mtr_ph_cnt >= ((srate * 0.05) | 0) ? (
+      mtr_ph_mid > 0 || mtr_ph_side > 0 ? (
+        mtr_phase = (mtr_ph_mid - mtr_ph_side) / max(mtr_ph_mid + mtr_ph_side, 0.000001);
+      ) : ( mtr_phase = 1; );
+      mtr_ph_mid = 0; mtr_ph_side = 0; mtr_ph_cnt = 0;
+    );
+  );
+
+  // ── K-weighting + LUFS — gated by mtr_en_lufs ─────────────────
+  mtr_en_lufs ? (
+    f1p0 = l - mtr_kw_f1a1 * mtr_kw_l_f1p1 - mtr_kw_f1a2 * mtr_kw_l_f1p2;
+    kw_l = mtr_kw_f1b0 * f1p0 + mtr_kw_f1b1 * mtr_kw_l_f1p1 + mtr_kw_f1b2 * mtr_kw_l_f1p2;
+    mtr_kw_l_f1p2 = mtr_kw_l_f1p1; mtr_kw_l_f1p1 = f1p0;
+    f2p0 = kw_l - mtr_kw_f2a1 * mtr_kw_l_f2p1 - mtr_kw_f2a2 * mtr_kw_l_f2p2;
+    kw_l = mtr_kw_f2b0 * f2p0 + mtr_kw_f2b1 * mtr_kw_l_f2p1 + mtr_kw_f2b2 * mtr_kw_l_f2p2;
+    mtr_kw_l_f2p2 = mtr_kw_l_f2p1; mtr_kw_l_f2p1 = f2p0;
+
+    f1p0 = r - mtr_kw_f1a1 * mtr_kw_r_f1p1 - mtr_kw_f1a2 * mtr_kw_r_f1p2;
+    kw_r = mtr_kw_f1b0 * f1p0 + mtr_kw_f1b1 * mtr_kw_r_f1p1 + mtr_kw_f1b2 * mtr_kw_r_f1p2;
+    mtr_kw_r_f1p2 = mtr_kw_r_f1p1; mtr_kw_r_f1p1 = f1p0;
+    f2p0 = kw_r - mtr_kw_f2a1 * mtr_kw_r_f2p1 - mtr_kw_f2a2 * mtr_kw_r_f2p2;
+    kw_r = mtr_kw_f2b0 * f2p0 + mtr_kw_f2b1 * mtr_kw_r_f2p1 + mtr_kw_f2b2 * mtr_kw_r_f2p2;
+    mtr_kw_r_f2p2 = mtr_kw_r_f2p1; mtr_kw_r_f2p1 = f2p0;
+
+    // LUFS short-term (3.2s sliding window)
+    mtr_lufs_blk_acc += kw_l * kw_l + kw_r * kw_r;
+    mtr_lufs_blk_cnt += 1;
+    mtr_lufs_blk_cnt >= mtr_lufs_blk_size ? (
+      mtr_base[1312 + mtr_lufs_win_pos] = mtr_lufs_blk_acc / mtr_lufs_blk_cnt;
+      mtr_lufs_win_pos = (mtr_lufs_win_pos + 1) & 7;
+      mtr_lufs_filled = min(mtr_lufs_filled + 1, 8);
+      mtr_lufs_blk_acc = 0; mtr_lufs_blk_cnt = 0;
+      kw_l = 0; band = 0;
+      loop(mtr_lufs_filled,
+        kw_l += mtr_base[1312 + band]; band += 1;
+      );
+      mtr_lufs_filled > 0 ? (
+        kw_l /= mtr_lufs_filled;
+        mtr_lufs_s = kw_l > 0.000001 ? -0.691 + 10 * log10(kw_l) : -100;
+      );
+    );
+  );
+
+  // ── Goniometer buffer + AGC — gated by mtr_en_gonio ───────────
+  mtr_en_gonio ? (
+    mtr_gonio_div += 1;
+    mtr_gonio_div >= 8 ? (
+      mid  = (l + r) * 0.5; side = (l - r) * 0.5;
+      mtr_base[mtr_gonio_pos * 2]     = side;
+      mtr_base[mtr_gonio_pos * 2 + 1] = mid;
+      mtr_gonio_pos = (mtr_gonio_pos + 1) & 127;
+      mtr_gonio_div = 0;
+      agc_peak = max(abs(mid), abs(side));
+      agc_peak > mtr_gonio_gain ? (
+        mtr_gonio_gain = agc_peak;
+      ) : (
+        mtr_gonio_gain *= 0.9998;
+        mtr_gonio_gain = max(mtr_gonio_gain, 0.001);
+      );
+    );
+  );
+
+  // ── Waveform buffer — gated by mtr_en_wave ────────────────────
+  mtr_en_wave ? (
+    mtr_wave_div += 1;
+    mtr_wave_div >= 4 ? (
+      mtr_base[256 + mtr_wave_pos] = l;
+      mtr_base[768 + mtr_wave_pos] = r;
+      mtr_wave_pos = (mtr_wave_pos + 1) & 511;
+      mtr_wave_div = 0;
+    );
+  );
+
+  // ── Spectrum decay — gated by mtr_en_spectrum ──────────────────
+  mtr_en_spectrum ? (
+    mtr_fft_acc += 1;
+    mtr_fft_acc >= ((srate / 30) | 0) ? (
+      band = 0;
+      loop(16,
+        mtr_base[1280 + band] *= 0.80;
+        mtr_base[1296 + band] *= 0.92;
+        band += 1;
+      );
+      mtr_fft_acc = 0;
+    );
+  );
+);
+
+function meter_fft_feed(band, energy) (
+  band >= 0 && band < 16 ? (
+    mtr_base[1280 + band] = max(mtr_base[1280 + band], energy);
+    mtr_base[1296 + band] = max(mtr_base[1296 + band], energy);
+  );
+);
+
+function meter_set_gr(gr_db) ( mtr_gr_db = gr_db; );
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// DRAW HELPERS
+// ─────────────────────────────────────────────────────────────────────────
+
+function mtr_db_to_norm(db, db_min, db_max) (
+  clamp((db - db_min) / (db_max - db_min), 0, 1);
+);
+
+function mtr_led_color(norm) (
+  norm < 0.6 ? gfx_set(0.1, 0.8, 0.15, 1)
+  : norm < 0.85 ? gfx_set(0.9, 0.8, 0.1, 1)
+  : gfx_set(0.95, 0.15, 0.1, 1);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. LED BAR GRAPH (Stereo) + peak hold
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_led_bar_draw(x, y, w, h, db_l, db_r, db_min, db_max)
+local(n_segs, seg_h, gap, bar_w, i, norm_l, norm_r, seg_norm, sy,
+      hold_norm_l, hold_norm_r, hold_y_l, hold_y_r, tw, th)
+(
+  mtr_update_db();
+  n_segs = 24; gap = 1;
+  seg_h = (h - (n_segs - 1) * gap) / n_segs;
+  bar_w = (w - 4) / 2;
+  norm_l = mtr_db_to_norm(db_l, db_min, db_max);
+  norm_r = mtr_db_to_norm(db_r, db_min, db_max);
+  hold_norm_l = mtr_db_to_norm(mtr_pk_hold_l, db_min, db_max);
+  hold_norm_r = mtr_db_to_norm(mtr_pk_hold_r, db_min, db_max);
+
+  gfx_set(0.06, 0.06, 0.08, 1); gfx_rect(x, y, w, h);
+  gfx_set(0.20, 0.20, 0.22, 1); gfx_rect(x, y, w, h, 0);
+
+  i = 0;
+  loop(n_segs,
+    seg_norm = (n_segs - 1 - i) / (n_segs - 1);
+    sy = y + i * (seg_h + gap);
+    seg_norm < norm_l ? mtr_led_color(seg_norm) : gfx_set(0.10, 0.10, 0.12, 1);
+    gfx_rect(x + 1, sy, bar_w, seg_h);
+    seg_norm < norm_r ? mtr_led_color(seg_norm) : gfx_set(0.10, 0.10, 0.12, 1);
+    gfx_rect(x + bar_w + 3, sy, bar_w, seg_h);
+    i += 1;
+  );
+
+  gfx_set(1, 1, 1, 0.9);
+  hold_y_l = y + h * (1 - hold_norm_l);
+  hold_y_r = y + h * (1 - hold_norm_r);
+  hold_norm_l > 0.001 ? gfx_line(x + 1, hold_y_l, x + bar_w, hold_y_l);
+  hold_norm_r > 0.001 ? gfx_line(x + bar_w + 3, hold_y_r, x + w - 1, hold_y_r);
+
+  gfx_set(0.45, 0.45, 0.45, 1); gfx_setfont(1, "Arial", 9);
+  gfx_x = x + w + 3; gfx_y = y - 2;            gfx_drawstr("0");
+  gfx_x = x + w + 3; gfx_y = y + h * 0.25 - 4; gfx_drawstr("-15");
+  gfx_x = x + w + 3; gfx_y = y + h * 0.5 - 4;  gfx_drawstr("-30");
+  gfx_x = x + w + 3; gfx_y = y + h - 8;         gfx_drawstr("-60");
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. VU NEEDLE METER — REMOVED (replaced by vu_real_kbsg.jsfx-inc)
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. PEAK + RMS PRO (Mawi-style stretching with dB grid)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_peak_rms_mawi_draw(x, y, w, h, peak_l, peak_r, rms_l, rms_r,
+                                             pk_hold_l, pk_hold_r, rms_hold_l, rms_hold_r,
+                                             floor_db, grid_step)
+local(db_min, db_max, center_gap, half_w, lx, lw, rx, rw2,
+      norm_pk_l, norm_pk_r, norm_rms_l, norm_rms_r,
+      norm_pkh_l, norm_pkh_r, norm_rmsh_l, norm_rmsh_r,
+      bar_pk_l, bar_pk_r, bar_rms_l, bar_rms_r,
+      hold_y, hold_h,
+      px_per_db, grid_px, font_sz, n_grids, gi, grid_y, grid_db,
+      tw, th, text_gap)
+(
+  mtr_update_db();
+  db_min = floor_db;
+  db_max = 0;
+  center_gap = max(1, w * 0.01) | 0;
+  half_w = ((w - center_gap) / 2) | 0;
+  lx = x; lw = half_w;
+  rx = x + half_w + center_gap;
+  rw2 = half_w;
+  hold_h = max(3, h * 0.008) | 0;
+
+  norm_pk_l  = mtr_db_to_norm(peak_l, db_min, db_max);
+  norm_pk_r  = mtr_db_to_norm(peak_r, db_min, db_max);
+  norm_rms_l = mtr_db_to_norm(rms_l, db_min, db_max);
+  norm_rms_r = mtr_db_to_norm(rms_r, db_min, db_max);
+  norm_pkh_l = mtr_db_to_norm(pk_hold_l, db_min, db_max);
+  norm_pkh_r = mtr_db_to_norm(pk_hold_r, db_min, db_max);
+  norm_rmsh_l = mtr_db_to_norm(rms_hold_l, db_min, db_max);
+  norm_rmsh_r = mtr_db_to_norm(rms_hold_r, db_min, db_max);
+
+  bar_pk_l  = (h * norm_pk_l) | 0;
+  bar_pk_r  = (h * norm_pk_r) | 0;
+  bar_rms_l = (h * norm_rms_l) | 0;
+  bar_rms_r = (h * norm_rms_r) | 0;
+
+  // Background
+  gfx_set(0.0, 0.0, 0.0, 0.3);
+  gfx_rect(x, y, w, h);
+
+  // Peak bars (dim green)
+  gfx_set(0.0, 1.0, 0.0, 0.25);
+  bar_pk_l > 0 ? gfx_rect(lx, y + h - bar_pk_l, lw, bar_pk_l);
+  bar_pk_r > 0 ? gfx_rect(rx, y + h - bar_pk_r, rw2, bar_pk_r);
+
+  // Peak hold (yellow)
+  gfx_set(1.0, 1.0, 0.0, 0.55);
+  norm_pkh_l > 0.001 ? (
+    hold_y = (y + h - h * norm_pkh_l) | 0;
+    gfx_rect(lx, hold_y, lw, min(hold_h, h * norm_pkh_l));
+  );
+  norm_pkh_r > 0.001 ? (
+    hold_y = (y + h - h * norm_pkh_r) | 0;
+    gfx_rect(rx, hold_y, rw2, min(hold_h, h * norm_pkh_r));
+  );
+
+  // RMS bars (brighter green)
+  gfx_set(0.0, 1.0, 0.0, 0.45);
+  bar_rms_l > 0 ? gfx_rect(lx, y + h - bar_rms_l, lw, bar_rms_l);
+  bar_rms_r > 0 ? gfx_rect(rx, y + h - bar_rms_r, rw2, bar_rms_r);
+
+  // RMS hold (green)
+  gfx_set(0.0, 1.0, 0.0, 0.50);
+  norm_rmsh_l > 0.001 ? (
+    hold_y = (y + h - h * norm_rmsh_l) | 0;
+    gfx_rect(lx, hold_y, lw, min(hold_h, h * norm_rmsh_l));
+  );
+  norm_rmsh_r > 0.001 ? (
+    hold_y = (y + h - h * norm_rmsh_r) | 0;
+    gfx_rect(rx, hold_y, rw2, min(hold_h, h * norm_rmsh_r));
+  );
+
+  // dB Grid overlay
+  grid_step > 0 && h > 20 ? (
+    px_per_db = (h - 1) / abs(db_min);
+    grid_px = grid_step * px_per_db;
+    font_sz = min(max(grid_px * 0.7, 8), 18) | 0;
+    gfx_setfont(1, "Verdana", font_sz);
+    n_grids = (abs(db_min) / grid_step) | 0;
+    gi = 0;
+    loop(n_grids + 1,
+      grid_db = gi * grid_step;
+      grid_y = (y + grid_px * gi) | 0;
+      grid_y >= y && grid_y <= y + h ? (
+        gi == 0 ? sprintf(#g_label, "0") : sprintf(#g_label, "%d", -grid_db);
+        gfx_measurestr(#g_label, tw, th);
+        (gi & 1) == 0 ? gfx_set(1, 1, 1, 0.65) : gfx_set(1, 1, 1, 0.40);
+        gfx_x = x + (w - tw) / 2; gfx_y = grid_y - th / 2;
+        gfx_drawstr(#g_label);
+        text_gap = tw / 2 + 4;
+        gfx_line(x + 4, grid_y, x + w / 2 - text_gap, grid_y);
+        gfx_line(x + w / 2 + text_gap, grid_y, x + w - 4, grid_y);
+      );
+      gi += 1;
+    );
+  );
+);
+
+
+// Legacy single-channel Peak+RMS wrapper
+function mtr_peak_rms_draw(x, y, w, h, peak_db, rms_db, db_min, db_max, hold_db)
+local(norm_p, norm_r, norm_h, hold_y, rms_h, tw, th)
+(
+  mtr_update_db();
+  norm_p = mtr_db_to_norm(peak_db, db_min, db_max);
+  norm_r = mtr_db_to_norm(rms_db, db_min, db_max);
+  norm_h = mtr_db_to_norm(hold_db, db_min, db_max);
+
+  gfx_set(0.06, 0.06, 0.08, 1); gfx_rect(x, y, w, h);
+  gfx_set(0.20, 0.20, 0.22, 1); gfx_rect(x, y, w, h, 0);
+
+  rms_h = h * norm_r;
+  gfx_set(0.15, 0.50, 0.25, 0.7);
+  gfx_rect(x + 2, y + h - rms_h, w - 4, rms_h);
+
+  gfx_set(0.20, 0.80, 0.35, 0.9);
+  gfx_rect(x + w * 0.2, y + h - h * norm_p, w * 0.6, h * norm_p);
+
+  hold_y = y + h * (1 - norm_h);
+  norm_h > 0.001 ? (
+    gfx_set(1.0, 1.0, 0.3, 0.9);
+    gfx_line(x + 1, hold_y, x + w - 1, hold_y);
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. GAIN REDUCTION METER
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_gr_draw(x, y, w, h, gr_db)
+local(norm, bar_w, tw, th)
+(
+  norm = clamp(-gr_db / 20, 0, 1);
+  gfx_set(0.06, 0.06, 0.08, 1); gfx_rect(x, y, w, h);
+  gfx_set(0.20, 0.20, 0.22, 1); gfx_rect(x, y, w, h, 0);
+  bar_w = w * norm;
+  gfx_set(0.85, 0.50, 0.10, 0.9); gfx_rect(x, y + 1, bar_w, h - 2);
+  gfx_set(0.5, 0.5, 0.5, 0.5); gfx_line(x, y + h / 2, x + w, y + h / 2);
+  gfx_set(0.9, 0.9, 0.9, 1); gfx_setfont(1, "Arial", max(9, h * 0.5));
+  sprintf(#gr_v, "%.1f dB", gr_db);
+  gfx_measurestr(#gr_v, tw, th);
+  gfx_x = x + w + 4; gfx_y = y + (h - th) / 2; gfx_drawstr(#gr_v);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. RING METER
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_ring_draw(cx, cy, radius, db_l, db_r, db_min, db_max)
+local(norm_l, norm_r, i, n_passes, half_pi, three_half_pi, tw, th)
+(
+  norm_l = mtr_db_to_norm(db_l, db_min, db_max);
+  norm_r = mtr_db_to_norm(db_r, db_min, db_max);
+  n_passes = max(3, floor(radius / 6));
+  half_pi = $pi * 0.5; three_half_pi = $pi * 1.5;
+
+  gfx_set(0.12, 0.12, 0.14, 1);
+  i = 0; loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.5, half_pi, three_half_pi, 1);
+    gfx_arc(cx, cy, radius - i * 0.5, -half_pi, half_pi, 1);
+    i += 1;
+  );
+  mtr_led_color(norm_l);
+  i = 0; loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.5, three_half_pi - $pi * norm_l, three_half_pi, 1);
+    i += 1;
+  );
+  mtr_led_color(norm_r);
+  i = 0; loop(n_passes,
+    gfx_arc(cx, cy, radius - i * 0.5, -half_pi, -half_pi + $pi * norm_r, 1);
+    i += 1;
+  );
+  gfx_set(0.5, 0.5, 0.5, 1); gfx_setfont(1, "Arial", max(9, radius * 0.18));
+  gfx_measurestr("L    R", tw, th);
+  gfx_x = cx - tw / 2; gfx_y = cy - th / 2; gfx_drawstr("L    R");
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. CLIP INDICATOR
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_clip_draw(x, y, led_r, clip_l, clip_r)
+local(gap, tw, th)
+(
+  gap = led_r * 3;
+  clip_l ? ( gfx_set(1.0, 0.1, 0.1, 1); gfx_circle(x, y, led_r, 1);
+             gfx_set(1.0, 0.1, 0.1, 0.2); gfx_circle(x, y, led_r * 2, 1);
+  ) : ( gfx_set(0.15, 0.05, 0.05, 1); gfx_circle(x, y, led_r, 1); );
+  gfx_set(0.25, 0.25, 0.28, 1); gfx_circle(x, y, led_r, 0);
+
+  clip_r ? ( gfx_set(1.0, 0.1, 0.1, 1); gfx_circle(x + gap, y, led_r, 1);
+             gfx_set(1.0, 0.1, 0.1, 0.2); gfx_circle(x + gap, y, led_r * 2, 1);
+  ) : ( gfx_set(0.15, 0.05, 0.05, 1); gfx_circle(x + gap, y, led_r, 1); );
+  gfx_set(0.25, 0.25, 0.28, 1); gfx_circle(x + gap, y, led_r, 0);
+
+  gfx_set(0.5, 0.5, 0.5, 1); gfx_setfont(1, "Arial", max(8, led_r));
+  gfx_measurestr("L", tw, th);
+  gfx_x = x - tw / 2; gfx_y = y + led_r + 3; gfx_drawstr("L");
+  gfx_measurestr("R", tw, th);
+  gfx_x = x + gap - tw / 2; gfx_y = y + led_r + 3; gfx_drawstr("R");
+);
+
+// REQUIRED HOST GLOBALS: mx, my, lmb_down
+function mtr_clip_interact(x, y, led_r)
+local(gap, d_l, d_r)
+(
+  gap = led_r * 3;
+  lmb_down ? (
+    d_l = dist(mx, my, x, y);
+    d_r = dist(mx, my, x + gap, y);
+    d_l <= led_r * 2 ? mtr_clip_l = 0;
+    d_r <= led_r * 2 ? mtr_clip_r = 0;
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. PLASMA BARGRAPH
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_plasma_draw(x, y, w, h, db_val, db_min, db_max)
+local(norm, n_caps, cap_w, gap, i, cx, cap_norm, cr, cg, cb)
+(
+  norm = mtr_db_to_norm(db_val, db_min, db_max);
+  n_caps = 20; gap = 2;
+  cap_w = (w - (n_caps - 1) * gap) / n_caps;
+  gfx_set(0.04, 0.04, 0.06, 1); gfx_rect(x, y, w, h);
+  cr = 0.08; cg = 0.08; cb = 0.10;
+  i = 0;
+  loop(n_caps,
+    cx = x + i * (cap_w + gap);
+    cap_norm = i / (n_caps - 1);
+    cap_norm < norm ? (
+      cap_norm < 0.25 ? ( cr = 0.1; cg = 0.3; cb = 0.9; )
+      : cap_norm < 0.5 ? ( cr = 0.1; cg = 0.8; cb = 0.5; )
+      : cap_norm < 0.75 ? ( cr = 0.8; cg = 0.8; cb = 0.1; )
+      : ( cr = 0.95; cg = 0.2; cb = 0.1; );
+      gfx_set(cr, cg, cb, 0.9);
+    ) : (
+      gfx_set(0.08, 0.08, 0.10, 1);
+    );
+    gfx_rect(cx, y + 1, cap_w, h - 2);
+    gfx_roundrect(cx, y + 1, cap_w, h - 2, min(cap_w / 2, 4), 1);
+    i += 1;
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. PHASE CORRELATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_phase_draw(x, y, w, h, phase)
+local(center_x, bar_w, tw, th)
+(
+  center_x = x + w / 2;
+  gfx_set(0.06, 0.06, 0.08, 1); gfx_rect(x, y, w, h);
+  gfx_set(0.20, 0.20, 0.22, 1); gfx_rect(x, y, w, h, 0);
+  gfx_set(0.30, 0.30, 0.32, 1); gfx_line(center_x, y + 1, center_x, y + h - 1);
+  phase >= 0 ? (
+    bar_w = (w / 2) * phase;
+    gfx_set(0.2, 0.8, 0.3, 0.8); gfx_rect(center_x, y + 2, bar_w, h - 4);
+  ) : (
+    bar_w = (w / 2) * (-phase);
+    gfx_set(0.9, 0.2, 0.15, 0.8); gfx_rect(center_x - bar_w, y + 2, bar_w, h - 4);
+  );
+  gfx_set(0.5, 0.5, 0.5, 1); gfx_setfont(1, "Arial", max(8, h * 0.5));
+  gfx_measurestr("-1", tw, th);
+  gfx_x = x + 2; gfx_y = y + (h - th) / 2; gfx_drawstr("-1");
+  gfx_measurestr("+1", tw, th);
+  gfx_x = x + w - tw - 2; gfx_y = y + (h - th) / 2; gfx_drawstr("+1");
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10. GONIOMETER (AGC)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_gonio_draw(cx, cy, radius)
+local(i, gx, gy, px, py, age, alpha, k, dx, dy, r_sq, agc_scale, tw, th)
+(
+  gfx_set(0.04, 0.04, 0.06, 1); gfx_circle(cx, cy, radius, 1);
+  gfx_set(0.15, 0.15, 0.18, 1); gfx_circle(cx, cy, radius, 0);
+  gfx_set(0.12, 0.12, 0.15, 1);
+  gfx_line(cx - radius, cy, cx + radius, cy);
+  gfx_line(cx, cy - radius, cx, cy + radius);
+  gfx_set(0.10, 0.10, 0.13, 1); k = radius * 0.7;
+  gfx_line(cx - k, cy - k, cx + k, cy + k);
+  gfx_line(cx - k, cy + k, cx + k, cy - k);
+  gfx_set(0.35, 0.35, 0.38, 1); gfx_setfont(1, "Arial", 9);
+  gfx_x = cx - radius + 2; gfx_y = cy - radius + 2; gfx_drawstr("L");
+  gfx_x = cx + radius - 8; gfx_y = cy - radius + 2; gfx_drawstr("R");
+  gfx_measurestr("M", tw, th);
+  gfx_x = cx - tw / 2; gfx_y = cy - radius + 2; gfx_drawstr("M");
+  gfx_measurestr("+S", tw, th);
+  gfx_x = cx + radius - tw; gfx_y = cy - th / 2; gfx_drawstr("+S");
+
+  agc_scale = mtr_gonio_gain > 0.001 ? (0.8 / mtr_gonio_gain) : 1;
+  agc_scale = min(agc_scale, 500);
+  r_sq = radius * radius;
+  i = 0;
+  loop(128,
+    gx = mtr_base[i * 2]; gy = mtr_base[i * 2 + 1];
+    px = cx + gx * radius * agc_scale; py = cy - gy * radius * agc_scale;
+    dx = px - cx; dy = py - cy;
+    dx * dx + dy * dy <= r_sq ? (
+      age = ((mtr_gonio_pos - i + 128) & 127) / 127;
+      alpha = (1 - age) * 0.8;
+      gfx_set(0.3, 0.9, 0.4, alpha); gfx_circle(px, py, 1, 1);
+    );
+    i += 1;
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11. WAVEFORM DISPLAY
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_wave_draw(x, y, w, h, channel)
+local(buf_off, n_points, i, sx, sy, samp, prev_x, prev_y, half_h)
+(
+  buf_off = channel == 0 ? 256 : 768;
+  n_points = min(w, 512); half_h = h / 2;
+  gfx_set(0.04, 0.04, 0.06, 1); gfx_rect(x, y, w, h);
+  gfx_set(0.15, 0.15, 0.18, 1); gfx_rect(x, y, w, h, 0);
+  gfx_set(0.15, 0.15, 0.18, 1); gfx_line(x, y + half_h, x + w, y + half_h);
+  channel == 0 ? gfx_set(0.3, 0.85, 0.4, 0.9) : gfx_set(0.3, 0.5, 0.9, 0.9);
+  prev_x = x; prev_y = y + half_h;
+  i = 0;
+  loop(n_points,
+    sx = x + (i * w) / n_points;
+    samp = mtr_base[buf_off + ((mtr_wave_pos + i) & 511)];
+    sy = y + half_h - samp * half_h;
+    i > 0 ? gfx_line(prev_x, prev_y, sx, sy);
+    prev_x = sx; prev_y = sy; i += 1;
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12. SPECTRUM MINI
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_spectrum_draw(x, y, w, h)
+local(n_bands, bar_w, gap, i, bx, mag, bar_h, norm)
+(
+  n_bands = 16; gap = 1;
+  bar_w = (w - (n_bands - 1) * gap) / n_bands;
+  gfx_set(0.04, 0.04, 0.06, 1); gfx_rect(x, y, w, h);
+  gfx_set(0.12, 0.12, 0.15, 1); gfx_rect(x, y, w, h, 0);
+  i = 0;
+  loop(n_bands,
+    bx = x + i * (bar_w + gap);
+    mag = mtr_base[1280 + i]; norm = clamp(mag, 0, 1);
+    bar_h = h * norm; mtr_led_color(norm);
+    gfx_rect(bx, y + h - bar_h, bar_w, bar_h);
+    mag = mtr_base[1296 + i]; norm = clamp(mag, 0, 1);
+    gfx_set(1, 1, 1, 0.8);
+    gfx_rect(bx, y + h - h * norm - 1, bar_w, 1);
+    i += 1;
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 13. LOUDNESS (LUFS)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function mtr_lufs_draw(x, y, w, h, lufs_val)
+local(norm, bar_w, num_h, bar_y, bar_h, tw, th)
+(
+  norm = mtr_db_to_norm(lufs_val, -60, 0);
+  num_h = h * 0.55;  // increased from 0.45 to give text zone more room
+  gfx_set(0.06, 0.06, 0.08, 1); gfx_rect(x, y, w, h);
+  gfx_set(0.18, 0.18, 0.20, 1); gfx_rect(x, y, w, h, 0);
+  gfx_set(0.9, 0.9, 0.9, 1);
+  gfx_setfont(1, "Arial", max(12, num_h * 0.55), 'b');
+  lufs_val > -100 ? sprintf(#lufs_v, "%.1f", lufs_val) : #lufs_v = "---";
+  gfx_measurestr(#lufs_v, tw, th);
+  gfx_x = x + (w - tw) / 2; gfx_y = y + 4; gfx_drawstr(#lufs_v);
+  gfx_set(0.5, 0.5, 0.5, 1); gfx_setfont(1, "Arial", max(8, num_h * 0.28));
+  gfx_measurestr("LUFS", tw, th);
+  gfx_x = x + (w - tw) / 2; gfx_y = y + num_h - th - 2; gfx_drawstr("LUFS");
+  // Bar starts below text zone with guaranteed gap
+  bar_y = y + num_h + 2;
+  bar_h = h - num_h - 6;
+  bar_w = (w - 6) * norm;
+  gfx_set(0.08, 0.08, 0.10, 1); gfx_rect(x + 3, bar_y, w - 6, bar_h);
+  gfx_set(0.3, 0.6, 0.9, 0.8); gfx_rect(x + 3, bar_y, bar_w, bar_h);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14. THRESHOLD OVERLAY
+// ═══════════════════════════════════════════════════════════════════════════
+// REQUIRED HOST GLOBALS: mx, my, LMB, lmb_down, dt, hv_speed
+//   (must be set each frame by the host @gfx before calling these)
+
+function mtr_threshold_draw(x, y, w, h, threshold_db, db_min, db_max)
+local(norm, ty, i)
+(
+  norm = mtr_db_to_norm(threshold_db, db_min, db_max);
+  ty = y + h * (1 - norm);
+  gfx_set(1.0, 0.8, 0.2, 0.8);
+  i = x; loop(w / 6, gfx_line(i, ty, min(i + 3, x + w), ty); i += 6; );
+  gfx_set(1.0, 0.8, 0.2, 1); gfx_setfont(1, "Arial", 9);
+  sprintf(#thr_v, "%.1f dB", threshold_db);
+  gfx_x = x + w + 3; gfx_y = ty - 5; gfx_drawstr(#thr_v);
+);
+
+function mtr_threshold_interact(mem, x, y, w, h, cur_thr, db_min, db_max)
+local(norm, ty, hover, new_thr, drag_norm)
+(
+  norm = mtr_db_to_norm(cur_thr, db_min, db_max);
+  ty = y + h * (1 - norm);
+  hover = (mx >= x && mx <= x + w && my >= ty - 6 && my <= ty + 6);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  new_thr = cur_thr;
+  lmb_down && hover && !mem[1] ? ( mem[1] = 1; );
+  mem[1] && LMB ? (
+    drag_norm = 1 - (my - y) / max(1, h);
+    drag_norm = clamp(drag_norm, 0, 1);
+    new_thr = db_min + drag_norm * (db_max - db_min);
+  );
+  mem[1] && !LMB ? ( mem[1] = 0; );
+  new_thr;
+);

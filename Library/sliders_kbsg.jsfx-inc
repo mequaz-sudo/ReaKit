@@ -1,0 +1,1599 @@
+// sliders_kbsg.jsfx-inc — KBSG Slider Library (17 Types)
+// ═══════════════════════════════════════════════════════════════════════════
+// Types included:
+//   1.  Standard Horizontal  — flat track with rounded thumb cap
+//   2.  Vertical Fader       — console-style tall fader with knurled cap
+//   3.  Filled Bar           — horizontal bar that fills left-to-right
+//   4.  Stepped/Notched      — snaps to discrete values with detent marks
+//   5.  Bipolar              — center-zero, fills left or right from center
+//   6.  Mini/Compact         — thin inline slider for tight UI spaces
+//   7.  Arc/Curved           — 240° knob-style arc track with dot thumb
+//   8.  Range Slider         — two thumbs defining a min/max range
+//   9.  Vertical LED Strip   — segmented LED bar, bottom-to-top
+//  10.  Vertical Groove      — recessed slot with metallic capsule thumb
+//  11.  Vertical SSL         — SSL 4000: coarse-rib grey cap, dotted dB scale
+//  12.  Vertical Neve        — Neve V: smooth grey cap, white center line
+//  13.  Vertical API         — dark slot, chrome capsule, LED dots
+//  14.  Vertical Tube        — amber gradient tube fill, brass cap
+//  15.  Vertical Pro Tools   — chrome spool/I-beam cap, uneven dB scale (unipolar)
+//  16.  Vertical MPC         — wide slotted track, chunky grooved cap (bipolar)
+//  17.  Vertical Console 4K  — tall chrome fine-ribbed cap (unipolar)
+//
+// COLOR SYSTEM:
+//   Call sld_set_accent(r, g, b) to change the fill/accent color for all
+//   slider types. Default is blue (0.35, 0.55, 0.85).
+//   Call sld_set_accent2(r, g, b) for a secondary color (used by bipolar
+//   negative side, range hi-thumb, etc). Default is orange (0.80, 0.45, 0.25).
+//
+// REQUIRED GLOBALS (set by caller each frame):
+//   mx, my        — mouse_x, mouse_y
+//   LMB           — mouse_cap & 1
+//   lmb_down      — LMB && !prev_LMB (edge detect, computed ONCE per frame)
+//   CTRL          — mouse_cap & 4
+//   SHIFT         — mouse_cap & 8
+//   dt            — frame delta time
+//   hv_speed      — hover animation speed (typ. 11)
+//   frame_wheel   — mouse_wheel / 120 (caller zeroes mouse_wheel after)
+//
+// MEMORY CONVENTION (16 slots per instance):
+//   [0]  hover_t        [1]  is_dragging     [2]  drag_ref (mouse pos)
+//   [3]  drag_start_val [4]  last_click_time  [5]  automate_flag
+//   [6]  is_active      [7]  aux_value        [8..15] type-specific
+//
+//   Range slider: [7]=which_thumb (0=lo,1=hi), [8]=drag_start_val2
+//
+// INTERACT RETURN: new slider value (0..1). Caller checks change, calls
+//                  sliderchange/automate.
+// ═══════════════════════════════════════════════════════════════════════════
+
+@init
+
+// ─────────────────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────────────────
+function _sld_clamp(x, lo, hi) ( min(max(x, lo), hi); );
+function _sld_lerp(a, b, t)   ( a + (b - a) * t; );
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// COLOR SYSTEM
+// ─────────────────────────────────────────────────────────────────────────
+sld_ac_r = 0.35;  sld_ac_g = 0.55;  sld_ac_b = 0.85;
+sld_ac2_r = 0.80; sld_ac2_g = 0.45; sld_ac2_b = 0.25;
+
+function sld_set_accent(r, g, b) (
+  sld_ac_r = r; sld_ac_g = g; sld_ac_b = b;
+);
+function sld_set_accent2(r, g, b) (
+  sld_ac2_r = r; sld_ac2_g = g; sld_ac2_b = b;
+);
+
+// Themable track colour (the groove/channel the thumb runs in). Default = the
+// original dark-console value, so an untouched build renders byte-identical; a
+// theme driver may override it to re-skin every fader's channel. Thumb caps and
+// fine detail stay metallic/fixed — they read on any background.
+sld_track_r = 0.14; sld_track_g = 0.14; sld_track_b = 0.16;
+function sld_set_track(r, g, b) ( sld_track_r = r; sld_track_g = g; sld_track_b = b; );
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// INIT — call once from @init
+// ─────────────────────────────────────────────────────────────────────────
+function slider_init(base, n_sliders)
+(
+  sld_base = base;
+  sld_count = n_sliders;
+  memset(base, 0, n_sliders * 16);
+  base + n_sliders * 16;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. STANDARD HORIZONTAL FADER
+// ═══════════════════════════════════════════════════════════════════════════
+function sld_horiz_draw(x, y, w, h, value, mem)
+  local(track_y, track_h, tw, thumb_x, thumb_w, ht, rc, rr)
+(
+  ht = mem[0];
+  track_h = max(3, floor(h * 0.22));
+  track_y = y + floor((h - track_h) * 0.5);
+
+  gfx_set(sld_track_r, sld_track_g, sld_track_b, 1);
+  gfx_rect(x, track_y, w, track_h);
+  gfx_set(0.08, 0.08, 0.10, 1);
+  gfx_rect(x, track_y, w, 1);
+
+  tw = floor(value * (w - 2));
+  tw > 0 ? (
+    gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 1);
+    gfx_rect(x + 1, track_y + 1, tw, track_h - 2);
+  );
+
+  thumb_w = max(8, floor(h * 0.7));
+  thumb_x = x + floor(value * (w - thumb_w));
+
+  gfx_set(0.0, 0.0, 0.0, 0.25);
+  gfx_rect(thumb_x + 2, y + 2, thumb_w, h);
+
+  rc = _sld_lerp(0.55, 0.70, ht);
+  gfx_set(rc, rc, rc + 0.02, 1);
+  gfx_rect(thumb_x, y, thumb_w, h);
+
+  gfx_set(rc + 0.12, rc + 0.12, rc + 0.14, 1);
+  gfx_rect(thumb_x + 1, y + 1, thumb_w - 2, 2);
+
+  gfx_set(0.35, 0.35, 0.37, 1);
+  rr = floor(thumb_w * 0.5);
+  gfx_line(thumb_x + rr - 2, y + 4, thumb_x + rr - 2, y + h - 5);
+  gfx_line(thumb_x + rr,     y + 4, thumb_x + rr,     y + h - 5);
+  gfx_line(thumb_x + rr + 2, y + 4, thumb_x + rr + 2, y + h - 5);
+);
+
+function sld_horiz_interact(mem, x, y, w, h, cur_val)
+  local(hover, new_val, sens, dx, thumb_w, now)
+(
+  thumb_w = max(8, floor(h * 0.7));
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = mx;
+    mem[3] = cur_val;
+  );
+  mem[1] && LMB ? (
+    dx = mx - mem[2];
+    sens = CTRL ? (w * 4) : w;
+    new_val = _sld_clamp(mem[3] + dx / sens, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. VERTICAL FADER
+// ═══════════════════════════════════════════════════════════════════════════
+function sld_vert_draw(x, y, w, h, value, mem)
+  local(track_x, track_w, cap_h, cap_y, cap_x, cx, ht, rc, i, gy, cap_w)
+(
+  ht = mem[0];
+  track_w = max(3, floor(w * 0.22));
+  cx = x + floor(w * 0.5);
+  track_x = cx - floor(track_w * 0.5);
+
+  gfx_set(sld_track_r - 0.04, sld_track_g - 0.04, sld_track_b - 0.04, 1);
+  gfx_rect(track_x, y, track_w, h);
+  gfx_set(0.20, 0.20, 0.22, 1);
+  gfx_line(track_x + track_w, y, track_x + track_w, y + h);
+
+  gfx_set(0.30, 0.30, 0.32, 0.6);
+  gy = y + floor(h * 0.5);
+  gfx_line(track_x - 3, gy, track_x + track_w + 3, gy);
+
+  gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.7);
+  gfx_rect(track_x + 1, y + floor((1 - value) * h), track_w - 2,
+            floor(value * h));
+
+  cap_h = max(14, floor(h * 0.08));
+  cap_y = y + floor((1 - value) * (h - cap_h));
+  cap_w = floor(w * 0.76);
+  cap_x = cx - floor(cap_w * 0.5);
+
+  gfx_set(0.0, 0.0, 0.0, 0.3);
+  gfx_rect(cap_x + 2, cap_y + 2, cap_w, cap_h);
+
+  rc = _sld_lerp(0.52, 0.66, ht);
+  gfx_set(rc, rc, rc + 0.02, 1);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h);
+
+  gfx_set(rc + 0.14, rc + 0.14, rc + 0.16, 1);
+  gfx_rect(cap_x + 1, cap_y + 1, cap_w - 2, 2);
+
+  gfx_set(0.32, 0.32, 0.34, 1);
+  i = 0;
+  loop(3,
+    gy = cap_y + floor(cap_h * 0.3) + i * 3;
+    gy < cap_y + cap_h - 3 ? (
+      gfx_line(cap_x + 3, gy, cap_x + cap_w - 4, gy);
+    );
+    i += 1;
+  );
+);
+
+function sld_vert_interact(mem, x, y, w, h, cur_val)
+  local(hover, new_val, sens, dy, now)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_val;
+  );
+  mem[1] && LMB ? (
+    dy = mem[2] - my;
+    sens = CTRL ? (h * 4) : h;
+    new_val = _sld_clamp(mem[3] + dy / sens, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. FILLED BAR (HORIZONTAL)
+// ═══════════════════════════════════════════════════════════════════════════
+function sld_fillbar_draw(x, y, w, h, value, mem)
+  local(ht, fw, br, bg, tw, th)
+(
+  ht = mem[0];
+
+  gfx_set(sld_track_r - 0.04, sld_track_g - 0.04, sld_track_b - 0.04, 1);
+  gfx_rect(x, y, w, h);
+  gfx_set(0.18, 0.18, 0.20, 1);
+  gfx_rect(x, y, w, 1);
+  gfx_rect(x, y, 1, h);
+
+  fw = max(0, floor(value * (w - 2)));
+  fw > 0 ? (
+    br = _sld_lerp(sld_ac_r - 0.05, sld_ac_r + 0.03, ht);
+    bg = _sld_lerp(sld_ac_g, sld_ac_g + 0.10, ht);
+    gfx_set(br, bg, sld_ac_b, 1);
+    gfx_rect(x + 1, y + 1, fw, h - 2);
+
+    gfx_set(min(1, sld_ac_r + 0.25), min(1, sld_ac_g + 0.25),
+            min(1, sld_ac_b + 0.15), 0.6);
+    gfx_rect(x + fw - 1, y + 1, 2, h - 2);
+  );
+
+  gfx_set(0.90, 0.90, 0.92, 0.85);
+  gfx_setfont(1, "Arial", max(8, floor(h * 0.55)));
+  sprintf(#_sld_pct, "%d%%", floor(value * 100 + 0.5));
+  gfx_measurestr(#_sld_pct, tw, th);
+  gfx_x = x + floor((w - tw) * 0.5);
+  gfx_y = y + floor((h - th) * 0.5);
+  gfx_drawstr(#_sld_pct);
+);
+
+function sld_fillbar_interact(mem, x, y, w, h, cur_val)
+  local(hover, new_val, dx, sens, now)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = mx;
+    mem[3] = cur_val;
+  );
+  mem[1] && LMB ? (
+    dx = mx - mem[2];
+    sens = CTRL ? (w * 4) : w;
+    new_val = _sld_clamp(mem[3] + dx / sens, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. STEPPED / NOTCHED
+// ═══════════════════════════════════════════════════════════════════════════
+function sld_stepped_draw(x, y, w, h, value, n_steps, mem)
+  local(ht, track_y, track_h, i, sx, thumb_w, thumb_x, rc)
+(
+  ht = mem[0];
+  track_h = max(3, floor(h * 0.20));
+  track_y = y + floor((h - track_h) * 0.5);
+
+  gfx_set(sld_track_r, sld_track_g, sld_track_b, 1);
+  gfx_rect(x, track_y, w, track_h);
+
+  gfx_set(0.40, 0.40, 0.42, 1);
+  i = 0;
+  loop(n_steps,
+    sx = x + floor(i / (n_steps - 1) * (w - 1));
+    gfx_line(sx, track_y - 4, sx, track_y + track_h + 3);
+    i += 1;
+  );
+
+  gfx_set(sld_ac_r - 0.05, sld_ac_g + 0.05, sld_ac_b - 0.50, 0.8);
+  gfx_rect(x + 1, track_y + 1, floor(value * (w - 2)), track_h - 2);
+
+  thumb_w = max(10, floor(h * 0.65));
+  thumb_x = x + floor(value * (w - thumb_w));
+
+  gfx_set(0.0, 0.0, 0.0, 0.25);
+  gfx_rect(thumb_x + 2, y + 2, thumb_w, h);
+
+  rc = _sld_lerp(0.52, 0.66, ht);
+  gfx_set(rc, rc, rc + 0.02, 1);
+  gfx_rect(thumb_x, y, thumb_w, h);
+
+  gfx_set(0.25, 0.25, 0.27, 1);
+  gfx_rect(thumb_x + floor(thumb_w * 0.5) - 1, y + 3, 2, h - 6);
+);
+
+function sld_stepped_interact(mem, x, y, w, h, cur_val, n_steps)
+  local(hover, new_val, raw, dx, sens, step_sz, now)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+  step_sz = 1 / (n_steps - 1);
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = mx;
+    mem[3] = cur_val;
+  );
+  mem[1] && LMB ? (
+    dx = mx - mem[2];
+    sens = CTRL ? (w * 4) : w;
+    raw = _sld_clamp(mem[3] + dx / sens, 0, 1);
+    new_val = floor(raw / step_sz + 0.5) * step_sz;
+    new_val = _sld_clamp(new_val, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * step_sz, 0, 1);
+    new_val = floor(new_val / step_sz + 0.5) * step_sz;
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. BIPOLAR (CENTER-ZERO)
+// ═══════════════════════════════════════════════════════════════════════════
+function sld_bipolar_draw(x, y, w, h, value, mem)
+  local(ht, track_y, track_h, cx, fx, fw_fill, thumb_w, thumb_x, rc, neg)
+(
+  ht = mem[0];
+  track_h = max(3, floor(h * 0.22));
+  track_y = y + floor((h - track_h) * 0.5);
+  cx = x + floor(w * 0.5);
+
+  gfx_set(sld_track_r, sld_track_g, sld_track_b, 1);
+  gfx_rect(x, track_y, w, track_h);
+
+  gfx_set(0.45, 0.45, 0.47, 1);
+  gfx_line(cx, track_y - 3, cx, track_y + track_h + 2);
+
+  neg = value < 0.5;
+  neg ? (
+    fx = x + 1 + floor(value * (w - 2));
+    fw_fill = cx - fx;
+    gfx_set(sld_ac2_r, sld_ac2_g, sld_ac2_b, 0.9);
+  ) : (
+    fx = cx;
+    fw_fill = floor((value - 0.5) * (w - 2));
+    gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.9);
+  );
+  fw_fill > 0 ? gfx_rect(fx, track_y + 1, fw_fill, track_h - 2);
+
+  thumb_w = max(8, floor(h * 0.55));
+  thumb_x = x + floor(value * (w - thumb_w));
+
+  gfx_set(0.0, 0.0, 0.0, 0.2);
+  gfx_rect(thumb_x + 2, y + 2, thumb_w, h);
+
+  rc = _sld_lerp(0.55, 0.70, ht);
+  gfx_set(rc, rc, rc + 0.02, 1);
+  gfx_rect(thumb_x, y, thumb_w, h);
+
+  gfx_set(0.30, 0.30, 0.32, 1);
+  gfx_rect(thumb_x + floor(thumb_w * 0.5), y + 3, 1, h - 6);
+);
+
+function sld_bipolar_interact(mem, x, y, w, h, cur_val)
+  local(hover, new_val, dx, sens, now)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = mx;
+    mem[3] = cur_val;
+  );
+  mem[1] && LMB ? (
+    dx = mx - mem[2];
+    sens = CTRL ? (w * 4) : w;
+    new_val = _sld_clamp(mem[3] + dx / sens, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. MINI / COMPACT INLINE
+// ═══════════════════════════════════════════════════════════════════════════
+function sld_mini_draw(x, y, w, h, value, mem)
+  local(ht, fw, ex, br)
+(
+  ht = mem[0];
+  br = _sld_lerp(0.16, 0.20, ht);
+  gfx_set(br, br, br + 0.02, 1);
+  gfx_rect(x, y, w, h);
+
+  fw = max(0, floor(value * (w - 2)));
+  fw > 0 ? (
+    gfx_set(sld_ac_r + 0.05, sld_ac_g + 0.03, sld_ac_b - 0.03, 1);
+    gfx_rect(x + 1, y + 1, fw, h - 2);
+  );
+
+  ex = x + 1 + floor(value * (w - 3));
+  gfx_set(0.90, 0.90, 0.92, 0.9);
+  gfx_rect(ex, y, 2, h);
+
+  gfx_set(0.28, 0.28, 0.30, 1);
+  gfx_rect(x, y, w, 1);
+  gfx_rect(x, y + h - 1, w, 1);
+  gfx_rect(x, y, 1, h);
+  gfx_rect(x + w - 1, y, 1, h);
+);
+
+function sld_mini_interact(mem, x, y, w, h, cur_val)
+  local(hover, new_val, dx, sens, now)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    new_val = _sld_clamp((mx - x) / w, 0, 1);
+    mem[2] = mx;
+    mem[3] = new_val;
+  );
+  mem[1] && LMB ? (
+    dx = mx - mem[2];
+    sens = CTRL ? (w * 4) : w;
+    new_val = _sld_clamp(mem[3] + dx / sens, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.03, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. ARC / CURVED TRACK  (240° sweep, knob-style)
+// ═══════════════════════════════════════════════════════════════════════════
+//   cx, cy:       center of the arc circle
+//   r:            radius
+//   arc_thick:    thickness of the track band (pixels)
+//
+//   240° sweep: 7 o'clock → 5 o'clock through 12 o'clock.
+//   Dead zone at 6 o'clock (bottom).
+//
+function sld_arc_draw(cx, cy, r, arc_thick, value, mem)
+  local(ht, as, ae, sw, va, i, dot_x, dot_y, da, rc, dr)
+(
+  ht = mem[0];
+  // 240° sweep: 8 o'clock → 12 o'clock → 4 o'clock (dead zone at 6 o'clock)
+  // Positive angles, no ±π wrap: 150° → 390° (= 150° + 240°)
+  as = $pi * 5 / 6;           // 150° = lower-left (8 o'clock)
+  ae = $pi * 5 / 6 + $pi * 4 / 3;  // 390° = lower-right (4 o'clock)
+  sw = ae - as;               // = 4π/3 = 240°
+
+  // background arc track
+  gfx_set(sld_track_r + 0.04, sld_track_g + 0.04, sld_track_b + 0.04, 1);
+  i = 0;
+  loop(arc_thick,
+    gfx_arc(cx, cy, r + i, as, ae, 1);
+    i += 1;
+  );
+
+  // filled arc
+  va = as + value * sw;
+  gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 1);
+  i = 1;
+  loop(arc_thick - 2,
+    gfx_arc(cx, cy, r + i, as, va, 1);
+    i += 1;
+  );
+
+  // end tick marks
+  gfx_set(0.40, 0.40, 0.42, 1);
+  dr = r + arc_thick + 3;
+  gfx_line(cx + cos(as) * r, cy + sin(as) * r,
+           cx + cos(as) * dr, cy + sin(as) * dr);
+  gfx_line(cx + cos(ae) * r, cy + sin(ae) * r,
+           cx + cos(ae) * dr, cy + sin(ae) * dr);
+
+  // thumb dot
+  da = as + value * sw;
+  dot_x = cx + cos(da) * (r + arc_thick * 0.5);
+  dot_y = cy + sin(da) * (r + arc_thick * 0.5);
+
+  gfx_set(0.0, 0.0, 0.0, 0.3);
+  gfx_circle(dot_x + 1, dot_y + 1, max(4, arc_thick * 0.7), 1, 1);
+
+  rc = _sld_lerp(0.65, 0.82, ht);
+  gfx_set(rc, rc, rc + 0.02, 1);
+  gfx_circle(dot_x, dot_y, max(4, arc_thick * 0.7), 1, 1);
+
+  gfx_set(1, 1, 1, 0.3);
+  gfx_circle(dot_x - 1, dot_y - 1, max(2, arc_thick * 0.3), 1, 1);
+);
+
+function sld_arc_interact(mem, cx, cy, r, arc_thick, cur_val)
+  local(dx, dy, d, hover, new_val, now, sens)
+(
+  dx = mx - cx;
+  dy = my - cy;
+  d = sqrt(dx * dx + dy * dy);
+  hover = (d >= r - arc_thick && d <= r + arc_thick * 2.5);
+
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_val;
+  );
+  mem[1] && LMB ? (
+    dy = mem[2] - my;
+    mem[2] = my;
+    sens = CTRL ? 600 : 150;
+    new_val = _sld_clamp(cur_val + dy / sens, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. RANGE SLIDER (TWO THUMBS)
+// ═══════════════════════════════════════════════════════════════════════════
+function sld_range_draw(x, y, w, h, val_lo, val_hi, mem)
+  local(ht, track_y, track_h, lo_x, hi_x, tw, rc, thumb_w)
+(
+  ht = mem[0];
+  track_h = max(3, floor(h * 0.22));
+  track_y = y + floor((h - track_h) * 0.5);
+
+  gfx_set(sld_track_r, sld_track_g, sld_track_b, 1);
+  gfx_rect(x, track_y, w, track_h);
+
+  thumb_w = max(6, floor(h * 0.45));
+  lo_x = x + floor(val_lo * (w - thumb_w));
+  hi_x = x + floor(val_hi * (w - thumb_w));
+
+  tw = hi_x - lo_x;
+  tw > 0 ? (
+    gfx_set(sld_ac_r - 0.05, sld_ac_g, sld_ac_b - 0.40, 0.7);
+    gfx_rect(lo_x + floor(thumb_w * 0.5), track_y + 1,
+             tw, track_h - 2);
+  );
+
+  rc = _sld_lerp(0.50, 0.64, ht);
+
+  // lo thumb
+  gfx_set(0.0, 0.0, 0.0, 0.2);
+  gfx_rect(lo_x + 2, y + 2, thumb_w, h);
+  gfx_set(sld_ac_r * 0.7 + rc * 0.3, sld_ac_g * 0.5 + rc * 0.5,
+          sld_ac_b * 0.5 + rc * 0.5, 1);
+  gfx_rect(lo_x, y, thumb_w, h);
+  gfx_set(0.30, 0.30, 0.32, 1);
+  gfx_rect(lo_x + floor(thumb_w * 0.5), y + 3, 1, h - 6);
+
+  // hi thumb
+  gfx_set(0.0, 0.0, 0.0, 0.2);
+  gfx_rect(hi_x + 2, y + 2, thumb_w, h);
+  gfx_set(sld_ac2_r * 0.5 + rc * 0.5, sld_ac2_g * 0.5 + rc * 0.5,
+          sld_ac2_b * 0.3 + rc * 0.7, 1);
+  gfx_rect(hi_x, y, thumb_w, h);
+  gfx_set(0.30, 0.30, 0.32, 1);
+  gfx_rect(hi_x + floor(thumb_w * 0.5), y + 3, 1, h - 6);
+);
+
+function sld_range_interact(mem, x, y, w, h, cur_lo, cur_hi)
+  local(hover, new_lo, new_hi, thumb_w, lo_x, hi_x, lo_d, hi_d,
+        dx, sens, now, raw)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_lo = cur_lo;
+  new_hi = cur_hi;
+  mem[5] = 0;
+
+  thumb_w = max(6, floor(h * 0.45));
+  lo_x = x + floor(cur_lo * (w - thumb_w)) + floor(thumb_w * 0.5);
+  hi_x = x + floor(cur_hi * (w - thumb_w)) + floor(thumb_w * 0.5);
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? (
+      new_lo = 0.25; new_hi = 0.75;
+      mem[5] = 1;
+    );
+    mem[4] = now;
+  );
+
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    lo_d = abs(mx - lo_x);
+    hi_d = abs(mx - hi_x);
+    mem[7] = lo_d <= hi_d ? 0 : 1;
+    mem[1] = 1;
+    mem[2] = mx;
+    mem[3] = cur_lo;
+    mem[8] = cur_hi;
+  );
+
+  mem[1] && LMB ? (
+    dx = mx - mem[2];
+    sens = CTRL ? (w * 4) : w;
+    mem[7] == 0 ? (
+      raw = _sld_clamp(mem[3] + dx / sens, 0, 1);
+      new_lo = min(raw, cur_hi - 0.01);
+      new_hi = cur_hi;
+    ) : (
+      raw = _sld_clamp(mem[8] + dx / sens, 0, 1);
+      new_hi = max(raw, cur_lo + 0.01);
+      new_lo = cur_lo;
+    );
+  );
+
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+
+  hover && frame_wheel != 0 ? (
+    lo_d = abs(mx - lo_x);
+    hi_d = abs(mx - hi_x);
+    lo_d <= hi_d ? (
+      new_lo = _sld_clamp(cur_lo + frame_wheel * 0.02, 0, cur_hi - 0.01);
+    ) : (
+      new_hi = _sld_clamp(cur_hi + frame_wheel * 0.02, cur_lo + 0.01, 1);
+    );
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+
+  mem[8] = new_hi;
+  new_lo;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. VERTICAL LED STRIP
+// ═══════════════════════════════════════════════════════════════════════════
+//   n_segs segments. Top 20% use accent2 color ("hot" zone).
+//
+function sld_vled_draw(x, y, w, h, value, n_segs, mem)
+  local(ht, seg_h, gap_h, i, sy, lit, frac, hot_start,
+        lr, lg, lb, dr, dg, db)
+(
+  ht = mem[0];
+  gap_h = max(1, floor(h * 0.008));
+  seg_h = max(2, floor((h - gap_h * (n_segs - 1)) / n_segs));
+
+  hot_start = floor(n_segs * 0.8);
+
+  i = 0;
+  loop(n_segs,
+    sy = y + h - (i + 1) * (seg_h + gap_h);
+    frac = (i + 0.5) / n_segs;
+    lit = frac <= value;
+
+    i >= hot_start ? (
+      lr = sld_ac2_r; lg = sld_ac2_g; lb = sld_ac2_b;
+      dr = sld_ac2_r * 0.25; dg = sld_ac2_g * 0.20; db = sld_ac2_b * 0.15;
+    ) : (
+      lr = sld_ac_r; lg = sld_ac_g; lb = sld_ac_b;
+      dr = sld_ac_r * 0.20; dg = sld_ac_g * 0.18; db = sld_ac_b * 0.20;
+    );
+
+    lit ? (
+      gfx_set(lr + ht * 0.08, lg + ht * 0.05, lb + ht * 0.03, 1);
+    ) : (
+      gfx_set(dr, dg, db, 1);
+    );
+    gfx_rect(x, sy, w, seg_h);
+
+    lit ? (
+      gfx_set(min(1, lr + 0.20), min(1, lg + 0.15), min(1, lb + 0.10), 0.4);
+      gfx_rect(x + 1, sy, w - 2, 1);
+    );
+
+    i += 1;
+  );
+
+  gfx_set(0.22, 0.22, 0.24, 1);
+  gfx_rect(x - 1, y - 1, 1, h + 2);
+  gfx_rect(x + w, y - 1, 1, h + 2);
+);
+
+function sld_vled_interact(mem, x, y, w, h, cur_val)
+  local(hover, new_val, dy, sens, now)
+(
+  hover = (mx >= x - 4 && mx <= x + w + 4 && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    new_val = _sld_clamp(1 - (my - y) / h, 0, 1);
+    mem[2] = my;
+    mem[3] = new_val;
+  );
+  mem[1] && LMB ? (
+    dy = mem[2] - my;
+    mem[2] = my;
+    sens = CTRL ? 600 : 150;
+    new_val = _sld_clamp(cur_val + dy / sens, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10. VERTICAL GROOVE
+// ═══════════════════════════════════════════════════════════════════════════
+//   Recessed slot with metallic capsule thumb. Hardware mixer style.
+//
+function sld_vgroove_draw(x, y, w, h, value, mem)
+  local(ht, cx, gx, gw, cap_h, cap_y, cap_x, cap_w, rc, i, gy)
+(
+  ht = mem[0];
+  cx = x + floor(w * 0.5);
+  gw = max(5, floor(w * 0.30));
+  gx = cx - floor(gw * 0.5);
+
+  // outer bevel
+  gfx_set(0.22, 0.22, 0.24, 1);
+  gfx_rect(gx - 2, y - 1, gw + 4, h + 2);
+
+  // groove slot
+  gfx_set(sld_track_r - 0.08, sld_track_g - 0.08, sld_track_b - 0.08, 1);
+  gfx_rect(gx, y, gw, h);
+
+  gfx_set(0.03, 0.03, 0.04, 1);
+  gfx_rect(gx, y, gw, 2);
+  gfx_rect(gx, y, 1, h);
+
+  gfx_set(0.12, 0.12, 0.14, 1);
+  gfx_rect(gx + gw - 1, y, 1, h);
+
+  // scale marks
+  gfx_set(0.30, 0.30, 0.32, 0.5);
+  i = 0;
+  loop(5,
+    gy = y + floor((1 - i * 0.25) * (h - 1));
+    gfx_line(gx - 4, gy, gx - 1, gy);
+    gfx_line(gx + gw + 1, gy, gx + gw + 4, gy);
+    i += 1;
+  );
+
+  // fill glow
+  gfx_set(sld_ac_r * 0.3, sld_ac_g * 0.3, sld_ac_b * 0.3, 0.5);
+  gy = y + floor((1 - value) * h);
+  gfx_rect(gx + 1, gy, gw - 2, y + h - gy);
+
+  // capsule thumb
+  cap_h = max(18, floor(h * 0.10));
+  cap_w = max(14, floor(w * 0.72));
+  cap_x = cx - floor(cap_w * 0.5);
+  cap_y = y + floor((1 - value) * (h - cap_h));
+
+  gfx_set(0.0, 0.0, 0.0, 0.35);
+  gfx_rect(cap_x + 2, cap_y + 2, cap_w, cap_h);
+
+  rc = _sld_lerp(0.48, 0.62, ht);
+  gfx_set(rc + 0.06, rc + 0.06, rc + 0.08, 1);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h);
+
+  gfx_set(rc + 0.18, rc + 0.18, rc + 0.20, 1);
+  gfx_rect(cap_x + 1, cap_y, cap_w - 2, 2);
+
+  gfx_set(rc - 0.10, rc - 0.10, rc - 0.08, 1);
+  gfx_rect(cap_x + 1, cap_y + cap_h - 2, cap_w - 2, 2);
+
+  gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.8);
+  gfx_rect(cap_x + 3, cap_y + floor(cap_h * 0.5) - 1, cap_w - 6, 2);
+
+  gfx_set(rc - 0.08, rc - 0.08, rc - 0.06, 1);
+  i = 0;
+  loop(4,
+    gy = cap_y + 4 + i * floor((cap_h - 8) / 4);
+    gy < cap_y + cap_h - 3 ? (
+      gfx_line(cap_x + 2, gy, cap_x + cap_w - 3, gy);
+    );
+    i += 1;
+  );
+);
+
+function sld_vgroove_interact(mem, x, y, w, h, cur_val)
+  local(hover, new_val, dy, sens, now)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_val;
+  );
+  mem[1] && LMB ? (
+    dy = mem[2] - my;
+    sens = CTRL ? (h * 4) : h;
+    new_val = _sld_clamp(mem[3] + dy / sens, 0, 1);
+  );
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+// EOF — sliders_kbsg.jsfx-inc
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11. VERTICAL BIPOLAR (center-zero, fills up/down from midpoint)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// value: 0..1 (0.5 = center). Fill extends up for >0.5, down for <0.5.
+// Uses sld_ac_r/g/b for positive, sld_ac2_r/g/b for negative.
+// All console-specific draw variants use sld_vbipolar_interact.
+
+// ─────────────────────────────────────────────────────────────────────────
+// INTERACT (shared by all vertical bipolar variants)
+// ─────────────────────────────────────────────────────────────────────────
+function sld_vbipolar_interact(mem, x, y, w, h, cur_val)
+  local(hover, new_val, dy, sens, now)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+
+  // Double-click → reset to center (0.5)
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    mem[4] = now;
+  );
+  // Start drag
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_val;
+  );
+  // Continue drag (inverted: up = increase)
+  mem[1] && LMB ? (
+    dy = mem[2] - my;
+    sens = CTRL ? (h * 4) : h;
+    new_val = _sld_clamp(mem[3] + dy / sens, 0, 1);
+  );
+  // End drag
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  // Scroll wheel
+  hover && frame_wheel != 0 ? (
+    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// SSL VERTICAL (4000): coarse-rib light-grey cap, dotted dB scale right,
+// bipolar center fill. 1:1 with the Forge vssl painter.
+// ─────────────────────────────────────────────────────────────────────────
+function sld_vssl_draw(x, y, w, h, value, mem)
+  local(ht, cx, tw_trk, tx, cy, fy, fh, neg, cap_w, cap_h, cap_x, cap_y,
+        i, ty, gy, tpos, tlbl, sw_, sh_)
+(
+  ht = mem[0];
+  cx = x + floor(w * 0.42);
+  tw_trk = max(3, floor(w * 0.10));
+  tx = cx - floor(tw_trk * 0.5);
+  cy = y + floor(h * 0.5);
+
+  // Dotted dB scale + numerals (right side)
+  gfx_setfont(1, "Arial", max(7, floor(h * 0.05)));
+  i = 0;
+  loop(8,
+    tpos = i == 0 ? 0.04 : i == 1 ? 0.13 : i == 2 ? 0.24 : i == 3 ? 0.36 :
+           i == 4 ? 0.5  : i == 5 ? 0.66 : i == 6 ? 0.83 : 0.97;
+    tlbl = i == 0 ? 12 : i == 1 ? 6 : i == 2 ? 0 : i == 3 ? 5 :
+           i == 4 ? 10 : i == 5 ? 20 : i == 6 ? 30 : 40;
+    ty = y + floor(tpos * h);
+    gfx_set(0.80, 0.82, 0.87, 0.5);
+    gfx_circle(cx + 8, ty, 1, 1);
+    gfx_set(0.78, 0.80, 0.84, 0.45);
+    sprintf(#, "%d", tlbl);
+    gfx_measurestr(#, sw_, sh_);
+    gfx_x = cx + 12; gfx_y = ty - floor(sh_ * 0.5);
+    gfx_drawstr(#);
+    i += 1;
+  );
+
+  // Slot + center line
+  gfx_set(0.03, 0.035, 0.045, 1);
+  gfx_rect(tx, y, tw_trk, h);
+  gfx_set(1, 1, 1, 0.05);
+  gfx_rect(tx + tw_trk, y, 1, h);
+  gfx_set(0.75, 0.77, 0.82, 0.55);
+  gfx_line(tx - 4, cy, tx + tw_trk + 4, cy);
+
+  // Fill from center
+  neg = value < 0.5;
+  neg ? (
+    fy = cy;
+    fh = floor((0.5 - value) * h);
+    gfx_set(sld_ac2_r, sld_ac2_g, sld_ac2_b, 0.7);
+  ) : (
+    fh = floor((value - 0.5) * h);
+    fy = cy - fh;
+    gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.7);
+  );
+  fh > 0 ? gfx_rect(tx + 1, fy, tw_trk - 2, fh);
+
+  // Coarse-rib light-grey cap
+  cap_w = max(20, floor(w * 0.48));
+  cap_h = max(20, floor(h * 0.145));
+  cap_x = cx - floor(cap_w * 0.5);
+  cap_y = y + floor((1 - value) * (h - cap_h));
+
+  gfx_set(0, 0, 0, 0.4);
+  gfx_rect(cap_x + 2, cap_y + 2, cap_w, cap_h);
+  gfx_set(0.75, 0.77, 0.80, 1);
+  gfx_rect(cap_x, cap_y, cap_w, floor(cap_h * 0.4));
+  gfx_set(0.60, 0.63, 0.67, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.4), cap_w, floor(cap_h * 0.35));
+  gfx_set(0.42, 0.44, 0.47, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.75), cap_w, cap_h - floor(cap_h * 0.75));
+  // 4 deep ribs
+  i = 1;
+  loop(4,
+    gy = cap_y + floor(i * cap_h / 5);
+    gfx_set(0.12, 0.13, 0.16, 0.6);
+    gfx_rect(cap_x + 2, gy, cap_w - 4, 2);
+    gfx_set(1, 1, 1, 0.4);
+    gfx_line(cap_x + 2, gy + 2, cap_x + cap_w - 2, gy + 2);
+    i += 1;
+  );
+  gfx_set(0, 0, 0, 0.5);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h, 0);
+);
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// NEVE VERTICAL (V-series): classic smooth grey cap w/ dark-white-dark center
+// line stack, left ticks, bipolar center fill. 1:1 with the Forge vneve painter.
+// ─────────────────────────────────────────────────────────────────────────
+function sld_vneve_draw(x, y, w, h, value, mem)
+  local(ht, cx, tw_trk, tx, cy, fy, fh, neg, cap_w, cap_h, cap_x, cap_y,
+        i, ty, cc)
+(
+  ht = mem[0];
+  cx = x + floor(w * 0.5);
+  tw_trk = max(4, floor(w * 0.12));
+  tx = cx - floor(tw_trk * 0.5);
+  cy = y + floor(h * 0.5);
+
+  // Left tick scale
+  gfx_set(0.78, 0.80, 0.85, 0.30);
+  i = 0;
+  loop(7,
+    ty = y + floor(i / 6 * h);
+    gfx_line(tx - 7, ty, tx - 2, ty);
+    i += 1;
+  );
+
+  // Slot
+  gfx_set(0.045, 0.04, 0.05, 1);
+  gfx_rect(tx, y, tw_trk, h);
+  gfx_set(1, 1, 1, 0.05);
+  gfx_rect(tx + tw_trk, y, 1, h);
+
+  // Fill from center (subtle)
+  neg = value < 0.5;
+  neg ? (
+    fy = cy;
+    fh = floor((0.5 - value) * h);
+    gfx_set(sld_ac2_r, sld_ac2_g, sld_ac2_b, 0.55);
+  ) : (
+    fh = floor((value - 0.5) * h);
+    fy = cy - fh;
+    gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.55);
+  );
+  fh > 0 ? gfx_rect(tx + 1, fy, tw_trk - 2, fh);
+
+  // Classic smooth grey cap + dark/white/dark center line stack
+  cap_w = max(16, floor(w * 0.40));
+  cap_h = max(20, floor(h * 0.145));
+  cap_x = cx - floor(cap_w * 0.5);
+  cap_y = y + floor((1 - value) * (h - cap_h));
+  cc = cap_y + floor(cap_h * 0.5);
+
+  gfx_set(0, 0, 0, 0.4);
+  gfx_rect(cap_x + 2, cap_y + 2, cap_w, cap_h);
+  gfx_set(0.86, 0.87, 0.89, 1);
+  gfx_rect(cap_x, cap_y, cap_w, floor(cap_h * 0.5));
+  gfx_set(0.68, 0.70, 0.73, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.5), cap_w, floor(cap_h * 0.3));
+  gfx_set(0.51, 0.53, 0.56, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.8), cap_w, cap_h - floor(cap_h * 0.8));
+  gfx_set(0.16, 0.17, 0.19, 0.65);
+  gfx_rect(cap_x + 1, cc - 2, cap_w - 2, 1);
+  gfx_set(1, 1, 1, 1);
+  gfx_rect(cap_x + 1, cc - 1, cap_w - 2, 2);
+  gfx_set(0.16, 0.17, 0.19, 0.55);
+  gfx_rect(cap_x + 1, cc + 1, cap_w - 2, 1);
+  gfx_set(1, 1, 1, 0.7);
+  gfx_line(cap_x + 2, cap_y + 1, cap_x + cap_w - 2, cap_y + 1);
+  gfx_set(0.10, 0.11, 0.13, 0.8);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h, 0);
+);
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// API VERTICAL: dark narrow slot, chrome capsule, LED dots
+// ─────────────────────────────────────────────────────────────────────────
+function sld_vapi_draw(x, y, w, h, value, mem)
+  local(ht, cx, tw_trk, tx, cy, fy, fh, neg, cap_w, cap_h, cap_x, cap_y,
+        rc, i, led_x, led_y, led_on, led_count, n_pos, n_neg)
+(
+  ht = mem[0];
+  cx = x + floor(w * 0.5);
+  tw_trk = max(3, floor(w * 0.16));
+  tx = cx - floor(tw_trk * 0.5);
+  cy = y + floor(h * 0.5);
+
+  // Dark narrow slot
+  gfx_set(0.04, 0.04, 0.05, 1);
+  gfx_rect(tx, y, tw_trk, h);
+  gfx_set(0.12, 0.14, 0.12, 1);
+  gfx_line(tx + tw_trk, y, tx + tw_trk, y + h);
+
+  // Center mark
+  gfx_set(0.30, 0.35, 0.30, 0.7);
+  gfx_line(tx - 3, cy, tx + tw_trk + 3, cy);
+
+  // Fill from center
+  neg = value < 0.5;
+  neg ? (
+    fy = cy;
+    fh = floor((0.5 - value) * h);
+    gfx_set(sld_ac2_r, sld_ac2_g, sld_ac2_b, 0.80);
+  ) : (
+    fh = floor((value - 0.5) * h);
+    fy = cy - fh;
+    gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.80);
+  );
+  fh > 0 ? gfx_rect(tx + 1, fy, tw_trk - 2, fh);
+
+  // LED dots alongside groove (3 per side = 6 total)
+  led_x = tx + tw_trk + 6;
+  led_count = 3;
+  // Positive LEDs (above center)
+  n_pos = value > 0.5 ? floor((value - 0.5) * 2 * led_count + 0.5) : 0;
+  i = 0;
+  loop(led_count,
+    led_y = cy - floor((i + 1) * h / (led_count * 2 + 1));
+    i < n_pos ? (
+      gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.95);
+      gfx_circle(led_x, led_y, 2, 1);
+      // Glow
+      gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.15);
+      gfx_circle(led_x, led_y, 5, 1);
+    ) : (
+      gfx_set(0.15, 0.18, 0.15, 0.6);
+      gfx_circle(led_x, led_y, 2, 1);
+    );
+    i += 1;
+  );
+  // Negative LEDs (below center)
+  n_neg = value < 0.5 ? floor((0.5 - value) * 2 * led_count + 0.5) : 0;
+  i = 0;
+  loop(led_count,
+    led_y = cy + floor((i + 1) * h / (led_count * 2 + 1));
+    i < n_neg ? (
+      gfx_set(sld_ac2_r, sld_ac2_g, sld_ac2_b, 0.95);
+      gfx_circle(led_x, led_y, 2, 1);
+      gfx_set(sld_ac2_r, sld_ac2_g, sld_ac2_b, 0.15);
+      gfx_circle(led_x, led_y, 5, 1);
+    ) : (
+      gfx_set(0.15, 0.18, 0.15, 0.6);
+      gfx_circle(led_x, led_y, 2, 1);
+    );
+    i += 1;
+  );
+
+  // Chrome capsule thumb
+  cap_w = floor(w * 0.60);
+  cap_h = max(10, floor(h * 0.055));
+  cap_x = cx - floor(cap_w * 0.5);
+  cap_y = y + floor((1 - value) * (h - cap_h));
+
+  gfx_set(0, 0, 0, 0.25);
+  gfx_rect(cap_x + 1, cap_y + 1, cap_w, cap_h);
+
+  rc = _sld_lerp(0.55, 0.72, ht);
+  gfx_set(rc, rc, rc + 0.02, 1);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h);
+
+  // Chrome highlight
+  gfx_set(min(1, rc + 0.20), min(1, rc + 0.20), min(1, rc + 0.22), 0.8);
+  gfx_rect(cap_x + 1, cap_y + 1, cap_w - 2, 1);
+
+  // Center notch
+  gfx_set(0.30, 0.30, 0.32, 1);
+  gfx_line(cap_x + 2, cap_y + floor(cap_h * 0.5),
+           cap_x + cap_w - 3, cap_y + floor(cap_h * 0.5));
+);
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// TUBE VERTICAL: amber glow fill, brass rounded thumb, warm halo
+// ─────────────────────────────────────────────────────────────────────────
+function sld_vtube_draw(x, y, w, h, value, mem)
+  local(ht, cx, tw_trk, tx, cy, fy, fh, neg, cap_w, cap_h, cap_x, cap_y,
+        rc, glow_a, fill_r, fill_g, fill_b, i, gy)
+(
+  ht = mem[0];
+  cx = x + floor(w * 0.5);
+  tw_trk = max(4, floor(w * 0.24));
+  tx = cx - floor(tw_trk * 0.5);
+  cy = y + floor(h * 0.5);
+
+  // Warm dark groove
+  gfx_set(0.07, 0.04, 0.02, 1);
+  gfx_rect(tx, y, tw_trk, h);
+  gfx_set(0.14, 0.10, 0.06, 1);
+  gfx_line(tx + tw_trk, y, tx + tw_trk, y + h);
+  gfx_line(tx, y, tx, y + h);
+
+  // Center mark
+  gfx_set(0.40, 0.30, 0.15, 0.6);
+  gfx_line(tx - 2, cy, tx + tw_trk + 2, cy);
+
+  // Amber gradient fill from center
+  neg = value < 0.5;
+  neg ? (
+    fh = floor((0.5 - value) * h);
+    fy = cy;
+    fill_r = sld_ac2_r; fill_g = sld_ac2_g; fill_b = sld_ac2_b;
+  ) : (
+    fh = floor((value - 0.5) * h);
+    fy = cy - fh;
+    fill_r = sld_ac_r; fill_g = sld_ac_g; fill_b = sld_ac_b;
+  );
+  fh > 0 ? (
+    // Draw gradient fill line by line
+    i = 0;
+    loop(fh,
+      // Intensity ramps from 0.3 at center to 1.0 at extremes
+      glow_a = _sld_lerp(0.30, 0.95, i / max(1, fh));
+      gfx_set(fill_r * glow_a, fill_g * glow_a, fill_b * glow_a, 1);
+      neg ? (
+        gy = cy + i;
+      ) : (
+        gy = cy - 1 - i;
+      );
+      gfx_line(tx + 1, gy, tx + tw_trk - 2, gy);
+      i += 1;
+    );
+    // Warm halo
+    glow_a = _sld_lerp(0.05, 0.12, ht);
+    gfx_set(fill_r, fill_g, fill_b, glow_a);
+    gfx_rect(tx - 4, fy - 1, tw_trk + 8, fh + 2);
+  );
+
+  // Brass rounded thumb
+  cap_w = floor(w * 0.72);
+  cap_h = max(12, floor(h * 0.07));
+  cap_x = cx - floor(cap_w * 0.5);
+  cap_y = y + floor((1 - value) * (h - cap_h));
+
+  // Shadow
+  gfx_set(0, 0, 0, 0.20);
+  gfx_rect(cap_x + 2, cap_y + 2, cap_w, cap_h);
+
+  // Brass body
+  rc = _sld_lerp(0.55, 0.68, ht);
+  gfx_set(rc, rc * 0.82, rc * 0.45, 1);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h);
+
+  // Rounded ends
+  gfx_circle(cap_x + 3, cap_y + floor(cap_h * 0.5), 3, 1);
+  gfx_circle(cap_x + cap_w - 4, cap_y + floor(cap_h * 0.5), 3, 1);
+
+  // Brass highlight
+  gfx_set(min(1, rc + 0.18), min(1, rc * 0.82 + 0.15), rc * 0.45 + 0.10, 0.9);
+  gfx_rect(cap_x + 2, cap_y + 1, cap_w - 4, 2);
+
+  // Center groove
+  gfx_set(0.30, 0.24, 0.12, 1);
+  gfx_line(cap_x + 4, cap_y + floor(cap_h * 0.5),
+           cap_x + cap_w - 5, cap_y + floor(cap_h * 0.5));
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// PRO TOOLS VERTICAL: chrome spool/I-beam cap, uneven dB scale left, no fill.
+// Unipolar — pair with sld_vert_interact. 1:1 with the Forge vpt painter.
+// ─────────────────────────────────────────────────────────────────────────
+function sld_vpt_draw(x, y, w, h, value, mem)
+  local(cx, tw_trk, tx, cap_w, cap_h, cap_x, cap_y,
+        i, ty, zr, tpos, tlbl, sw_, sh_)
+(
+  cx = x + floor(w * 0.60);
+  tw_trk = max(3, floor(w * 0.10));
+  tx = cx - floor(tw_trk * 0.5);
+
+  // Uneven dB scale (tighter near the top) + numerals, 0-line brighter
+  gfx_setfont(1, "Arial", max(7, floor(h * 0.05)));
+  i = 0;
+  loop(10,
+    tpos = i == 0 ? 0 : i == 1 ? 0.07 : i == 2 ? 0.155 : i == 3 ? 0.25 :
+           i == 4 ? 0.35 : i == 5 ? 0.45 : i == 6 ? 0.56 : i == 7 ? 0.68 :
+           i == 8 ? 0.82 : 1.0;
+    tlbl = i == 0 ? 12 : i == 1 ? 5 : i == 2 ? 0 : i == 3 ? 5 :
+           i == 4 ? 10 : i == 5 ? 15 : i == 6 ? 20 : i == 7 ? 30 :
+           i == 8 ? 40 : 60;
+    ty = y + floor(tpos * h);
+    zr = i == 2;
+    zr ? gfx_set(0.84, 0.86, 0.90, 0.7) : gfx_set(0.78, 0.80, 0.84, 0.30);
+    gfx_line(tx - (zr ? 13 : 9), ty, tx - 4, ty);
+    sprintf(#, "%d", tlbl);
+    gfx_measurestr(#, sw_, sh_);
+    gfx_x = tx - 15 - sw_; gfx_y = ty - floor(sh_ * 0.5);
+    zr ? gfx_set(0.80, 0.82, 0.86, 0.55) : gfx_set(0.78, 0.80, 0.84, 0.40);
+    gfx_drawstr(#);
+    i += 1;
+  );
+
+  // Slot (no fill — like the real mix window)
+  gfx_set(0.04, 0.045, 0.055, 1);
+  gfx_rect(tx, y, tw_trk, h);
+  gfx_set(1, 1, 1, 0.05);
+  gfx_rect(tx + tw_trk, y, 1, h);
+
+  // Cap: straight chrome rectangle w/ dark center band (Avid mix-window render)
+  cap_w = max(16, floor(w * 0.42));
+  cap_h = max(28, floor(h * 0.21));
+  cap_x = cx - floor(cap_w * 0.5);
+  cap_y = y + floor((1 - value) * (h - cap_h));
+
+  gfx_set(0, 0, 0, 0.4);
+  gfx_rect(cap_x + 2, cap_y + 2, cap_w, cap_h);
+  gfx_set(0.93, 0.94, 0.96, 1);
+  gfx_rect(cap_x, cap_y, cap_w, ceil(cap_h * 0.12));
+  gfx_set(0.76, 0.78, 0.82, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.12), cap_w, ceil(cap_h * 0.18));
+  gfx_set(0.56, 0.58, 0.62, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.30), cap_w, ceil(cap_h * 0.14));
+  gfx_set(0.17, 0.18, 0.20, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.44), cap_w, ceil(cap_h * 0.12));
+  gfx_set(0.66, 0.68, 0.72, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.56), cap_w, ceil(cap_h * 0.16));
+  gfx_set(0.79, 0.80, 0.83, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.72), cap_w, ceil(cap_h * 0.16));
+  gfx_set(0.37, 0.39, 0.43, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.88), cap_w, cap_h - floor(cap_h * 0.88));
+  gfx_set(1, 1, 1, 0.6);
+  gfx_line(cap_x + 2, cap_y + 1, cap_x + cap_w - 2, cap_y + 1);
+  gfx_set(0, 0, 0, 0.55);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h, 0);
+);
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// MPC VERTICAL: wide slotted track w/ center detent, chunky grooved black cap.
+// Bipolar — pair with sld_vbipolar_interact. 1:1 with the Forge vmpc painter.
+// ─────────────────────────────────────────────────────────────────────────
+function sld_vmpc_draw(x, y, w, h, value, mem)
+  local(cx, tw_trk, tx, cy, cap_w, cap_h, cap_x, cap_y, i, ty, gy, mid)
+(
+  cx = x + floor(w * 0.5);
+  tw_trk = max(7, floor(w * 0.20));
+  tx = cx - floor(tw_trk * 0.5);
+  cy = y + floor(h * 0.5);
+
+  // Tick rows both sides, brighter center detent
+  i = 0;
+  loop(9,
+    ty = y + floor(i / 8 * h);
+    mid = i == 4;
+    gfx_set(0.80, 0.82, 0.87, mid ? 0.7 : 0.32);
+    gfx_line(tx - 7, ty, tx - 2, ty);
+    gfx_line(tx + tw_trk + 2, ty, tx + tw_trk + 7, ty);
+    i += 1;
+  );
+
+  // Wide slot w/ inner shadow
+  gfx_set(0.045, 0.05, 0.06, 1);
+  gfx_rect(tx, y, tw_trk, h);
+  gfx_set(0, 0, 0, 0.6);
+  gfx_rect(tx, y, tw_trk, 2);
+  gfx_rect(tx, y, 1, h);
+  gfx_set(1, 1, 1, 0.07);
+  gfx_rect(tx, y, tw_trk, h, 0);
+  gfx_set(0.85, 0.87, 0.92, 0.6);
+  gfx_line(tx - 2, cy, tx + tw_trk + 2, cy);
+
+  // Chunky grooved black cap
+  cap_w = max(26, floor(w * 0.62));
+  cap_h = max(20, floor(h * 0.14));
+  cap_x = cx - floor(cap_w * 0.5);
+  cap_y = y + floor((1 - value) * (h - cap_h));
+
+  gfx_set(0, 0, 0, 0.45);
+  gfx_rect(cap_x + 2, cap_y + 3, cap_w, cap_h);
+  gfx_set(0.18, 0.185, 0.20, 1);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h);
+  gfx_set(0.115, 0.12, 0.135, 1);
+  gfx_rect(cap_x, cap_y + floor(cap_h * 0.55), cap_w, cap_h - floor(cap_h * 0.55));
+  gfx_set(1, 1, 1, 0.18);
+  gfx_rect(cap_x + 2, cap_y + 1, cap_w - 4, 1);
+  // 3 deep grooves
+  i = 1;
+  loop(3,
+    gy = cap_y + floor(cap_h * 0.22) + floor(i * (cap_h * 0.62) / 4);
+    gfx_set(0, 0, 0, 0.9);
+    gfx_rect(cap_x + 3, gy, cap_w - 6, 2);
+    gfx_set(1, 1, 1, 0.10);
+    gfx_line(cap_x + 3, gy + 2, cap_x + cap_w - 3, gy + 2);
+    i += 1;
+  );
+  gfx_set(0, 0, 0, 0.6);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h, 0);
+);
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// CONSOLE 4K VERTICAL: tall chrome cap, full-face fine ribs, darker mid-band.
+// Unipolar — pair with sld_vert_interact. 1:1 with the Forge vconsole painter.
+// ─────────────────────────────────────────────────────────────────────────
+function sld_vconsole_draw(x, y, w, h, value, mem)
+  local(cx, tw_trk, tx, cap_w, cap_h, cap_x, cap_y, b5, i, ty, ry)
+(
+  cx = x + floor(w * 0.5);
+  tw_trk = max(4, floor(w * 0.12));
+  tx = cx - floor(tw_trk * 0.5);
+
+  // Left tick scale
+  gfx_set(0.32, 0.33, 0.36, 0.5);
+  i = 0;
+  loop(10,
+    ty = y + floor(i / 9 * h);
+    gfx_line(tx - 6, ty, tx - 2, ty);
+    i += 1;
+  );
+
+  // Slot
+  gfx_set(0.04, 0.045, 0.055, 1);
+  gfx_rect(tx, y, tw_trk, h);
+  gfx_set(1, 1, 1, 0.05);
+  gfx_rect(tx + tw_trk, y, 1, h);
+
+  // Tall chrome ribbed cap
+  cap_w = max(18, floor(w * 0.44));
+  cap_h = max(28, floor(h * 0.20));
+  cap_x = cx - floor(cap_w * 0.5);
+  cap_y = y + floor((1 - value) * (h - cap_h));
+  b5 = ceil(cap_h / 5);
+
+  gfx_set(0, 0, 0, 0.45);
+  gfx_rect(cap_x + 2, cap_y + 2, cap_w, cap_h);
+  gfx_set(0.73, 0.76, 0.80, 1);
+  gfx_rect(cap_x, cap_y, cap_w, b5);
+  gfx_set(0.88, 0.90, 0.93, 1);
+  gfx_rect(cap_x, cap_y + b5, cap_w, b5);
+  gfx_set(0.60, 0.62, 0.66, 1);
+  gfx_rect(cap_x, cap_y + b5 * 2, cap_w, b5);
+  gfx_set(0.85, 0.87, 0.90, 1);
+  gfx_rect(cap_x, cap_y + b5 * 3, cap_w, b5);
+  gfx_set(0.50, 0.53, 0.58, 1);
+  gfx_rect(cap_x, cap_y + b5 * 4, cap_w, cap_h - b5 * 4);
+  // Fine ribs across the whole face
+  ry = cap_y + 3;
+  while(ry < cap_y + cap_h - 2) (
+    gfx_set(0.20, 0.22, 0.26, 0.5);
+    gfx_line(cap_x + 1, ry, cap_x + cap_w - 1, ry);
+    gfx_set(1, 1, 1, 0.55);
+    gfx_line(cap_x + 1, ry + 1, cap_x + cap_w - 1, ry + 1);
+    ry += 3;
+  );
+  gfx_set(0.08, 0.09, 0.11, 0.8);
+  gfx_rect(cap_x, cap_y, cap_w, cap_h, 0);
+  gfx_set(1, 1, 1, 0.10);
+  gfx_line(cap_x + 1, cap_y + cap_h, cap_x + cap_w - 1, cap_y + cap_h);
+);
+
+// EOF — sliders_kbsg.jsfx-inc (extended)

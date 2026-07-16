@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<index version="1" name="ReaKit">
+  <category name="Library">
+    <reapack name="ReaKit Elements.jsfx" type="effect" desc="ReaKit - UI widget library for JSFX (19 knobs / 17 faders / 10 buttons / 12 meters / analog VU) + showcase">
+      <metadata>
+        <description><![CDATA[ReaKit is a free, procedural UI/widget library for JSFX. 19 knob styles, 17 slider/fader types, 10 buttons, 12 meters with DSP, analog VU with 11 themes. No bitmaps - crisp at any size, themable with one call, one shared interaction model (drag / ctrl-fine / wheel / double-click reset / automation-safe). Installing this package brings the library incs plus the all-elements showcase JSFX. MIT licensed.]]></description>
+        <link rel="website">https://forum.cockos.com/showthread.php?p=2952442</link>
+        <link rel="repository">https://github.com/mequaz-sudo/ReaKit</link>
+      </metadata>
+      <version name="1.0.0" author="Quaz (EON Studios)" time="2026-07-16T15:36:24Z">
+        <changelog><![CDATA[Initial public release.
+- 19 knob styles incl. the 2026-07 redesigns (Neve fluted, Pultec black/cream, Ableton 1:1, Neve Alt i73)
+- 17 slider/fader types incl. the console pack (SSL, Neve, Pro Tools, MPC, 4K)
+- 10 button styles, 12 meter styles with DSP, analog VU (11 themes)
+- ReaKit Elements showcase JSFX]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/ReaKit%20Elements.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="vu_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/vu_kbsg.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/meters_kbsg.jsfx-inc</source>
+      </version>
+    </reapack>
+  </category>
+  <metadata>
+    <description><![CDATA[ReaKit - free procedural UI/widget library for JSFX by EON Studios. Knobs, faders, buttons, meters, VU - drawn in code, no bitmaps. MIT.]]></description>
+    <link rel="website">https://forum.cockos.com/showthread.php?p=2952442</link>
+  </metadata>
+</index>

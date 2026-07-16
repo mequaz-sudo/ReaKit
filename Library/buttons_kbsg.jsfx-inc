@@ -1,0 +1,928 @@
+@init
+__buttons_kbsg_loaded = 1;
+
+// ── Utility functions (standalone, no knobs_kbsg dependency needed) ──────
+function clamp(x, lo, hi) ( min(max(x, lo), hi); );
+function lerp(a, b, t) ( a + (b - a) * t; );
+function dist(x1, y1, x2, y2) ( sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)); );
+function sign_of(x) ( x < 0 ? -1 : x > 0 ? 1 : 0; );
+
+// ── Themable structural colours ─────────────────────────────────────────
+// Defaults reproduce the original dark-console look EXACTLY, so an untouched
+// build renders byte-identical. A theme driver (rk_theme.jsfx-inc's
+// rk_theme_apply) may overwrite these each frame to re-skin every button.
+// Only the large surfaces are globals; small detail (shadows, knurls,
+// specular, indicator dots, active underline) stays fixed — it reads on any
+// background and keeping it literal avoids churn.
+btn_body_r    = 0.22; btn_body_g    = 0.22; btn_body_b    = 0.24; // idle body fill
+btn_body_hi_r = 0.28; btn_body_hi_g = 0.28; btn_body_hi_b = 0.30; // hover body target
+btn_housing_r = 0.12; btn_housing_g = 0.12; btn_housing_b = 0.14; // recessed backing
+btn_frame_r   = 0.35; btn_frame_g   = 0.35; btn_frame_b   = 0.38; // border
+function btn_set_body(r,g,b)    ( btn_body_r=r; btn_body_g=g; btn_body_b=b; );
+function btn_set_body_hi(r,g,b) ( btn_body_hi_r=r; btn_body_hi_g=g; btn_body_hi_b=b; );
+function btn_set_housing(r,g,b) ( btn_housing_r=r; btn_housing_g=g; btn_housing_b=b; );
+function btn_set_frame(r,g,b)   ( btn_frame_r=r; btn_frame_g=g; btn_frame_b=b; );
+
+// buttons_kbsg.jsfx-inc — EON Studios Button Library (ReaKit) (14 Types)
+// ═══════════════════════════════════════════════════════════════════════════
+// Types included:
+//   Page A — Toggles & Switches:
+//     1.  Bright/Dim Rect    — EQ1979-style lit rectangle toggle
+//     2.  Green Checkbox      — Joanny-style frame + fill + label
+//     3.  Illuminated Pill    — SSL rounded rect with inner glow
+//     4.  LED + Label         — colored LED circle + text
+//     5.  Rocker Switch 2-pos — tilting rect with shadow shift
+//     6.  Rocker Switch 3-pos — three-position variant
+//     7.  Vintage Toggle      — bat handle lever with flip animation
+//     8.  Latching Footswitch — large circle with stomp-box LED
+//     9.  Momentary Push      — active only while held
+//   Page B — Selectors & Groups:
+//     10. Segmented Bar       — Spice-style N-way selector
+//     11. Radio Dots          — circle group, one active
+//     12. Increment/Decrement — ◀ value ▶ arrows
+//     13. Tab Strip           — horizontal tabs
+//     14. Icon Toggle         — mute/solo/bypass icons
+//
+// REQUIRED GLOBALS (same as knobs library):
+//   mx, my, LMB, lmb_down, CTRL, dt, hv_speed, tau
+//
+// MEMORY CONVENTION (8 slots per toggle instance):
+//   [0] hover_t    [1] press_anim   [2] transition_t   [3] last_click
+//   [4] aux        [5] automate     [6] is_active       [7] reserved
+//
+// TOGGLE INTERACT: returns new state (0 or 1). Caller checks change.
+// SELECTOR INTERACT: returns selected index. Caller checks change.
+// MOMENTARY INTERACT: returns 1 while held, 0 on release.
+// INCREMENT INTERACT: returns delta (-1, 0, or +1).
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. BRIGHT/DIM RECT TOGGLE (EQ1979 style)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: filled rect, bright when on, dim when off, text centered
+function btn_rect_draw(x, y, w, h, state, label, hover_t,
+                        on_r, on_g, on_b)
+local(ht, br, bg, bb, lr, lg, lb, tw, th)
+(
+  ht = pow(hover_t, 2);
+  state ? (
+    br = on_r; bg = on_g; bb = on_b;
+    lr = 0.05; lg = 0.05; lb = 0.05;
+  ) : (
+    br = lerp(0.22, 0.28, ht);
+    bg = lerp(0.22, 0.28, ht);
+    bb = lerp(0.24, 0.30, ht);
+    lr = 0.7; lg = 0.7; lb = 0.7;
+  );
+  // Body
+  gfx_set(br, bg, bb, 1);
+  gfx_rect(x, y, w, h);
+  // Border
+  gfx_set(0.45, 0.45, 0.48, lerp(0.6, 1.0, ht));
+  gfx_rect(x, y, w, h, 0);
+  // Hover inner glow
+  ht > 0.01 && !state ? (
+    gfx_set(on_r, on_g, on_b, 0.08 * ht);
+    gfx_rect(x + 1, y + 1, w - 2, h - 2);
+  );
+  // Label
+  gfx_set(lr, lg, lb, 1);
+  gfx_measurestr(label, tw, th);
+  gfx_x = x + (w - tw) / 2;
+  gfx_y = y + (h - th) / 2;
+  gfx_drawstr(label);
+);
+
+// Interact: click to toggle
+function btn_rect_interact(mem, x, y, w, h, cur_state)
+local(hover, new_state)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? (
+    new_state = !cur_state;
+    mem[5] = 1;
+  );
+  new_state;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. GREEN CHECKBOX (Joanny style)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: square frame + green fill when on + text label to right
+function btn_checkbox_draw(x, y, size, state, label, hover_t,
+                            cr, cg, cb)
+local(ht, inner, chk_m, tw, th)
+(
+  ht = pow(hover_t, 2);
+  // Outer frame
+  gfx_set(lerp(0.35, 0.50, ht), lerp(0.35, 0.50, ht), lerp(0.38, 0.52, ht), 1);
+  gfx_rect(x, y, size, size);
+  // Inner dark
+  gfx_set(0.12, 0.12, 0.14, 1);
+  gfx_rect(x + 1, y + 1, size - 2, size - 2);
+  // Fill when on
+  state ? (
+    chk_m = max(2, floor(size * 0.12));
+    gfx_set(cr, cg, cb, 1);
+    gfx_rect(x + chk_m, y + chk_m, size - chk_m * 2, size - chk_m * 2);
+    // Checkmark highlight
+    gfx_set(min(cr + 0.3, 1), min(cg + 0.3, 1), min(cb + 0.3, 1), 0.5);
+    gfx_rect(x + chk_m + 1, y + chk_m + 1, size - chk_m * 2 - 2, size - chk_m * 2 - 2);
+  );
+  // Hover glow around frame
+  ht > 0.01 && !state ? (
+    gfx_set(cr, cg, cb, 0.15 * ht);
+    gfx_rect(x - 1, y - 1, size + 2, size + 2);
+  );
+  // Label text
+  gfx_set(lerp(0.6, 0.85, ht), lerp(0.6, 0.85, ht), lerp(0.6, 0.85, ht), 1);
+  gfx_measurestr(label, tw, th);
+  gfx_x = x + size + max(6, size * 0.4);
+  gfx_y = y + (size - th) / 2;
+  gfx_drawstr(label);
+);
+
+// Interact: click on box or label area toggles
+function btn_checkbox_interact(mem, x, y, size, label_w, cur_state)
+local(hover, new_state, total_w)
+(
+  total_w = size + max(6, size * 0.4) + label_w;
+  hover = (mx >= x && mx <= x + total_w && my >= y && my <= y + size);
+  hover ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? (
+    new_state = !cur_state;
+    mem[5] = 1;
+  );
+  new_state;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. ILLUMINATED PILL (SSL rounded rect with inner glow)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: rounded rect body, inner glow when on, text
+// NOTE: gfx_roundrect is outline-only in JSFX. Use gfx_rect for fills,
+// gfx_roundrect for border outlines only.
+function btn_pill_draw(x, y, w, h, state, label, hover_t,
+                        cr, cg, cb)
+local(ht, ba, rad, glow_a, tw, th)
+(
+  ht = pow(hover_t, 2);
+  rad = min(h / 2, 8);
+  // Dark body (filled rect)
+  gfx_set(btn_housing_r, btn_housing_g, btn_housing_b, 1);
+  gfx_rect(x, y, w, h);
+  // State glow
+  state ? (
+    glow_a = lerp(0.7, 1.0, ht);
+    // Inner fill glow (filled rect)
+    gfx_set(cr * 0.3, cg * 0.3, cb * 0.3, glow_a);
+    gfx_rect(x + 2, y + 2, w - 4, h - 4);
+    // Bright center glow (filled rect)
+    gfx_set(cr, cg, cb, glow_a * 0.5);
+    gfx_rect(x + 4, y + 4, w - 8, h - 8);
+    // Border lit (outline)
+    gfx_set(cr, cg, cb, glow_a * 0.8);
+    gfx_roundrect(x, y, w, h, rad, 1);
+  ) : (
+    // Off border (outline)
+    gfx_set(lerp(0.25, 0.35, ht), lerp(0.25, 0.35, ht), lerp(0.28, 0.38, ht), 1);
+    gfx_roundrect(x, y, w, h, rad, 1);
+  );
+  // Label
+  state ? gfx_set(1, 1, 1, 1) : gfx_set(lerp(0.45, 0.65, ht), lerp(0.45, 0.65, ht), lerp(0.45, 0.65, ht), 1);
+  gfx_measurestr(label, tw, th);
+  gfx_x = x + (w - tw) / 2;
+  gfx_y = y + (h - th) / 2;
+  gfx_drawstr(label);
+);
+
+// Interact: click to toggle (same pattern as rect)
+function btn_pill_interact(mem, x, y, w, h, cur_state)
+local(hover, new_state)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? ( new_state = !cur_state; mem[5] = 1; );
+  new_state;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. LED + LABEL
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: colored LED circle + text label below or to right
+// layout: 0 = label below, 1 = label right
+function btn_led_draw(cx, cy, led_r, state, label, hover_t,
+                       cr, cg, cb, layout)
+local(ht, glow, tw, th)
+(
+  ht = pow(hover_t, 2);
+  // LED housing (dark ring)
+  gfx_set(btn_housing_r - 0.04, btn_housing_g - 0.04, btn_housing_b - 0.04, 1);
+  gfx_circle(cx, cy, led_r + 2, 1);
+  gfx_set(0.25, 0.25, 0.28, 1);
+  gfx_circle(cx, cy, led_r + 2, 0);
+  // LED body
+  state ? (
+    glow = lerp(0.8, 1.0, ht);
+    gfx_set(cr, cg, cb, glow);
+    gfx_circle(cx, cy, led_r, 1);
+    // Bright core
+    gfx_set(min(cr + 0.4, 1), min(cg + 0.4, 1), min(cb + 0.4, 1), glow * 0.7);
+    gfx_circle(cx, cy, led_r * 0.5, 1);
+    // Outer glow halo
+    gfx_set(cr, cg, cb, 0.15 * glow);
+    gfx_circle(cx, cy, led_r * 2, 1);
+  ) : (
+    gfx_set(cr * 0.15, cg * 0.15, cb * 0.15, 1);
+    gfx_circle(cx, cy, led_r, 1);
+    // Dim specular
+    gfx_set(0.3, 0.3, 0.32, 0.3);
+    gfx_circle(cx - led_r * 0.2, cy - led_r * 0.2, led_r * 0.3, 1);
+  );
+  // Label
+  state ? gfx_set(0.9, 0.9, 0.9, 1) : gfx_set(lerp(0.4, 0.6, ht), lerp(0.4, 0.6, ht), lerp(0.4, 0.6, ht), 1);
+  gfx_measurestr(label, tw, th);
+  layout == 0 ? (
+    // Below
+    gfx_x = cx - tw / 2;
+    gfx_y = cy + led_r + 6;
+  ) : (
+    // Right
+    gfx_x = cx + led_r + 8;
+    gfx_y = cy - th / 2;
+  );
+  gfx_drawstr(label);
+);
+
+// Interact: click on LED or label area
+function btn_led_interact(mem, cx, cy, led_r, cur_state)
+local(hover, d, new_state)
+(
+  d = dist(mx, my, cx, cy);
+  hover = (d <= led_r * 2.5);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? ( new_state = !cur_state; mem[5] = 1; );
+  new_state;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. ROCKER SWITCH 2-POSITION
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: tilting rectangle that shifts shadow when toggled
+function btn_rocker2_draw(x, y, w, h, state, label_off, label_on, hover_t)
+local(ht, tilt, shx, shy, body_b, tw, th)
+(
+  ht = pow(hover_t, 2);
+  tilt = state ? 1 : 0;
+  // Shadow shifts with state
+  shx = lerp(2, -2, tilt);
+  shy = lerp(3, 1, tilt);
+  // Shadow
+  gfx_set(0, 0, 0, 0.2);
+  gfx_rect(x + shx, y + shy, w, h);
+  // Bezel
+  gfx_set(0.18, 0.18, 0.20, 1);
+  gfx_rect(x - 2, y - 2, w + 4, h + 4);
+  // Body — tilts visually via brightness gradient
+  body_b = lerp(0.38, 0.52, ht);
+  state ? (
+    // Top darker, bottom lighter (tilted down-right)
+    gfx_set(body_b - 0.08, body_b - 0.08, body_b - 0.06, 1);
+    gfx_rect(x, y, w, h / 2);
+    gfx_set(body_b + 0.04, body_b + 0.04, body_b + 0.06, 1);
+    gfx_rect(x, y + h / 2, w, h - h / 2);
+  ) : (
+    // Top lighter, bottom darker (tilted up-left)
+    gfx_set(body_b + 0.04, body_b + 0.04, body_b + 0.06, 1);
+    gfx_rect(x, y, w, h / 2);
+    gfx_set(body_b - 0.08, body_b - 0.08, body_b - 0.06, 1);
+    gfx_rect(x, y + h / 2, w, h - h / 2);
+  );
+  // Center groove
+  gfx_set(0.15, 0.15, 0.17, 0.5);
+  gfx_line(x + 4, y + h / 2, x + w - 4, y + h / 2);
+  // Border
+  gfx_set(0.28, 0.28, 0.30, 1);
+  gfx_rect(x, y, w, h, 0);
+  // Label
+  gfx_set(0.85, 0.85, 0.85, 1);
+  gfx_measurestr(state ? label_on : label_off, tw, th);
+  gfx_x = x + (w - tw) / 2;
+  gfx_y = y + (h - th) / 2;
+  gfx_drawstr(state ? label_on : label_off);
+);
+
+// Interact
+function btn_rocker2_interact(mem, x, y, w, h, cur_state)
+local(hover, new_state)
+(
+  hover = (mx >= x - 2 && mx <= x + w + 2 && my >= y - 2 && my <= y + h + 2);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? ( new_state = !cur_state; mem[5] = 1; );
+  new_state;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. ROCKER SWITCH 3-POSITION
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: three zones, pressed zone is highlighted
+// state: 0, 1, or 2
+function btn_rocker3_draw(x, y, w, h, state, lbl0, lbl1, lbl2, hover_t)
+local(ht, zone_h, zy, i, sel, br, tw, th)
+(
+  ht = pow(hover_t, 2);
+  zone_h = h / 3;
+  // Bezel
+  gfx_set(0.18, 0.18, 0.20, 1);
+  gfx_rect(x - 2, y - 2, w + 4, h + 4);
+  // Three zones
+  i = 0;
+  loop(3,
+    zy = y + i * zone_h;
+    sel = (state == i);
+    br = sel ? lerp(0.50, 0.60, ht) : lerp(0.28, 0.35, ht);
+    gfx_set(br, br, br + 0.02, 1);
+    gfx_rect(x, zy, w, zone_h);
+    // Divider line
+    i > 0 ? (
+      gfx_set(0.15, 0.15, 0.17, 0.6);
+      gfx_line(x + 3, zy, x + w - 3, zy);
+    );
+    // Active indicator dot
+    sel ? (
+      gfx_set(0.9, 0.9, 0.3, 1);
+      gfx_circle(x + w - 8, zy + zone_h / 2, 3, 1);
+    );
+    // Label
+    sel ? gfx_set(0.95, 0.95, 0.95, 1) : gfx_set(0.55, 0.55, 0.55, 1);
+    i == 0 ? gfx_measurestr(lbl0, tw, th)
+    : i == 1 ? gfx_measurestr(lbl1, tw, th)
+    : gfx_measurestr(lbl2, tw, th);
+    gfx_x = x + 6;
+    gfx_y = zy + (zone_h - th) / 2;
+    i == 0 ? gfx_drawstr(lbl0)
+    : i == 1 ? gfx_drawstr(lbl1)
+    : gfx_drawstr(lbl2);
+    i += 1;
+  );
+  // Border
+  gfx_set(0.30, 0.30, 0.32, 1);
+  gfx_rect(x, y, w, h, 0);
+);
+
+// Interact: click selects zone
+function btn_rocker3_interact(mem, x, y, w, h, cur_state)
+local(hover, new_state, zone_h, clicked_zone)
+(
+  hover = (mx >= x - 2 && mx <= x + w + 2 && my >= y - 2 && my <= y + h + 2);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? (
+    zone_h = h / 3;
+    clicked_zone = floor((my - y) / zone_h);
+    clicked_zone = min(max(clicked_zone, 0), 2);
+    new_state = clicked_zone;
+    mem[5] = 1;
+  );
+  new_state;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. VINTAGE TOGGLE (bat handle lever)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: metal plate + bat handle that flips up/down
+function btn_vintage_toggle_draw(cx, cy, w, h, state, hover_t)
+local(ht, plate_w, plate_h, slot_w, slot_h,
+      handle_len, handle_w, handle_tip_r, angle, hx, hy)
+(
+  ht = pow(hover_t, 2);
+  plate_w = w;
+  plate_h = h;
+  slot_w = w * 0.35;
+  slot_h = h * 0.55;
+  handle_len = h * 0.6;
+  handle_w = max(4, w * 0.12);
+  handle_tip_r = max(3, w * 0.09);
+  // Metal plate
+  gfx_set(lerp(0.30, 0.36, ht), lerp(0.30, 0.36, ht), lerp(0.32, 0.38, ht), 1);
+  gfx_rect(cx - plate_w / 2, cy - plate_h / 2, plate_w, plate_h);
+  gfx_set(0.20, 0.20, 0.22, 1);
+  gfx_rect(cx - plate_w / 2, cy - plate_h / 2, plate_w, plate_h, 0);
+  // Slot (dark opening)
+  gfx_set(0.06, 0.06, 0.08, 1);
+  gfx_rect(cx - slot_w / 2, cy - slot_h / 2, slot_w, slot_h);
+  // Bat handle
+  angle = state ? -0.35 : 0.35;  // radians tilt
+  hx = cx + sin(angle) * handle_len * 0.5;
+  hy = cy - cos(angle) * handle_len * 0.5;
+  // Handle shaft
+  gfx_set(0.55 + 0.05 * ht, 0.55 + 0.05 * ht, 0.58 + 0.05 * ht, 1);
+  gfx_line(cx - sin(angle) * 2, cy + cos(angle) * 2, hx, hy);
+  gfx_line(cx - sin(angle) * 2 + 1, cy + cos(angle) * 2, hx + 1, hy);
+  gfx_line(cx - sin(angle) * 2 - 1, cy + cos(angle) * 2, hx - 1, hy);
+  // Handle tip (ball)
+  gfx_set(0.62 + 0.06 * ht, 0.62 + 0.06 * ht, 0.65 + 0.06 * ht, 1);
+  gfx_circle(hx, hy, handle_tip_r, 1);
+  gfx_set(0.75, 0.75, 0.78, 0.4);
+  gfx_circle(hx - 1, hy - 1, handle_tip_r * 0.4, 1);
+);
+
+// Interact
+function btn_vintage_toggle_interact(mem, cx, cy, w, h, cur_state)
+local(hover, new_state)
+(
+  hover = (mx >= cx - w / 2 - 4 && mx <= cx + w / 2 + 4 &&
+           my >= cy - h / 2 - 4 && my <= cy + h / 2 + 4);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? ( new_state = !cur_state; mem[5] = 1; );
+  new_state;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. LATCHING FOOTSWITCH
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: large circle (stomp pedal), small LED on top
+function btn_footswitch_draw(cx, cy, radius, state, label, hover_t,
+                              cr, cg, cb)
+local(ht, body_b, led_x, led_y, led_r, tw, th)
+(
+  ht = pow(hover_t, 2);
+  body_b = lerp(0.18, 0.24, ht);
+  led_y = cy - radius - 10;
+  led_r = max(3, radius * 0.12);
+  // Shadow
+  gfx_set(0, 0, 0, 0.15);
+  gfx_circle(cx + 2, cy + 3, radius, 1);
+  // Body
+  gfx_set(body_b, body_b, body_b + 0.02, 1);
+  gfx_circle(cx, cy, radius, 1);
+  // Inner rings (textured)
+  gfx_set(body_b + 0.06, body_b + 0.06, body_b + 0.08, 1);
+  gfx_circle(cx, cy, radius * 0.75, 1);
+  gfx_set(body_b + 0.03, body_b + 0.03, body_b + 0.05, 1);
+  gfx_circle(cx, cy, radius * 0.55, 1);
+  // Border
+  gfx_set(0.30, 0.30, 0.32, 1);
+  gfx_circle(cx, cy, radius, 0);
+  // Pressed depression
+  state ? (
+    gfx_set(0.10, 0.10, 0.12, 0.3);
+    gfx_circle(cx, cy, radius * 0.65, 1);
+  );
+  // LED indicator above
+  state ? (
+    gfx_set(cr, cg, cb, lerp(0.8, 1.0, ht));
+    gfx_circle(cx, led_y, led_r, 1);
+    gfx_set(cr, cg, cb, 0.2);
+    gfx_circle(cx, led_y, led_r * 2.5, 1);
+  ) : (
+    gfx_set(cr * 0.12, cg * 0.12, cb * 0.12, 1);
+    gfx_circle(cx, led_y, led_r, 1);
+  );
+  // Label below
+  gfx_set(lerp(0.5, 0.8, ht), lerp(0.5, 0.8, ht), lerp(0.5, 0.8, ht), 1);
+  gfx_measurestr(label, tw, th);
+  gfx_x = cx - tw / 2;
+  gfx_y = cy + radius + 8;
+  gfx_drawstr(label);
+);
+
+// Interact
+function btn_footswitch_interact(mem, cx, cy, radius, cur_state)
+local(hover, d, new_state)
+(
+  d = dist(mx, my, cx, cy);
+  hover = (d <= radius);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? ( new_state = !cur_state; mem[5] = 1; );
+  new_state;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. MOMENTARY PUSH BUTTON
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: button that glows while pressed
+function btn_momentary_draw(x, y, w, h, pressed, label, hover_t,
+                             cr, cg, cb)
+local(ht, br, bg, bb, tw, th)
+(
+  ht = pow(hover_t, 2);
+  pressed ? (
+    br = cr * 0.6; bg = cg * 0.6; bb = cb * 0.6;
+  ) : (
+    br = lerp(btn_body_r - 0.04, btn_body_hi_r - 0.04, ht);
+    bg = lerp(btn_body_g - 0.04, btn_body_hi_g - 0.04, ht);
+    bb = lerp(btn_body_b - 0.04, btn_body_hi_b - 0.04, ht);
+  );
+  // Shadow (shifts when pressed)
+  pressed ? (
+    gfx_set(0, 0, 0, 0.05);
+    gfx_rect(x + 1, y + 1, w, h);
+  ) : (
+    gfx_set(0, 0, 0, 0.15);
+    gfx_rect(x + 2, y + 2, w, h);
+  );
+  // Body
+  gfx_set(br, bg, bb, 1);
+  gfx_rect(x, y, w, h);
+  // Border
+  pressed ? (
+    gfx_set(cr, cg, cb, 0.8);
+  ) : (
+    gfx_set(0.35, 0.35, 0.38, lerp(0.6, 1.0, ht));
+  );
+  gfx_rect(x, y, w, h, 0);
+  // Label
+  pressed ? gfx_set(1, 1, 1, 1) : gfx_set(lerp(0.5, 0.7, ht), lerp(0.5, 0.7, ht), lerp(0.5, 0.7, ht), 1);
+  gfx_measurestr(label, tw, th);
+  gfx_x = x + (w - tw) / 2;
+  gfx_y = y + (h - th) / 2;
+  gfx_drawstr(label);
+);
+
+// Interact: returns 1 while LMB held over button, 0 otherwise
+// mem[1] tracks capture (once pressed, stays active until release)
+function btn_momentary_interact(mem, x, y, w, h)
+local(hover, pressed)
+(
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  mem[5] = 0;
+  // Start press
+  lmb_down && hover ? ( mem[1] = 1; );
+  // Release
+  !LMB ? (
+    mem[1] ? mem[5] = 1;
+    mem[1] = 0;
+  );
+  pressed = mem[1];
+  pressed;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10. SEGMENTED BAR (N-way selector, Spice style)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw single segment. Call in a loop for N segments.
+// idx = which segment (0..n-1), active = currently selected index
+function btn_segment_draw(x, y, w, h, idx, active, label, hover_t,
+                           on_r, on_g, on_b)
+local(ht, sel, br, bg, bb, tw, th)
+(
+  ht = pow(hover_t, 2);
+  sel = (idx == active);
+  sel ? (
+    br = on_r; bg = on_g; bb = on_b;
+  ) : (
+    br = lerp(btn_body_r - 0.02, btn_body_hi_r, ht);
+    bg = lerp(btn_body_g - 0.02, btn_body_hi_g, ht);
+    bb = lerp(btn_body_b - 0.02, btn_body_hi_b, ht);
+  );
+  // Body
+  gfx_set(br, bg, bb, 1);
+  gfx_rect(x, y, w, h);
+  // Border
+  gfx_set(0.45, 0.45, 0.48, lerp(0.4, 0.7, ht));
+  gfx_rect(x, y, w, h, 0);
+  // Active highlight bar at bottom
+  sel ? (
+    gfx_set(on_r, on_g, on_b, 1);
+    gfx_rect(x + 1, y + h - 3, w - 2, 2);
+  );
+  // Label
+  sel ? gfx_set(0, 0, 0, 1) : gfx_set(lerp(0.5, 0.75, ht), lerp(0.5, 0.75, ht), lerp(0.5, 0.75, ht), 1);
+  gfx_measurestr(label, tw, th);
+  gfx_x = x + (w - tw) / 2;
+  gfx_y = y + (h - th) / 2;
+  gfx_drawstr(label);
+);
+
+// Interact: returns clicked index, or cur_val if no click.
+// Call once for entire bar: x, y, seg_w, h, n_segs, gap
+function btn_segment_interact(mem, x, y, seg_w, h, n_segs, gap, cur_val)
+local(hover, total_w, new_val, i, sx)
+(
+  total_w = n_segs * seg_w + (n_segs - 1) * gap;
+  hover = (mx >= x && mx <= x + total_w && my >= y && my <= y + h);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_val = cur_val;
+  mem[5] = 0;
+  lmb_down && hover ? (
+    i = 0;
+    loop(n_segs,
+      sx = x + i * (seg_w + gap);
+      (mx >= sx && mx <= sx + seg_w) ? (
+        new_val = i;
+        mem[5] = 1;
+      );
+      i += 1;
+    );
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11. RADIO DOTS (circle group, one active)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw single radio dot. Call in a loop.
+// layout: 0 = vertical, 1 = horizontal
+function btn_radio_draw(cx, cy, dot_r, idx, active, label, hover_t,
+                         cr, cg, cb)
+local(ht, sel, tw, th)
+(
+  ht = pow(hover_t, 2);
+  sel = (idx == active);
+  // Outer ring
+  gfx_set(lerp(0.30, 0.45, ht), lerp(0.30, 0.45, ht), lerp(0.32, 0.47, ht), 1);
+  gfx_circle(cx, cy, dot_r, 0);
+  gfx_circle(cx, cy, dot_r - 0.5, 0);
+  // Inner dark
+  gfx_set(0.10, 0.10, 0.12, 1);
+  gfx_circle(cx, cy, dot_r - 1.5, 1);
+  // Active fill
+  sel ? (
+    gfx_set(cr, cg, cb, lerp(0.8, 1.0, ht));
+    gfx_circle(cx, cy, dot_r * 0.55, 1);
+  );
+  // Label to right
+  sel ? gfx_set(0.9, 0.9, 0.9, 1) : gfx_set(lerp(0.45, 0.65, ht), lerp(0.45, 0.65, ht), lerp(0.45, 0.65, ht), 1);
+  gfx_measurestr(label, tw, th);
+  gfx_x = cx + dot_r + 6;
+  gfx_y = cy - th / 2;
+  gfx_drawstr(label);
+);
+
+// Interact: returns selected index
+function btn_radio_interact(mem, x, y, dot_r, spacing, n_opts, is_horiz, cur_val)
+local(hover, total, new_val, i, ix, iy, d)
+(
+  is_horiz ? (
+    total = n_opts * spacing;
+    hover = (mx >= x - dot_r && mx <= x + total && my >= y - dot_r * 2 && my <= y + dot_r * 2);
+  ) : (
+    total = n_opts * spacing;
+    hover = (mx >= x - dot_r && mx <= x + dot_r * 6 && my >= y - dot_r && my <= y + total);
+  );
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_val = cur_val;
+  mem[5] = 0;
+  lmb_down && hover ? (
+    i = 0;
+    loop(n_opts,
+      is_horiz ? ( ix = x + i * spacing; iy = y; )
+               : ( ix = x; iy = y + i * spacing; );
+      d = dist(mx, my, ix, iy);
+      d <= spacing * 0.5 ? (
+        new_val = i;
+        mem[5] = 1;
+      );
+      i += 1;
+    );
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12. INCREMENT / DECREMENT (◀ value ▶)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: left arrow, value display, right arrow
+function btn_incdec_draw(x, y, total_w, h, value_str, hover_t)
+local(ht, arr_w, val_w, arr_h, tw, th)
+(
+  ht = pow(hover_t, 2);
+  arr_w = h;  // square arrow buttons
+  val_w = total_w - arr_w * 2;
+  // Left arrow button
+  gfx_set(lerp(0.22, 0.32, ht), lerp(0.22, 0.32, ht), lerp(0.24, 0.34, ht), 1);
+  gfx_rect(x, y, arr_w, h);
+  gfx_set(0.35, 0.35, 0.38, 1);
+  gfx_rect(x, y, arr_w, h, 0);
+  // Left triangle
+  gfx_set(0.8, 0.8, 0.8, 1);
+  gfx_triangle(x + arr_w * 0.65, y + h * 0.25,
+               x + arr_w * 0.65, y + h * 0.75,
+               x + arr_w * 0.3, y + h * 0.5);
+  // Value display
+  gfx_set(0.12, 0.12, 0.14, 1);
+  gfx_rect(x + arr_w, y, val_w, h);
+  gfx_set(0.25, 0.25, 0.28, 1);
+  gfx_rect(x + arr_w, y, val_w, h, 0);
+  gfx_set(0.9, 0.9, 0.9, 1);
+  gfx_measurestr(value_str, tw, th);
+  gfx_x = x + arr_w + (val_w - tw) / 2;
+  gfx_y = y + (h - th) / 2;
+  gfx_drawstr(value_str);
+  // Right arrow button
+  gfx_set(lerp(0.22, 0.32, ht), lerp(0.22, 0.32, ht), lerp(0.24, 0.34, ht), 1);
+  gfx_rect(x + arr_w + val_w, y, arr_w, h);
+  gfx_set(0.35, 0.35, 0.38, 1);
+  gfx_rect(x + arr_w + val_w, y, arr_w, h, 0);
+  // Right triangle
+  gfx_set(0.8, 0.8, 0.8, 1);
+  gfx_triangle(x + arr_w + val_w + arr_w * 0.35, y + h * 0.25,
+               x + arr_w + val_w + arr_w * 0.35, y + h * 0.75,
+               x + arr_w + val_w + arr_w * 0.7, y + h * 0.5);
+);
+
+// Interact: returns -1, 0, or +1
+function btn_incdec_interact(mem, x, y, total_w, h)
+local(hover, arr_w, delta)
+(
+  arr_w = h;
+  hover = (mx >= x && mx <= x + total_w && my >= y && my <= y + h);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  delta = 0;
+  mem[5] = 0;
+  lmb_down && hover ? (
+    mx < x + arr_w ? ( delta = -1; mem[5] = 1; )
+    : mx > x + total_w - arr_w ? ( delta = 1; mem[5] = 1; );
+  );
+  // Scroll wheel over entire widget
+  hover && frame_wheel != 0 ? (
+    delta = sign_of(frame_wheel);
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  delta;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 13. TAB STRIP
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw single tab. Call in loop.
+function btn_tab_draw(x, y, w, h, idx, active, label, hover_t)
+local(ht, sel, br, tw, th)
+(
+  ht = pow(hover_t, 2);
+  sel = (idx == active);
+  // Body
+  sel ? (
+    gfx_set(0.85, 0.85, 0.85, 1);
+    gfx_rect(x, y, w, h);
+  ) : (
+    br = lerp(0.18, 0.25, ht);
+    gfx_set(br, br, br + 0.02, 1);
+    gfx_rect(x, y, w, h);
+  );
+  // Border
+  gfx_set(0.35, 0.35, 0.38, 1);
+  gfx_rect(x, y, w, h, 0);
+  // Active underline
+  sel ? (
+    gfx_set(0.3, 0.6, 1.0, 1);
+    gfx_rect(x, y + h - 3, w, 3);
+  );
+  // Label
+  sel ? gfx_set(0.05, 0.05, 0.05, 1) : gfx_set(lerp(0.5, 0.75, ht), lerp(0.5, 0.75, ht), lerp(0.5, 0.75, ht), 1);
+  gfx_measurestr(label, tw, th);
+  gfx_x = x + (w - tw) / 2;
+  gfx_y = y + (h - th) / 2;
+  gfx_drawstr(label);
+);
+
+// Interact: returns selected tab index
+function btn_tab_interact(mem, x, y, tab_w, h, n_tabs, gap, cur_val)
+local(hover, total_w, new_val, i, tx)
+(
+  total_w = n_tabs * tab_w + (n_tabs - 1) * gap;
+  hover = (mx >= x && mx <= x + total_w && my >= y && my <= y + h);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_val = cur_val;
+  mem[5] = 0;
+  lmb_down && hover ? (
+    i = 0;
+    loop(n_tabs,
+      tx = x + i * (tab_w + gap);
+      (mx >= tx && mx <= tx + tab_w) ? (
+        new_val = i;
+        mem[5] = 1;
+      );
+      i += 1;
+    );
+  );
+  new_val;
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14. ICON TOGGLE (mute/solo/bypass using text icons)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Draw: square button with single-char icon, colored when active
+// icon: single character string like "M", "S", "B"
+function btn_icon_draw(x, y, size, state, icon, hover_t,
+                        on_r, on_g, on_b)
+local(ht, br, bg, bb, tw, th)
+(
+  ht = pow(hover_t, 2);
+  state ? (
+    br = on_r; bg = on_g; bb = on_b;
+  ) : (
+    br = lerp(0.15, 0.22, ht);
+    bg = lerp(0.15, 0.22, ht);
+    bb = lerp(0.17, 0.24, ht);
+  );
+  // Body
+  gfx_set(br, bg, bb, 1);
+  gfx_rect(x, y, size, size);
+  // Border
+  state ? (
+    gfx_set(min(on_r + 0.2, 1), min(on_g + 0.2, 1), min(on_b + 0.2, 1), 0.8);
+  ) : (
+    gfx_set(0.30, 0.30, 0.33, lerp(0.5, 0.8, ht));
+  );
+  gfx_rect(x, y, size, size, 0);
+  // Icon character
+  state ? gfx_set(0, 0, 0, 1) : gfx_set(lerp(0.4, 0.65, ht), lerp(0.4, 0.65, ht), lerp(0.4, 0.65, ht), 1);
+  gfx_measurestr(icon, tw, th);
+  gfx_x = x + (size - tw) / 2;
+  gfx_y = y + (size - th) / 2;
+  gfx_drawstr(icon);
+);
+
+// Interact
+function btn_icon_interact(mem, x, y, size, cur_state)
+local(hover, new_state)
+(
+  hover = (mx >= x && mx <= x + size && my >= y && my <= y + size);
+  hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
+        : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mem[6] = hover;
+  new_state = cur_state;
+  mem[5] = 0;
+  lmb_down && hover ? ( new_state = !cur_state; mem[5] = 1; );
+  new_state;
+);

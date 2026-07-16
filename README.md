@@ -4,6 +4,10 @@ A free UI / widget library for REAPER JSFX. Every knob, fader, button, meter
 and VU needle is drawn procedurally in code — no bitmaps, no filmstrips — so
 your plugin UI is crisp at any size and re-themable with one call.
 
+![ReaKit — every element](screenshots/reakit_every_element.png)
+
+*One JSFX, zero image files: the ReaKit Elements showcase (installable below).*
+
 **19 knob styles** (SSL, Neve x2, API, Pultec x2, Ableton, Pro Tools, FabFilter,
 Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader types**
 (incl. an SSL / Neve / Pro Tools / MPC console pack) · **10 button styles** ·

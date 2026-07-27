@@ -1364,7 +1364,7 @@ local(ht, or_, ir_, val_norm, val_rad, jt, ja, tx1, ty1, tx2, ty2,
 (
   ht = pow(hover_t, 2);
   or_ = radius;
-  ir_ = radius - 10;
+  ir_ = radius * 0.60;   // inner disc — radius-relative so the knob survives any UI scale
   base_b = lerp(0.0, 0.04, ht);  // hover brightness boost
   RAD130_ = 130 * $pi / 180;
 
@@ -1406,28 +1406,28 @@ local(ht, or_, ir_, val_norm, val_rad, jt, ja, tx1, ty1, tx2, ty2,
 
   // Inner disc (3 concentric circles for gradient feel)
   gfx_set(0.32 + base_b, 0.32 + base_b, 0.34 + base_b, 1);
-  gfx_circle(cx, cy, ir_ - 2, 1);
+  gfx_circle(cx, cy, ir_ * 0.87, 1);
   gfx_set(0.30 + base_b, 0.30 + base_b, 0.32 + base_b, 1);
-  gfx_circle(cx, cy, ir_ - 5, 1);
+  gfx_circle(cx, cy, ir_ * 0.67, 1);
   gfx_set(0.28 + base_b, 0.28 + base_b, 0.30 + base_b, 1);
-  gfx_circle(cx, cy, ir_ - 8, 1);
+  gfx_circle(cx, cy, ir_ * 0.47, 1);
 
   // Upper-left highlight reflection
   gfx_set(0.42 + base_b, 0.42 + base_b, 0.44 + base_b, 0.3);
-  gfx_circle(cx - 2, cy - 3, ir_ - 4, 0);
+  gfx_circle(cx - radius * 0.08, cy - radius * 0.12, ir_ * 0.73, 0);
 
   // Center dot
   gfx_set(0.50 + base_b, 0.50 + base_b, 0.52 + base_b, 1);
-  gfx_circle(cx, cy, 4, 1);
+  gfx_circle(cx, cy, radius * 0.16, 1);
 
   // Grip notches (12 ticks around outer ring with shadows)
   jt = 0;
   loop(12,
     ja = jt / 12.0 * 2.0 * $pi;
-    tx1 = cx + cos(ja) * (or_ - 5);
-    ty1 = cy + sin(ja) * (or_ - 5);
-    tx2 = cx + cos(ja) * (or_ - 1);
-    ty2 = cy + sin(ja) * (or_ - 1);
+    tx1 = cx + cos(ja) * (or_ * 0.80);
+    ty1 = cy + sin(ja) * (or_ * 0.80);
+    tx2 = cx + cos(ja) * (or_ * 0.96);
+    ty2 = cy + sin(ja) * (or_ * 0.96);
     // Shadow
     gfx_set(0.15, 0.15, 0.17, 0.6);
     gfx_line(tx1 + 0.5, ty1 + 0.5, tx2 + 0.5, ty2 + 0.5);
@@ -1440,10 +1440,10 @@ local(ht, or_, ir_, val_norm, val_rad, jt, ja, tx1, ty1, tx2, ty2,
 
   // Position indicator dot (maps value to 260° arc like other knobs)
   val_rad = (-130 + val_norm * 260) * $pi / 180;
-  ix = cx + sin(val_rad) * (ir_ - 8);
-  iy = cy - cos(val_rad) * (ir_ - 8);
+  ix = cx + sin(val_rad) * (ir_ * 0.47);
+  iy = cy - cos(val_rad) * (ir_ * 0.47);
   gfx_set(0.90 + ht * 0.1, 0.88 + ht * 0.1, 0.85 + ht * 0.1, 0.9);
-  gfx_circle(ix, iy, 3, 1);
+  gfx_circle(ix, iy, max(1.5, radius * 0.12), 1);
 
   // Hover glow (uses accent color)
   ht > 0.01 ? (

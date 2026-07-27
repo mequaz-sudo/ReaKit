@@ -603,11 +603,12 @@ function sld_arc_draw(cx, cy, r, arc_thick, value, mem)
     i += 1;
   );
 
-  // filled arc
+  // filled arc — inset one ring per side when the band is thick enough, but
+  // always draw at least one pass (arc_thick drops below 3 at small UI scales)
   va = as + value * sw;
   gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 1);
-  i = 1;
-  loop(arc_thick - 2,
+  i = arc_thick >= 3 ? 1 : 0;
+  loop(max(1, arc_thick - 2 * i),
     gfx_arc(cx, cy, r + i, as, va, 1);
     i += 1;
   );
@@ -1093,11 +1094,11 @@ function sld_vssl_draw(x, y, w, h, value, mem)
            i == 4 ? 10 : i == 5 ? 20 : i == 6 ? 30 : 40;
     ty = y + floor(tpos * h);
     gfx_set(0.80, 0.82, 0.87, 0.5);
-    gfx_circle(cx + 8, ty, 1, 1);
+    gfx_circle(cx + w * 0.19, ty, 1, 1);
     gfx_set(0.78, 0.80, 0.84, 0.45);
     sprintf(#, "%d", tlbl);
     gfx_measurestr(#, sw_, sh_);
-    gfx_x = cx + 12; gfx_y = ty - floor(sh_ * 0.5);
+    gfx_x = cx + w * 0.286; gfx_y = ty - floor(sh_ * 0.5);
     gfx_drawstr(#);
     i += 1;
   );
@@ -1258,8 +1259,9 @@ function sld_vapi_draw(x, y, w, h, value, mem)
   );
   fh > 0 ? gfx_rect(tx + 1, fy, tw_trk - 2, fh);
 
-  // LED dots alongside groove (3 per side = 6 total)
-  led_x = tx + tw_trk + 6;
+  // LED dots alongside groove (3 per side = 6 total) — column and radii track
+  // the widget width so the LEDs stay inside the box at any UI scale
+  led_x = tx + tw_trk + max(2, w * 0.19);
   led_count = 3;
   // Positive LEDs (above center)
   n_pos = value > 0.5 ? floor((value - 0.5) * 2 * led_count + 0.5) : 0;
@@ -1268,13 +1270,13 @@ function sld_vapi_draw(x, y, w, h, value, mem)
     led_y = cy - floor((i + 1) * h / (led_count * 2 + 1));
     i < n_pos ? (
       gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.95);
-      gfx_circle(led_x, led_y, 2, 1);
+      gfx_circle(led_x, led_y, max(1, w * 0.0625), 1);
       // Glow
       gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 0.15);
-      gfx_circle(led_x, led_y, 5, 1);
+      gfx_circle(led_x, led_y, max(2, w * 0.156), 1);
     ) : (
       gfx_set(0.15, 0.18, 0.15, 0.6);
-      gfx_circle(led_x, led_y, 2, 1);
+      gfx_circle(led_x, led_y, max(1, w * 0.0625), 1);
     );
     i += 1;
   );
@@ -1285,12 +1287,12 @@ function sld_vapi_draw(x, y, w, h, value, mem)
     led_y = cy + floor((i + 1) * h / (led_count * 2 + 1));
     i < n_neg ? (
       gfx_set(sld_ac2_r, sld_ac2_g, sld_ac2_b, 0.95);
-      gfx_circle(led_x, led_y, 2, 1);
+      gfx_circle(led_x, led_y, max(1, w * 0.0625), 1);
       gfx_set(sld_ac2_r, sld_ac2_g, sld_ac2_b, 0.15);
-      gfx_circle(led_x, led_y, 5, 1);
+      gfx_circle(led_x, led_y, max(2, w * 0.156), 1);
     ) : (
       gfx_set(0.15, 0.18, 0.15, 0.6);
-      gfx_circle(led_x, led_y, 2, 1);
+      gfx_circle(led_x, led_y, max(1, w * 0.0625), 1);
     );
     i += 1;
   );
@@ -1429,10 +1431,10 @@ function sld_vpt_draw(x, y, w, h, value, mem)
     ty = y + floor(tpos * h);
     zr = i == 2;
     zr ? gfx_set(0.84, 0.86, 0.90, 0.7) : gfx_set(0.78, 0.80, 0.84, 0.30);
-    gfx_line(tx - (zr ? 13 : 9), ty, tx - 4, ty);
+    gfx_line(tx - w * (zr ? 0.27 : 0.19), ty, tx - w * 0.083, ty);
     sprintf(#, "%d", tlbl);
     gfx_measurestr(#, sw_, sh_);
-    gfx_x = tx - 15 - sw_; gfx_y = ty - floor(sh_ * 0.5);
+    gfx_x = tx - w * 0.31 - sw_; gfx_y = ty - floor(sh_ * 0.5);
     zr ? gfx_set(0.80, 0.82, 0.86, 0.55) : gfx_set(0.78, 0.80, 0.84, 0.40);
     gfx_drawstr(#);
     i += 1;

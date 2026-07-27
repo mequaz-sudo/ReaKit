@@ -1208,7 +1208,7 @@ function zm_draw_gr_str() (
 // Coil cover — circle at pivot + rect below face to bounding box bottom
 // Floating uses ZenoMOD exact ya*0.89/ya*0.91 multipliers.
 // Embedded uses stretched width to fill panel.
-function zm_draw_coil_cover() local(cover_top, cover_h, coil_r, csz) (
+function zm_draw_coil_cover() local(cover_top, cover_h, coil_r, csz, coil_y, coil_yend, coil_d2) (
   // When plugin overrides frame color, cap coil to size 2 (medium) so the
   // huge Coil_sz=3 dome doesn't bleed the override color across the VU face.
   zm_frame_r >= 0 ? (
@@ -1220,10 +1220,22 @@ function zm_draw_coil_cover() local(cover_top, cover_h, coil_r, csz) (
   );
   // Coil circles (ZenoMOD line 670-676)
   !zm_emb ? (
-    // Floating: ZenoMOD exact circles at pivot
-    csz == 1 ? gfx_circle(xa, ya, r1 * 0.16, 1, 1);
-    csz == 2 ? gfx_circle(xa, ya, r1 * 0.2, 1, 1);
-    csz == 3 ? gfx_circle(xa, ya * 1.32, r1 * 0.65, 1, 1);
+    // Bounded port: ZenoMOD drew these discs against its own window bottom and
+    // relied on window clipping. There is no clip here, so (a) the huge
+    // Coil_sz=3 dome (theme 5) is capped to size 2 — at bounded-layout
+    // coordinates (ya*1.32) it lands entirely BELOW the box and only leaks —
+    // and (b) the disc is scanline-filled and stops at the bounding-box
+    // bottom so no theme's coil ever escapes the meter.
+    coil_r = csz >= 2 ? r1 * 0.2 : csz == 1 ? r1 * 0.16 : 0;
+    coil_r > 0 ? (
+      coil_y = max(floor(ya - coil_r), zm_box_y);
+      coil_yend = min(ceil(ya + coil_r), zm_box_bot);
+      while(coil_y < coil_yend) (
+        coil_d2 = coil_r * coil_r - (coil_y - ya) * (coil_y - ya);
+        coil_d2 > 0 ? gfx_rect(xa - sqrt(coil_d2), coil_y, sqrt(coil_d2) * 2, 1);
+        coil_y += 1;
+      );
+    );
   ) : (
     // Embedded: ZenoMOD exact shifted circles
     csz == 1 ? gfx_circle(xa * 0.99, ya * 0.97, r1 * 0.16, 1, 1);

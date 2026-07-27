@@ -1,0 +1,9 @@
+// rk_ui_slider.jsfx-inc — Forge compatibility alias for sliders_kbsg.jsfx-inc
+// ═══════════════════════════════════════════════════════════════════════════
+// .jsfx exported by Forge (quazmusic.com/forge) import this name. The slider
+// library lives in sliders_kbsg.jsfx-inc — every sld_*_draw / sld_*_interact
+// Forge emits has an identical signature there, so this alias just pulls the
+// real library in.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import sliders_kbsg.jsfx-inc

@@ -1,0 +1,9 @@
+// rk_ui_meter.jsfx-inc — Forge compatibility alias for meters_kbsg.jsfx-inc
+// ═══════════════════════════════════════════════════════════════════════════
+// .jsfx exported by Forge (quazmusic.com/forge) import this name. The meter
+// library (DSP + drawing) lives in meters_kbsg.jsfx-inc — every mtr_* /
+// meter_* function Forge emits has an identical signature there, so this
+// alias just pulls the real library in.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import meters_kbsg.jsfx-inc

@@ -1,0 +1,143 @@
+// rk_ui_knob.jsfx-inc — Forge compatibility alias for knobs_kbsg.jsfx-inc
+// ═══════════════════════════════════════════════════════════════════════════
+// .jsfx exported by Forge (quazmusic.com/forge) import this name. The knob
+// library itself lives in knobs_kbsg.jsfx-inc — every per-style draw/interact
+// Forge emits (bb/jo/sp/ws/ssl/pultec/api/neve/varimu) has an identical
+// signature there.
+//
+// One style diverged when the library gained per-knob theming: the endless
+// encoder. Forge exports call the original 5-arg encoder_draw / 5-arg
+// encoder_interact, so those are redefined below in their original form.
+// JSFX resolves function references at definition time, so code compiled
+// before this point (e.g. the rk_knob_draw dispatcher inside knobs_kbsg)
+// keeps the library's newer encoder untouched.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import knobs_kbsg.jsfx-inc
+
+@init
+
+// Draw: grey metal body, 24 edge notches, 16 green LED ring, white pointer
+// (original Forge-era signature: 0-127 endless value, no theming args)
+function encoder_draw(cx, cy, radius, value, hover_t)
+local(ht, i, a, led_orbit, led_r, led_pos, led_dist, led_bright, lr, lg, lb,
+      notch_in, notch_out)
+(
+  ht = hover_t * hover_t;
+  led_orbit = radius * 1.3;
+  led_r = radius * 0.08;
+  led_pos = value / 128 * 16;
+  // LED ring
+  i = 0;
+  loop(16,
+    a = (-$pi + i * tau / 16);
+    led_dist = abs(i - led_pos);
+    led_dist > 8 ? led_dist = 16 - led_dist;
+    led_bright = max(0, 1 - led_dist / 8 * 2.5) * lerp(0.7, 1.0, ht);
+    lr = 0.05;
+    lg = led_bright * 0.9;
+    lb = led_bright * 0.4;
+    // Cache LED position (sin/cos computed once per LED)
+    lr = cx + sin(a) * led_orbit;  // reuse lr/lg temporarily
+    lg = cy - cos(a) * led_orbit;
+    // LED housing
+    gfx_set(0.12, 0.15, 0.12, 0.6);
+    gfx_circle(lr, lg, led_r * 1.2, 1);
+    // Lit LED
+    led_bright > 0.05 ? (
+      lb = led_bright * 0.4;
+      gfx_set(0.05, led_bright * 0.9, lb, 1);
+      gfx_circle(lr, lg, led_r * (0.8 + led_bright * 0.5), 1);
+      led_bright > 0.5 ? (
+        gfx_set(0.05, led_bright * 0.9, lb, 0.2 * led_bright);
+        gfx_circle(lr, lg, led_r * 2, 1);
+      );
+    );
+    i += 1;
+  );
+  // Metal body
+  gfx_set(0.42 + 0.05 * ht, 0.42 + 0.05 * ht, 0.44 + 0.05 * ht, 1);
+  gfx_circle(cx, cy, radius, 1);
+  gfx_set(0.52 + 0.05 * ht, 0.52 + 0.05 * ht, 0.54 + 0.05 * ht, 1);
+  gfx_circle(cx, cy, radius * 0.75, 1);
+  gfx_set(0.46, 0.46, 0.48, 1);
+  gfx_circle(cx, cy, radius * 0.5, 1);
+  // Edge notches
+  notch_in = radius * 0.88;
+  notch_out = radius;
+  gfx_set(0.30, 0.30, 0.32, 1);
+  i = 0;
+  loop(24,
+    a = i * tau / 24;
+    lr = sin(a); lg = cos(a);  // reuse lr/lg as temp
+    gfx_line(cx + lr * notch_in, cy - lg * notch_in,
+             cx + lr * notch_out, cy - lg * notch_out);
+    i += 1;
+  );
+  // Outline + center
+  gfx_set(0.30, 0.30, 0.32, 1);
+  gfx_circle(cx, cy, radius, 0);
+  gfx_set(0.2, 0.2, 0.22, 1);
+  gfx_circle(cx, cy, radius * 0.12, 1);
+  // White pointer — cache sin/cos
+  a = value / 128 * tau - $pi;
+  lr = sin(a); lg = cos(a);  // reuse lr/lg as temp
+  gfx_set(0.85, 0.85, 0.85, 1);
+  gfx_line(cx + lr * radius * 0.3, cy - lg * radius * 0.3,
+           cx + lr * radius * 0.8, cy - lg * radius * 0.8);
+  gfx_line(cx + lr * radius * 0.3 + lg,
+           cy - lg * radius * 0.3 + lr,
+           cx + lr * radius * 0.8 + lg,
+           cy - lg * radius * 0.8 + lr);
+);
+
+// Interact: wrapping 0-127, scroll ±1, drag continuous, double-click → 64
+function encoder_interact(mem, cx, cy, radius, cur_val)
+local(hover, d, new_val, step, now)
+(
+  d = dist_sq(mx, my, cx, cy);
+  hover = (d <= radius * radius);
+  hover || mem[1] ? (
+    mem[0] = min(mem[0] + dt * hv_speed, 1);
+  ) : (
+    mem[0] = max(mem[0] - dt * hv_speed, 0);
+  );
+  mem[6] = hover || mem[1];
+  new_val = cur_val;
+  mem[5] = 0;
+  // Double-click → 64
+  hover && lmb_down ? (
+    now = time_precise();
+    (now - mem[4] < 0.3) ? ( new_val = 64; mem[5] = 1; );
+    mem[4] = now;
+  );
+  // Start drag (skip if double-click just fired)
+  lmb_down && hover && !mem[1] && !mem[5] ? (
+    mem[1] = 1;
+    mem[2] = my;
+    mem[3] = cur_val;
+  );
+  // Continue drag (wrapping)
+  mem[1] && LMB ? (
+    step = (mem[2] - my) / (radius * 3) * 128 * (CTRL ? 0.1 : 1);
+    new_val = mem[3] + step;
+    while(new_val < 0) ( new_val += 128; );
+    while(new_val >= 128) ( new_val -= 128; );
+    new_val = floor(new_val + 0.5);
+    new_val == 128 ? new_val = 0;
+  );
+  // End drag
+  mem[1] && !LMB ? (
+    mem[1] = 0;
+    mem[5] = 1;
+  );
+  // Scroll (±1 wrapping)
+  hover && frame_wheel != 0 ? (
+    new_val = cur_val + sign_of(frame_wheel);
+    new_val < 0 ? new_val = 127;
+    new_val > 127 ? new_val = 0;
+    mem[5] = 1;
+    frame_wheel = 0;
+  );
+  new_val;
+);

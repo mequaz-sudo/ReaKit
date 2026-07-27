@@ -1,0 +1,50 @@
+// rk_ui_math.jsfx-inc — Math utilities for ReaKit UI and DSP
+// ═══════════════════════════════════════════════════════════════════════════
+// Forge compatibility include: .jsfx exported by Forge (quazmusic.com/forge)
+// import this file. It is self-contained — pure math, no state.
+// Import this before any other rk_* / *_kbsg file.
+//
+//   import rk_ui_math.jsfx-inc
+// ═══════════════════════════════════════════════════════════════════════════
+
+@init
+
+// ── Value clamping & interpolation ──────────────────────────────────────
+
+function clamp(x, lo, hi) ( min(max(x, lo), hi); );
+function lerp(a, b, t)    ( a + (b - a) * t; );
+function sign_of(x)       ( x < 0 ? -1 : x > 0 ? 1 : 0; );
+
+// ── 2D geometry ─────────────────────────────────────────────────────────
+
+function dist(x1, y1, x2, y2) (
+  sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+);
+
+function dist_sq(x1, y1, x2, y2) (
+  (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+);
+
+// ── dB / linear conversion ──────────────────────────────────────────────
+// Constants avoid repeated log/exp computation in tight loops.
+
+RK_M_LN10_20 = 8.68588963806503655302257837833210;   // 20 / ln(10)
+RK_DB2LOG    = 0.11512925464970228420089957273422;    // ln(10) / 20
+
+function rk_db_to_gain(dB) ( exp(dB * RK_DB2LOG); );
+
+function rk_gain_to_db(lin) local(v) (
+  v = abs(lin);
+  v < 0.0000000630957 ? v = 0.0000000630957;   // floor at ~-144 dBfs
+  log(v) * RK_M_LN10_20;
+);
+
+// ── Angular mapping (used by knob drawing) ──────────────────────────────
+// Maps a value in [vmin, vmax] to radians in ±130° sweep (centered at 6 o'clock).
+
+function rk_val_to_rad(value, vmin, vmax) local(scale, voffset, deg) (
+  scale   = 260 / (vmax - vmin);
+  voffset = -vmin * scale - 130;
+  deg     = value * scale + voffset;
+  deg * 0.017453292519943295;  // $pi / 180 as constant multiply
+);

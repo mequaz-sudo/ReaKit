@@ -1,0 +1,58 @@
+// rk_ui_core.jsfx-inc — Frame state, retina, and embedded detection
+// ═══════════════════════════════════════════════════════════════════════════
+// Forge compatibility include: .jsfx exported by Forge (quazmusic.com/forge)
+// call rk_frame_start() once at the top of @gfx each frame. It sets every
+// global the *_kbsg widget libraries expect (mx/my/LMB/lmb_down/CTRL/SHIFT/
+// dt/hv_speed/frame_wheel/tau), enables HiDPI/Retina rendering, and detects
+// embedded-UI mode.
+//
+//   import rk_ui_math.jsfx-inc
+//   import rk_ui_core.jsfx-inc
+// ═══════════════════════════════════════════════════════════════════════════
+
+@init
+
+gfx_ext_retina = 1;
+rk_prev_LMB   = 0;
+rk_prev_wheel  = 0;
+rk_last_t      = time_precise();
+tau = 2 * $pi;  // constant — set once at init, not per frame
+
+// ── Per-frame setup ─────────────────────────────────────────────────────
+// Call this ONCE at the top of @gfx, before any widget code.
+// Sets all the globals that knobs_kbsg / buttons_kbsg / etc. expect.
+
+function rk_frame_start() (
+  gfx_getchar();
+
+  // Mouse state
+  mx = mouse_x;
+  my = mouse_y;
+  LMB   = mouse_cap & 1;
+  CTRL  = mouse_cap & 4;
+  SHIFT = mouse_cap & 8;
+  lmb_down    = LMB && !rk_prev_LMB;
+  frame_wheel = mouse_wheel != rk_prev_wheel
+                ? (mouse_wheel - rk_prev_wheel) / 120 : 0;
+  rk_prev_wheel = mouse_wheel;
+
+  // Frame timing (clamped to sane range)
+  _t = time_precise();
+  dt = min(max(_t - rk_last_t, 1/240), 0.05);
+  rk_last_t = _t;
+
+  // Knob library constants
+  hv_speed = 11;
+
+  // Frame counter (used by mtr_update_db to avoid redundant log10 calls)
+  _rk_frame_cnt += 1;
+
+  // Display info
+  _ui = max(1, gfx_ext_retina);
+  is_embedded = (gfx_ext_flags & 1);
+);
+
+// Call this ONCE at the end of @gfx, after all widget code.
+function rk_frame_end() (
+  rk_prev_LMB = LMB;
+);

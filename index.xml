@@ -20,6 +20,28 @@
         <source file="vu_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/vu_kbsg.jsfx-inc</source>
         <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/meters_kbsg.jsfx-inc</source>
       </version>
+      <version name="1.0.1" author="Quaz (EON Studios)" time="2026-07-27T19:25:46Z">
+        <changelog><![CDATA[Fit-to-window + HiDPI (thanks Mikewillstew):
+- The Elements showcase now scales uniformly to its window — no more fixed 740x1130 canvas. Resize the FX window and the whole UI follows.
+- HiDPI/Retina rendering enabled (gfx_ext_retina) — crisp knob pointers and text on Retina/high-DPI laptops instead of upscaled 1x.
+- Label pass: larger, higher-contrast section headers and control labels.
+- Analog VU: the mousewheel-over-the-meter face-theme scroll is now actually wired up (11 themes).
+Forge compatibility (thanks Rockum):
+- Ships rk_ui_math / rk_ui_core / rk_ui_knob / rk_ui_button / rk_ui_slider / rk_ui_meter / rk_ui_vu .jsfx-inc alias includes, so .jsfx exported by the current online Forge compile against this package as-is.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/ReaKit%20Elements.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="vu_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/vu_kbsg.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_ui_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_vu.jsfx-inc</source>
+      </version>
     </reapack>
   </category>
   <metadata>

@@ -1,0 +1,9 @@
+// rk_ui_button.jsfx-inc — Forge compatibility alias for buttons_kbsg.jsfx-inc
+// ═══════════════════════════════════════════════════════════════════════════
+// .jsfx exported by Forge (quazmusic.com/forge) import this name. The button
+// library lives in buttons_kbsg.jsfx-inc — every btn_*_draw / btn_*_interact
+// Forge emits has an identical signature there, so this alias just pulls the
+// real library in.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import buttons_kbsg.jsfx-inc

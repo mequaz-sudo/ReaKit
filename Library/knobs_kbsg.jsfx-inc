@@ -8,7 +8,8 @@ __knobs_kbsg_loaded = 1;
 // Types included:
 //   1. BirdBird VIC     — rainbow color cycling arc, needle, 3-pass inner ring
 //   2. Joanny/McFizz    — blue pot, 4-pass shadow, box hover, canChange gate
-//   3. Spice Pro        — blue arc fill, perpendicular sweep needle, inner pulse
+//   3. Spice Pro        — themed arc fill (role hue, value heat + glow),
+//                         sweep needle, bipolar center-fill, panel-aware ring
 //   4. Witti Sound      — clean arc, dot indicator (3 color variants)
 //   5. SSL 4000E        — knurled body, colored cap, detented scroll
 //   6. Pultec EQP-1A    — cream bakelite, chicken-head pointer, shadow
@@ -310,17 +311,41 @@ local(hover, new_val, now, fine, nv, box_hw)
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. SPICE PRO
 // ═══════════════════════════════════════════════════════════════════════════
-// Blue arc-fill knob with perpendicular sweep needle. Color animates on hover.
+// Themed arc-fill knob with perpendicular sweep needle (Spice v6 lineage).
+// The arc wears the role hue (cr,cg,cb) instead of v6's hardcoded blue:
+//   - value heat: color runs dim at low travel and full-strength at max
+//     (bipolar: heat = distance from center), so the color changes as the
+//     knob turns
+//   - hover lifts the color toward white — the same move v6 made on its
+//     blue (channel toward 1.0), generalized to any hue
+//   - a soft halo outside the ring blooms with hover and value heat
+//   - dim background track shows the full travel range at any value
+//   - is_sym fills from center (pan/tilt-style knobs)
+//   - inner ring contrast keys off the host panel luminance (bgr,bgg,bgb)
+//     so the knob structure reads on light themes; unset/dark panels get
+//     the classic light ring
 
-// Draw: arc ring (w×fill passes), 3-pass inner circle with pulse, 60-line needle
-function sp_knob_draw(cx, cy, r, value, ht)
-local(kr, kg, kb, margin, w, inner, inner_pulse, arc_fill, knob_rad, kas,
-      arc_steps, ir, i, rr, polar, xo_, yo_, nthick, steps, s, off_x, off_y)
+// Draw: track + arc ring (w×fill passes), glow halo, 3-pass inner circle
+// with pulse, 60-line needle
+function sp_knob_draw(cx, cy, r, value, ht, is_sym, cr, cg, cb, bgr, bgg, bgb)
+local(kr, kg, kb, heat, anc, margin, w, inner, inner_pulse, arc_fill, knob_rad,
+      kas, a_lo, a_hi, a_ctr, a_val, arc_steps, ir, i, rr, polar, xo_, yo_,
+      nthick, steps, s, off_x, off_y, bg_luma, ring, glow_a, j)
 (
-  // Color animation: dim blue → saturated blue on hover (exact v6)
-  kr = lerp(0, 0.15, ht);
-  kg = lerp(0.5, 0.65, ht);
-  kb = 1.0;
+  // Bipolar anchor: is_sym 1 = range midpoint; fractional 0<x<1 = normalized
+  // anchor position (value-anchored sym, e.g. 12/18 for a -12..+6 dB knob)
+  anc = is_sym ? (is_sym < 1 ? is_sym : 0.5) : 0;
+
+  // Value heat: how hot the knob runs (bipolar = distance off the anchor)
+  heat = is_sym ? min(1, abs(value - anc) / max(max(anc, 1 - anc), 0.0001)) : value;
+
+  // Role hue scaled by heat, then lifted toward white on hover
+  kr = cr * lerp(0.55, 1.0, heat);
+  kg = cg * lerp(0.55, 1.0, heat);
+  kb = cb * lerp(0.55, 1.0, heat);
+  kr += (1 - kr) * 0.25 * ht;
+  kg += (1 - kg) * 0.25 * ht;
+  kb += (1 - kb) * 0.25 * ht;
 
   // Proportions from v6: margin=12, w=18, arc_fill=5, rad=0.6 (scaled to radius)
   margin = r * 12 / 55;
@@ -331,22 +356,51 @@ local(kr, kg, kb, margin, w, inner, inner_pulse, arc_fill, knob_rad, kas,
   inner = r - w - margin;
   inner_pulse = lerp(0, 2, ht);
 
-  // Arc ring (w * arc_fill passes)
+  // Arc span: unipolar fills from the left; bipolar from the anchor
+  a_val = value * tau * knob_rad + kas;
+  a_ctr = anc * tau * knob_rad + kas;
+  is_sym ? (
+    a_lo = min(a_ctr, a_val); a_hi = max(a_ctr, a_val);
+  ) : (
+    a_lo = kas; a_hi = a_val;
+  );
+
+  // Background track (dim role hue) — full travel range, jog-style
   arc_steps = (w * arc_fill) | 0;
+  gfx_set(cr * 0.15, cg * 0.15, cb * 0.15, 0.8);
   i = 0;
   while (i < arc_steps) (
-    gfx_set(kr, kg, kb, 1);
     rr = r - w + (i / arc_fill);
-    gfx_arc(cx, cy, rr, kas, value * tau * knob_rad + kas);
+    gfx_arc(cx, cy, rr, kas, tau * knob_rad + kas);
     i += 1;
   );
 
-  // Inner circle (3-pass outline + hover pulse)
+  // Active arc ring (w * arc_fill passes)
+  gfx_set(kr, kg, kb, 1);
+  i = 0;
+  while (i < arc_steps) (
+    rr = r - w + (i / arc_fill);
+    gfx_arc(cx, cy, rr, a_lo, a_hi);
+    i += 1;
+  );
+
+  // Glow halo outside the ring — blooms with value heat and hover
+  glow_a = lerp(0.05, 0.22, max(heat * 0.8, ht));
+  j = 1;
+  loop(4,
+    gfx_set(kr, kg, kb, glow_a * (1 - j * 0.22));
+    gfx_arc(cx, cy, r + j, a_lo, a_hi, 1);
+    j += 1;
+  );
+
+  // Inner circle (3-pass outline + hover pulse), panel-contrast ink
+  bg_luma = 0.299 * bgr + 0.587 * bgg + 0.114 * bgb;
+  ring = bg_luma > 0.5 ? 0.22 : 0.8;
   ir = inner + inner_pulse;
-  gfx_set(0.8, 0.8, 0.8, 1);
-  gfx_circle(cx, cy, ir, 0);
-  gfx_circle(cx, cy, ir - 0.5, 0);
-  gfx_circle(cx, cy, ir - 1, 0);
+  gfx_set(ring, ring, ring, 1);
+  gfx_circle(cx, cy, ir, 0, 1);
+  gfx_circle(cx, cy, ir - 0.5, 0, 1);
+  gfx_circle(cx, cy, ir - 1, 0, 1);
 
   // Needle (perpendicular sweep, 60 lines — exact v6)
   polar = (value * 1.01) * tau * knob_rad + kas;
@@ -452,7 +506,7 @@ local(n_passes, pass_gap, inner_r, dot_orbit, dot_r, dot_r_h,
   gfx_circle(cx, cy, inner_r, 1, 1);
   // Active arc
   gfx_set(cr, cg, cb, arc_alpha);
-  start_rad = is_sym ? 0 : -RAD130_;
+  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   i = 0;
   loop(n_passes,
     gfx_arc(cx, cy, radius - i * pass_gap, start_rad, val_rad, 1);
@@ -1291,7 +1345,7 @@ local(ht, scale, voffset, val_deg, val_rad, bevel_r, cap_r, dome_r,
 
   // ── Active arc (accent color) ────────────────────────────────────────────
   gfx_set(cr, cg, cb, lerp(0.75, 1.0, ht));
-  start_rad = is_sym ? 0 : -RAD130_;
+  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   i = 0; loop(n_passes,
     gfx_arc(cx, cy, radius - i * 0.6, start_rad, val_rad, 1);
     i += 1;
@@ -1584,7 +1638,7 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
   // Value arc hugging the rim; bipolar (center start) when is_sym
   n_passes = max(3, floor(radius / 9));
   gfx_set(cr, cg, cb, lerp(0.92, 1.0, ht));
-  start_rad = is_sym ? 0 : -RAD130_;
+  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   i = 0;
   loop(n_passes,
     gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1);
@@ -1635,7 +1689,7 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
 
   // Faint unlit track ring hugging the rim
   n_passes = max(2, floor(radius / 6));
-  start_rad = is_sym ? 0 : -RAD130_;
+  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   gfx_set(bgr, bgg, bgb, 0.22);
   i = 0;
   loop(n_passes,
@@ -1799,7 +1853,7 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i,
   );
   arc_a = lerp(0.9, 1.0, hover_t);
   gfx_set(cr, cg, cb, arc_a);
-  start_rad = is_sym ? 0 : -RAD130_;
+  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   i = 0;
   loop(n_passes,
     gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1);
@@ -1962,7 +2016,7 @@ local(RAD130_, scale, voffset, val_rad, body_r, n_passes, i, arc_a, start_rad,
   // Bright accent value arc (from left, or centre when bipolar)
   arc_a = lerp(0.85, 1.0, ht);
   gfx_set(cr, cg, cb, arc_a);
-  start_rad = is_sym ? 0 : -RAD130_;
+  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   i = 0;
   loop(n_passes, gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1); i += 1; );
 
@@ -2004,7 +2058,7 @@ local(scale, voffset, val_rad, body_r, ht, i, n_passes, RAD130_,
     i += 1;
   );
   gfx_set(0.40, 0.90, 0.42, lerp(0.8, 1.0, ht));
-  start_rad = is_sym ? 0 : -RAD130_;
+  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   i = 0;
   loop(n_passes,
     gfx_arc(cx, cy, radius - i * 0.6, start_rad, val_rad, 1);
@@ -2071,6 +2125,12 @@ local(scale, voffset, val_rad, body_r, ht, i, n_passes, RAD130_,
 // VISUAL DISPATCH ONLY: every style shares ssl_knob_interact via rk_knob_interact,
 // so feel is identical across consoles and only the look changes.
 //
+// is_sym convention (styles that center-fill: ws/mpc/ableton/serum/fabfilter/
+// fl/pt/sp): 0 = unipolar (fill from left); 1 = bipolar anchored at the RANGE
+// MIDPOINT; fractional 0<x<1 = bipolar anchored at normalized position x —
+// use for asymmetric bipolar ranges, e.g. a -12..+6 dB gain knob anchors its
+// 0 dB at is_sym = 12/18. Styles that ignore is_sym (ssl/api/...) are unaffected.
+//
 // Superset arg list — each underlying fn takes the subset it needs. value/vmin/
 // vmax are real units; the position-style knobs (jo, sp) get a normalised 0..1.
 
@@ -2085,7 +2145,7 @@ local(vn) (
   style == 6  ? jo_knob_draw(cx, cy, radius, vn, hover_t, cr, cg, cb) :
   style == 7  ? mpc_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
   style == 8  ? jog_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 10 ? sp_knob_draw(cx, cy, radius, vn, hover_t) :
+  style == 10 ? sp_knob_draw(cx, cy, radius, vn, hover_t, is_sym, cr, cg, cb, bgr, bgg, bgb) :
   style == 12 ? pultec_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
   style == 13 ? ableton_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
   style == 14 ? fl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :

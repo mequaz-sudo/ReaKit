@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <index version="1" name="ReaKit">
   <category name="Library">
-    <reapack name="ReaKit Elements.jsfx" type="effect" desc="ReaKit - UI widget library for JSFX (19 knobs / 17 faders / 10 buttons / 12 meters / analog VU) + showcase">
+    <reapack name="ReaKit Elements.jsfx" type="effect" desc="ReaKit - UI widget library for JSFX (19 knobs / 17 faders / 10 buttons / 12 meters / analog VU / pads / piano) + showcase">
       <metadata>
         <description><![CDATA[ReaKit is a free, procedural UI/widget library for JSFX. 19 knob styles, 17 slider/fader types, 10 buttons, 12 meters with DSP, analog VU with 11 themes. No bitmaps - crisp at any size, themable with one call, one shared interaction model (drag / ctrl-fine / wheel / double-click reset / automation-safe). Installing this package brings the library incs plus the all-elements showcase JSFX. MIT licensed.]]></description>
         <link rel="website">https://forum.cockos.com/showthread.php?p=2952442</link>
@@ -35,6 +35,30 @@ Forge compatibility (thanks Rockum):
         <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/buttons_kbsg.jsfx-inc</source>
         <source file="vu_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/vu_kbsg.jsfx-inc</source>
         <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_ui_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_vu.jsfx-inc</source>
+      </version>
+      <version name="1.1.0" author="Quaz (EON Studios)" time="2026-08-19T16:28:40Z">
+        <changelog><![CDATA[Two new widget families + knob refresh:
+- NEW rk_padgrid.jsfx-inc: drum pad grid widget (any cols x rows, per-pad hover ramps, held-pad tracking, MPC pad order - pad 0 is bottom-left). Clean-room ReaKit original.
+- NEW rk_piano.jsfx-inc: piano keyboard widget (horizontal or vertical, any note range, hit-testing, octave markers). Clean-room ReaKit original.
+- The Elements showcase gains a PADS & KEYS section demoing both (canvas grows to 740x1370, still fit-to-window).
+- Spice Pro knob restyled: the arc now wears your accent color instead of hardcoded blue, with value heat (color intensity follows the knob), a soft glow halo, a dim full-travel track, bipolar center-fill support, and a panel-aware inner ring for light themes.
+- Center-fill knob styles (WS/MPC/Ableton/Serum/FabFilter/FL/PT/Spice) accept fractional is_sym anchors for asymmetric bipolar ranges - e.g. a -12..+6 dB gain knob anchors its zero at is_sym = 12/18.
+These are the same rk_padgrid / rk_piano the current Forge (visual JSFX GUI builder) emits imports for, so Forge exports using pads or keys compile against this package as-is.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/ReaKit%20Elements.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="vu_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/vu_kbsg.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_piano.jsfx-inc</source>
         <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_math.jsfx-inc</source>
         <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_core.jsfx-inc</source>
         <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_knob.jsfx-inc</source>

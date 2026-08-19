@@ -1,10 +1,11 @@
 desc:ReaKit Elements
-// @description ReaKit - UI widget library for JSFX (knobs, faders, buttons, meters, VU)
+// @description ReaKit - UI widget library for JSFX (knobs, faders, buttons, meters, VU, pads, piano)
 // @author Quaz (EON Studios)
-// @version 1.0.1
+// @version 1.1.0
 // @about
 //   19 procedural knob styles, 17 slider/fader types, 10 button styles,
-//   12 meter styles with DSP included, and an analog VU with 11 face themes.
+//   12 meter styles with DSP included, an analog VU with 11 face themes,
+//   a drum pad grid and a piano keyboard (horizontal or vertical).
 //   No bitmaps - everything is drawn in code and scales to any size.
 //   The showcase scales uniformly to fit its window (resize the FX window and
 //   the whole UI follows) and renders at full resolution on HiDPI/Retina.
@@ -17,6 +18,8 @@ desc:ReaKit Elements
 //   [nomain] buttons_kbsg.jsfx-inc
 //   [nomain] vu_kbsg.jsfx-inc
 //   [nomain] meters_kbsg.jsfx-inc
+//   [nomain] rk_padgrid.jsfx-inc
+//   [nomain] rk_piano.jsfx-inc
 //   [nomain] rk_ui_math.jsfx-inc
 //   [nomain] rk_ui_core.jsfx-inc
 //   [nomain] rk_ui_knob.jsfx-inc
@@ -74,12 +77,17 @@ slider47:72<-100,100,0.01>-Tube
 slider69:74<0,100,0.01>-PT
 slider70:0<-100,100,0.01>-MPC
 slider71:66<0,100,0.01>-4K
+slider73:5<0,15,1>-Pads
+slider74:60<0,127,1>-Keys
+slider75:55<0,127,1>-KeysV
 
 import knobs_kbsg.jsfx-inc
 import buttons_kbsg.jsfx-inc
 import sliders_kbsg.jsfx-inc
 import vu_kbsg.jsfx-inc
 import meters_kbsg.jsfx-inc
+import rk_padgrid.jsfx-inc
+import rk_piano.jsfx-inc
 
 @init
 gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below follows
@@ -89,6 +97,7 @@ KS = 16;
 km = freemem; freemem += 19 * KS;   // 16 words/knob
 btnmem = freemem; freemem += 10 * 8;   // 8 words/button-family
 sldmem = freemem; freemem += 16 * 16;  // 16 words/slider
+pgdmem_0 = freemem; freemem += 17;     // pad grid: 16 hover ramps + the held pad
 WF_LEN = 256;
 wf_0 = freemem; freemem += WF_LEN; wfp_0 = 0;
 mtr_base = freemem; freemem += 1380; meter_init(mtr_base);   // meters_kbsg DSP state
@@ -112,14 +121,14 @@ meter_process_sample(spl0, spl1);   // drives mtr_peak_l/r, mtr_rms_l/r, mtr_pha
 wf_0[wfp_0] = spl0; wfp_0 = wfp_0 < WF_LEN - 1 ? wfp_0 + 1 : 0;
 // audio passthrough — insert DSP above; spl0/spl1 left unchanged
 
-@gfx 740 1130
+@gfx 740 1370
 gfx_clear = 0x2e1a1a;   // canvas #1a1a2e packed as r+g*256+b*65536
 
 // --- fit-to-window scale -------------------------------------------------
-// Design canvas is 740x1130; sc maps design px -> window px so the whole
+// Design canvas is 740x1370; sc maps design px -> window px so the whole
 // showcase is always visible at any window size (and crisp on HiDPI, since
 // gfx_w/gfx_h arrive pre-doubled when gfx_ext_retina kicks in).
-sc = min(gfx_w / 740, gfx_h / 1130);
+sc = min(gfx_w / 740, gfx_h / 1370);
 sc < 0.35 ? sc = 0.35;
 zoom = sc;              // vu_kbsg barmeter_hor multiplies its coords by this
 
@@ -550,3 +559,22 @@ sld_set_accent(0.98,0.80,0.08);
 _n2 = sld_vert_interact(sm, sc*166, sc*984, sc*36, sc*130, _n);
 _n2 != _n ? ( slider71 = 0 + _n2 * (100 - 0); slider_automate(slider71); );
 sld_vconsole_draw(sc*166, sc*984, sc*36, sc*130, _n2, sm);
+
+// PADS & KEYS — rk_padgrid / rk_piano (label)
+gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80); gfx_x=sc*14; gfx_y=sc*1136; gfx_drawstr("PADS & KEYS — rk_padgrid / rk_piano");
+
+// Pads (padgrid)
+pg = pgdmem_0;
+_pf = rk_padgrid_interact(pg, sc*14, sc*1154, sc*200, sc*200, 4, 4, sc*4);   // -1, or the pad just pressed
+_pf >= 0 ? ( slider73 = _pf; slider_automate(slider73); );
+rk_padgrid_draw(pg, sc*14, sc*1154, sc*200, sc*200, 4, 4, sc*4, slider73, 0.85,0.20,0.11);
+
+// Keys (piano)
+_pk = rk_piano_hit(sc*230, sc*1154, sc*300, sc*80, 48, 72, 0);   // note under the mouse, or -1
+_pk >= 0 && lmb_down ? ( slider74 = _pk; slider_automate(slider74); );
+rk_piano_draw(sc*230, sc*1154, sc*300, sc*80, 48, 72, 0, slider74, _pk, 0.29,0.62,1.00);
+
+// KeysV (piano)
+_pk = rk_piano_hit(sc*546, sc*1154, sc*60, sc*200, 48, 72, 1);   // note under the mouse, or -1
+_pk >= 0 && lmb_down ? ( slider75 = _pk; slider_automate(slider75); );
+rk_piano_draw(sc*546, sc*1154, sc*60, sc*200, 48, 72, 1, slider75, _pk, 0.29,0.87,0.50);

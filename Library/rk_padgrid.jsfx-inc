@@ -1,0 +1,102 @@
+desc: ReaKit drum pad grid widget
+// ══════════════════════════════════════════════════════════════════════
+// rk_padgrid.jsfx-inc — an N x M grid of drum pads in a plain rectangle.
+//
+// Written clean-room for ReaKit. Swing's pad grid was not reusable as a widget:
+// rk_swing_ui_grid_pads.jsfx-inc is ~1500 lines and is the sampler's instrument
+// surface — choke groups, sample slots, per-pad colour and routing — rather
+// than a control. This draws pads and reports which one you hit.
+//
+// REQUIREMENTS (host plugin must provide, per frame, before calling):
+//   - mx, my       — mouse position
+//   - lmb_down     — left-button PRESS edge (not the held state)
+//   - LMB          — left-button HELD state
+//   - dt, hv_speed — frame delta + hover ramp speed (as the other kbsg libs)
+//
+// MEMORY: one block of (cols*rows + 1) words. [0..n-1] are the per-pad hover
+// ramps, [n] is the pad currently held (-1 for none).
+//
+// PUBLIC API:
+//   rk_padgrid_hit(x, y, w, h, cols, rows, gap)   -> pad index, or -1
+//   rk_padgrid_interact(mem, x, y, w, h, cols, rows, gap)
+//        -> index of the pad just PRESSED this frame, or -1. Also advances the
+//           hover ramps and tracks the held pad, so call it once per frame
+//           before drawing.
+//   rk_padgrid_draw(mem, x, y, w, h, cols, rows, gap, lit, r, g, b)
+//        -> `lit` is a pad index to show as active (or -1). Pads are numbered
+//           left to right, BOTTOM row first — MPC/Swing convention, so pad 0 is
+//           bottom-left and the top-left pad is the start of the last row.
+// ══════════════════════════════════════════════════════════════════════
+
+@init
+
+// Cell geometry for pad `i`. Writes rk_pad_x / rk_pad_y / rk_pad_w / rk_pad_h.
+function rk_padgrid_cell(i, x, y, w, h, cols, rows, gap)
+local(cw, ch, cx, cy) (
+  cw = (w - gap * (cols - 1)) / max(cols, 1);
+  ch = (h - gap * (rows - 1)) / max(rows, 1);
+  cx = i - floor(i / cols) * cols;              // column
+  cy = floor(i / cols);                         // row, counted from the bottom
+  rk_pad_x = x + cx * (cw + gap);
+  rk_pad_y = y + h - (cy + 1) * ch - cy * gap;  // bottom row first
+  rk_pad_w = cw;
+  rk_pad_h = ch;
+);
+
+function rk_padgrid_hit(x, y, w, h, cols, rows, gap)
+local(i, n, hit) (
+  hit = -1; n = cols * rows; i = 0;
+  while(i < n && hit < 0) (
+    rk_padgrid_cell(i, x, y, w, h, cols, rows, gap);
+    mx >= rk_pad_x && mx < rk_pad_x + rk_pad_w &&
+    my >= rk_pad_y && my < rk_pad_y + rk_pad_h ? hit = i;
+    i += 1;
+  );
+  hit;
+);
+
+function rk_padgrid_interact(mem, x, y, w, h, cols, rows, gap)
+local(i, n, hov, fired) (
+  n = cols * rows;
+  hov = rk_padgrid_hit(x, y, w, h, cols, rows, gap);
+  // hover ramps, one per pad
+  i = 0;
+  while(i < n) (
+    i == hov ? ( mem[i] = min(mem[i] + dt * hv_speed, 1); )
+             : ( mem[i] = max(mem[i] - dt * hv_speed, 0); );
+    i += 1;
+  );
+  fired = -1;
+  hov >= 0 && lmb_down ? ( fired = hov; mem[n] = hov; );
+  !LMB ? mem[n] = -1;        // release clears the held pad
+  fired;
+);
+
+function rk_padgrid_draw(mem, x, y, w, h, cols, rows, gap, lit, r, g, b)
+local(i, n, ht, held, br) (
+  n = cols * rows; held = mem[n];
+  i = 0;
+  while(i < n) (
+    rk_padgrid_cell(i, x, y, w, h, cols, rows, gap);
+    ht = mem[i];
+    // body — active pads take the accent, held pads brighten, hover lifts
+    i == lit || i == held ? (
+      br = (i == held) ? 1.15 : 1.0;
+      gfx_set(min(r * br, 1), min(g * br, 1), min(b * br, 1), 1);
+    ) : (
+      br = 0.17 + ht * 0.10;
+      gfx_set(br, br, br + 0.03, 1);
+    );
+    gfx_rect(rk_pad_x, rk_pad_y, rk_pad_w, rk_pad_h);
+    // top highlight, so a pad reads as a raised rubber square
+    gfx_set(1, 1, 1, 0.06 + ht * 0.05);
+    gfx_rect(rk_pad_x, rk_pad_y, rk_pad_w, max(1, rk_pad_h * 0.16));
+    // border
+    gfx_set(0.05, 0.05, 0.07, 1);
+    gfx_rect(rk_pad_x, rk_pad_y, rk_pad_w, 1);
+    gfx_rect(rk_pad_x, rk_pad_y + rk_pad_h - 1, rk_pad_w, 1);
+    gfx_rect(rk_pad_x, rk_pad_y, 1, rk_pad_h);
+    gfx_rect(rk_pad_x + rk_pad_w - 1, rk_pad_y, 1, rk_pad_h);
+    i += 1;
+  );
+);

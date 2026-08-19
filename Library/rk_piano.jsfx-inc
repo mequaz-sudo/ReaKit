@@ -1,0 +1,147 @@
+desc: ReaKit piano keyboard widget
+// ══════════════════════════════════════════════════════════════════════
+// rk_piano.jsfx-inc — a piano keyboard that draws into a plain rectangle.
+//
+// Written clean-room for ReaKit. The proportions (black keys at 0.60 of the
+// white-key breadth and 0.62 of its length, offset to the key boundary, drawn
+// in a second pass over the whites) follow the same convention as Swing's
+// swing_mapping_draw_vpiano, which is the reference for how these should sit —
+// but none of that function's Swing state is used here.
+//
+// Three keyboards already exist in this codebase and none of them was reusable:
+// spectrum.draw_piano() spaces keys logarithmically because it is a frequency
+// axis, Swing's is bound to pad/kit globals, and Steppa's is welded into its
+// grid layout. This one takes a rect and a note range and nothing else.
+//
+// REQUIREMENTS (host plugin must provide, per frame, before calling):
+//   - mx, my       — mouse position
+//   - lmb_down     — left-button PRESS edge (not the held state)
+//
+// PUBLIC API:
+//   rk_piano_is_black(note)                        -> 1 if note is a black key
+//   rk_piano_white_count(lo, hi)                   -> white keys in [lo,hi]
+//   rk_piano_hit(x, y, w, h, lo, hi, vert)         -> note under mouse, or -1
+//   rk_piano_draw(x, y, w, h, lo, hi, vert, sel, hov, r, g, b)
+//
+// `vert` 0 = horizontal (low note at left), 1 = vertical (low note at BOTTOM,
+// standard piano-roll convention). `sel` is a note to tint with r,g,b, or -1.
+// `hov` is the note to light as hovered, or -1 — pass rk_piano_hit()'s result.
+// ══════════════════════════════════════════════════════════════════════
+
+@init
+
+// Pitch classes 1,3,6,8,10 are the black keys (C=0).
+function rk_piano_is_black(note) local(pc) (
+  pc = note - floor(note / 12) * 12;
+  pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
+);
+
+function rk_piano_white_count(lo, hi) local(n, c) (
+  c = 0; n = lo;
+  while(n <= hi) ( rk_piano_is_black(n) ? 0 : c += 1; n += 1; );
+  max(c, 1);
+);
+
+// White keys before `note` within the range — a black key's position is
+// expressed against the white-key boundary it straddles.
+function rk_piano_whites_before(lo, note) local(n, c) (
+  c = 0; n = lo;
+  while(n < note) ( rk_piano_is_black(n) ? 0 : c += 1; n += 1; );
+  c;
+);
+
+// Returns the note under (mx,my), or -1. Black keys are tested FIRST because
+// they are drawn on top and overlap the whites they sit between.
+function rk_piano_hit(x, y, w, h, lo, hi, vert)
+local(wc, wsz, bb, bl, n, wi, a, b, hit) (
+  hit = -1;
+  wc  = rk_piano_white_count(lo, hi);
+  wsz = (vert ? h : w) / wc;          // white key breadth along the keyboard
+  bb  = (vert ? w : h) * 0.60;        // black key depth across it
+  bl  = wsz * 0.62;                   // black key breadth along it
+  // black keys
+  n = lo;
+  while(n <= hi && hit < 0) (
+    rk_piano_is_black(n) ? (
+      wi = rk_piano_whites_before(lo, n);
+      vert ? (
+        a = y + h - wi * wsz - bl * 0.5;
+        mx >= x && mx < x + bb && my >= a && my < a + bl ? hit = n;
+      ) : (
+        a = x + wi * wsz - bl * 0.5;
+        mx >= a && mx < a + bl && my >= y && my < y + bb ? hit = n;
+      );
+    );
+    n += 1;
+  );
+  // white keys
+  hit < 0 ? (
+    wi = 0; n = lo;
+    while(n <= hi && hit < 0) (
+      rk_piano_is_black(n) ? 0 : (
+        vert ? (
+          a = y + h - (wi + 1) * wsz;
+          mx >= x && mx < x + w && my >= a && my < a + wsz ? hit = n;
+        ) : (
+          a = x + wi * wsz;
+          mx >= a && mx < a + wsz && my >= y && my < y + h ? hit = n;
+        );
+        wi += 1;
+      );
+      n += 1;
+    );
+  );
+  hit;
+);
+
+function rk_piano_draw(x, y, w, h, lo, hi, vert, sel, hov, r, g, b)
+local(wc, wsz, bb, bl, n, wi, a, lit, pc) (
+  wc  = rk_piano_white_count(lo, hi);
+  wsz = (vert ? h : w) / wc;
+  bb  = (vert ? w : h) * 0.60;
+  bl  = wsz * 0.62;
+
+  // ── white keys ──
+  wi = 0; n = lo;
+  while(n <= hi) (
+    rk_piano_is_black(n) ? 0 : (
+      a = vert ? (y + h - (wi + 1) * wsz) : (x + wi * wsz);
+      lit = (n == sel);
+      lit ? gfx_set(r, g, b, 1) : (n == hov ? gfx_set(0.90, 0.90, 0.94, 1) : gfx_set(0.82, 0.82, 0.85, 1));
+      vert ? gfx_rect(x, a, w, wsz) : gfx_rect(a, y, wsz, h);
+      // separator on the low side of each white key
+      gfx_set(0.22, 0.22, 0.27, 1);
+      vert ? gfx_rect(x, a, w, 1) : gfx_rect(a, y, 1, h);
+      // octave marker on every C, when there is room for it
+      pc = n - floor(n / 12) * 12;
+      pc == 0 && wsz >= 7 ? (
+        gfx_set(0.35, 0.35, 0.40, 1);
+        vert ? gfx_rect(x + w - 5, a + wsz * 0.5, 3, 1) : gfx_rect(a + wsz * 0.5, y + h - 5, 1, 3);
+      );
+      wi += 1;
+    );
+    n += 1;
+  );
+
+  // ── black keys, second pass so they sit above the whites ──
+  n = lo;
+  while(n <= hi) (
+    rk_piano_is_black(n) ? (
+      wi = rk_piano_whites_before(lo, n);
+      a  = vert ? (y + h - wi * wsz - bl * 0.5) : (x + wi * wsz - bl * 0.5);
+      lit = (n == sel);
+      lit ? gfx_set(r * 0.75, g * 0.75, b * 0.75, 1) : (n == hov ? gfx_set(0.26, 0.26, 0.31, 1) : gfx_set(0.10, 0.10, 0.13, 1));
+      vert ? gfx_rect(x, a, bb, bl) : gfx_rect(a, y, bl, bb);
+      // edge shading so a black key reads as raised against its neighbours
+      gfx_set(0, 0, 0, 0.8);
+      vert ? ( gfx_rect(x, a, bb, 1); gfx_rect(x, a + bl - 1, bb, 1); gfx_rect(x + bb - 1, a, 1, bl); )
+           : ( gfx_rect(a, y, 1, bb); gfx_rect(a + bl - 1, y, 1, bb); gfx_rect(a, y + bb - 1, bl, 1); );
+    );
+    n += 1;
+  );
+
+  // ── frame ──
+  gfx_set(0.28, 0.28, 0.34, 1);
+  gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
+  gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
+);

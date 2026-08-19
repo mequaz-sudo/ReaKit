@@ -1,18 +1,29 @@
 # ReaKit
 
-A free UI / widget library for REAPER JSFX. Every knob, fader, button, meter
-and VU needle is drawn procedurally in code — no bitmaps, no filmstrips — so
-your plugin UI is crisp at any size and re-themable with one call.
+A free UI / widget library for REAPER JSFX. Every knob, fader, button, meter,
+VU needle, drum pad and piano key is drawn procedurally in code — no bitmaps,
+no filmstrips — so your plugin UI is crisp at any size and re-themable with
+one call.
 
-![ReaKit — every element](screenshots/reakit_every_element.png)
+![ReaKit — the controls](screenshots/reakit_controls.png)
 
-*One JSFX, zero image files: the ReaKit Elements showcase (installable below).*
+*The controls: 19 knob styles, 10 button styles, every slider and fader.*
+
+![ReaKit — the displays](screenshots/reakit_displays.png)
+
+*The displays: scope, analog VU, all 12 meter styles — plus the pad grid and
+piano keyboard widgets new in 1.1.0.*
+
+*Zero image files anywhere on this page: everything above is drawn by the
+library itself (the ReaKit Elements showcase, installable below).*
 
 **19 knob styles** (SSL, Neve x2, API, Pultec x2, Ableton, Pro Tools, FabFilter,
 Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader types**
 (incl. an SSL / Neve / Pro Tools / MPC console pack) · **10 button styles** ·
 **12 meter styles with the DSP included** (peak/RMS, GR, phase, goniometer,
-waveform, spectrum, LUFS) · **analog VU** with real ballistics and 11 face themes.
+waveform, spectrum, LUFS) · **analog VU** with real ballistics and 11 face
+themes · **drum pad grid** (any size, MPC pad order) · **piano keyboard**
+(horizontal or vertical, any note range).
 
 Every knob style shares one interaction model: drag, ctrl = fine, mousewheel,
 double-click reset, detents, automation-safe writes.
@@ -64,7 +75,10 @@ Knob style ids: 1 ssl · 2 varimu · 3 api · 4 ws · 5 neve · 6 jo · 7 mpc ·
 · 10 sp · 11 encoder · 12 pultec · 13 ableton · 14 fl · 15 protools
 · 16 fabfilter · 17 serum · 18 roland · 19 pultec_cream · 20 neve_alt.
 Sliders/buttons/meters are name-dispatched — see the headers in each inc and
-the showcase source for working examples of every element.
+the showcase source for working examples of every element. The pad grid is
+`rk_padgrid_interact` + `rk_padgrid_draw` (rk_padgrid.jsfx-inc) and the piano
+is `rk_piano_hit` + `rk_piano_draw` (rk_piano.jsfx-inc) — both headers document
+their full API in a screenful.
 
 ## Built with it
 

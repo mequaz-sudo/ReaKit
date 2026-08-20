@@ -1,9 +1,8 @@
 # ReaKit
 
 A free UI / widget library for REAPER JSFX. Every knob, fader, button, meter,
-VU needle, drum pad and piano key is drawn procedurally in code — no bitmaps,
-no filmstrips — so your plugin UI is crisp at any size and re-themable with
-one call.
+VU needle, drum pad and piano key is drawn procedurally in code, so your plugin
+UI is crisp at any size and re-themable with one call.
 
 The ReaKit Elements showcase (installable below) organizes every widget into
 five category tabs:
@@ -31,8 +30,7 @@ cycle its 11 face themes).*
 
 *PADS & KEYS — the drum pad grid and piano keyboard widgets.*
 
-*Zero image files inside the plugin: everything above is drawn by the
-library itself.*
+*Everything above is drawn by the library itself.*
 
 **19 knob styles** (SSL, Neve x2, API, Pultec x2, Ableton, Pro Tools, FabFilter,
 Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader types**

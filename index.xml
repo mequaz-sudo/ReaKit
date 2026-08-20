@@ -67,6 +67,28 @@ These are the same rk_padgrid / rk_piano the current Forge (visual JSFX GUI buil
         <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_meter.jsfx-inc</source>
         <source file="rk_ui_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_vu.jsfx-inc</source>
       </version>
+      <version name="1.2.0" author="Quaz (EON Studios)" time="2026-08-20T02:00:32Z">
+        <changelog><![CDATA[Tabbed showcase:
+- The Elements showcase is reorganized into five category tabs - KNOBS / BUTTONS / SLIDERS / METERS / PADS & KEYS - on a wide 740x480 canvas, instead of one tall every-element page. Each family now gets a roomy, full-size layout (bigger knobs, taller faders), still fit-to-window and HiDPI-crisp.
+- The tab bar is the library's own btn_tab widget, and the selected tab persists per instance.
+- Fixed the showcase's Amp/EQ/Mod tab demo highlighting the wrong tab (it passed booleans where btn_tab_draw expects the active index).
+Library incs are unchanged - this release only touches the showcase JSFX.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/ReaKit%20Elements.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="vu_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/vu_kbsg.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_ui_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_vu.jsfx-inc</source>
+      </version>
     </reapack>
   </category>
   <metadata>

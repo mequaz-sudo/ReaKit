@@ -5,17 +5,34 @@ VU needle, drum pad and piano key is drawn procedurally in code — no bitmaps,
 no filmstrips — so your plugin UI is crisp at any size and re-themable with
 one call.
 
-![ReaKit — the controls](screenshots/reakit_controls.png)
+The ReaKit Elements showcase (installable below) organizes every widget into
+five category tabs:
 
-*The controls: 19 knob styles, 10 button styles, every slider and fader.*
+![ReaKit Elements — Knobs tab](screenshots/tab_knobs.png)
 
-![ReaKit — the displays](screenshots/reakit_displays.png)
+*KNOBS — all 19 styles, live on one page. Click one, scroll to change.*
 
-*The displays: scope, analog VU, all 12 meter styles — plus the pad grid and
-piano keyboard widgets new in 1.1.0.*
+![ReaKit Elements — Buttons tab](screenshots/tab_buttons.png)
 
-*Zero image files anywhere on this page: everything above is drawn by the
-library itself (the ReaKit Elements showcase, installable below).*
+*BUTTONS — all 10 styles: toggles, pills, LEDs, steppers, list select,
+rocker, stomp, tab bar (the showcase's own tab bar is this widget).*
+
+![ReaKit Elements — Sliders tab](screenshots/tab_sliders.png)
+
+*SLIDERS — horizontal + arc up top, the vertical fader / console pack
+(PT · MPC · 4K) below.*
+
+![ReaKit Elements — Meters tab](screenshots/tab_meters.png)
+
+*METERS — all 12 meters_kbsg styles plus the analog VU (scroll the VU to
+cycle its 11 face themes).*
+
+![ReaKit Elements — Pads & Keys tab](screenshots/tab_padskeys.png)
+
+*PADS & KEYS — the drum pad grid and piano keyboard widgets.*
+
+*Zero image files inside the plugin: everything above is drawn by the
+library itself.*
 
 **19 knob styles** (SSL, Neve x2, API, Pultec x2, Ableton, Pro Tools, FabFilter,
 Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader types**

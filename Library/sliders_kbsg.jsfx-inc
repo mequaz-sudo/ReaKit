@@ -586,7 +586,7 @@ function sld_mini_interact(mem, x, y, w, h, cur_val)
 //   Dead zone at 6 o'clock (bottom).
 //
 function sld_arc_draw(cx, cy, r, arc_thick, value, mem)
-  local(ht, as, ae, sw, va, i, dot_x, dot_y, da, rc, dr)
+  local(ht, as, ae, sw, va, i, dot_x, dot_y, da, rc, dr, as_g, ae_g, va_g)
 (
   ht = mem[0];
   // 240° sweep: 8 o'clock → 12 o'clock → 4 o'clock (dead zone at 6 o'clock)
@@ -596,20 +596,28 @@ function sld_arc_draw(cx, cy, r, arc_thick, value, mem)
   sw = ae - as;               // = 4π/3 = 240°
 
   // background arc track
+  // NOTE angle frames: as/ae are authored in the cos/sin frame (0 = 3 o'clock,
+  // clockwise with y-down) and the ticks/thumb below use them directly. gfx_arc
+  // measures from 12 o'clock, so the BAND needs a +90° offset — without it the
+  // band sat 90° away from its own thumb (fixed 2026-08-20; Forge had this
+  // fix since 2026-08-05).
+  as_g = as + $pi / 2;
+  ae_g = ae + $pi / 2;
   gfx_set(sld_track_r + 0.04, sld_track_g + 0.04, sld_track_b + 0.04, 1);
   i = 0;
   loop(arc_thick,
-    gfx_arc(cx, cy, r + i, as, ae, 1);
+    gfx_arc(cx, cy, r + i, as_g, ae_g, 1);
     i += 1;
   );
 
   // filled arc — inset one ring per side when the band is thick enough, but
   // always draw at least one pass (arc_thick drops below 3 at small UI scales)
   va = as + value * sw;
+  va_g = va + $pi / 2;
   gfx_set(sld_ac_r, sld_ac_g, sld_ac_b, 1);
   i = arc_thick >= 3 ? 1 : 0;
   loop(max(1, arc_thick - 2 * i),
-    gfx_arc(cx, cy, r + i, as, va, 1);
+    gfx_arc(cx, cy, r + i, as_g, va_g, 1);
     i += 1;
   );
 

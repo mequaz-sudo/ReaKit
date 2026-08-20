@@ -37,7 +37,8 @@ https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/index.xml
 ```
 
 Then install **ReaKit Elements** from the browser — it brings the library incs
-with it and doubles as the every-element showcase (drop it on a track to see
+with it and doubles as the element showcase, organized into category tabs
+(Knobs / Buttons / Sliders / Meters / Pads & Keys — drop it on a track to see
 and feel every widget).
 
 ## Use in your JSFX

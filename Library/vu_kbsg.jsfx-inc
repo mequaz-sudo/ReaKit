@@ -19,9 +19,15 @@
 //   vu_sample(abs_in) / vu_gr_sample(gr_linear) — feed per sample
 //
 // MEMORY MAP (addresses 0-437, do NOT overlap):
-//   10-20:   print[] (VU scale dB labels)
-//   30-40:   pos[] (VU scale arc positions)
+//   10-20:   zm_print[] (VU scale dB labels)
+//   30-40:   zm_pos[]   (VU scale arc positions)
 //   100-437: 25 theme color arrays × 13 slots
+//
+// GLOBAL NAMES: every global this file defines is prefixed zm_ / mtr_ / vu_ /
+// Frm_Buf-style theme table names. Nothing generic leaks into the host's
+// namespace, so importing this cannot silently clobber a host variable (the
+// peak/hold struct offsets used to be bare `value`/`peak`/`clip`/`left`/
+// `right`, and the scale tables bare `print`/`pos` — all now zm_-prefixed).
 //
 // ══════════════════════════════════════════════════════════════════
 //
@@ -60,16 +66,16 @@ zm_frame_r = -1;  // If >= 0, overrides Frm_Buf for frame fill (coil cover alway
 zm_frame_g = 0;
 zm_frame_b = 0;
 
-print = 10;
-print[0] = -20; print[1] = -10; print[2] = -7; print[3] = -5; print[4] = -3;
-print[5] = -2;  print[6] = -1;  print[7] = 0;  print[8] = 1;  print[9] = 2;
-print[10] = 3;
+zm_print = 10;
+zm_print[0] = -20; zm_print[1] = -10; zm_print[2] = -7; zm_print[3] = -5; zm_print[4] = -3;
+zm_print[5] = -2;  zm_print[6] = -1;  zm_print[7] = 0;  zm_print[8] = 1;  zm_print[9] = 2;
+zm_print[10] = 3;
 
 // Scale arc positions (nonlinear VU mapping 0..1)
-pos = 30;
-pos[0] = 0;      pos[1] = .1650;  pos[2] = .2641;  pos[3] = .3519;  pos[4] = .4626;
-pos[5] = .5284;  pos[6] = .6022;  pos[7] = .6849;  pos[8] = .7779;  pos[9] = .8822;
-pos[10] = 1;
+zm_pos = 30;
+zm_pos[0] = 0;      zm_pos[1] = .1650;  zm_pos[2] = .2641;  zm_pos[3] = .3519;  zm_pos[4] = .4626;
+zm_pos[5] = .5284;  zm_pos[6] = .6022;  zm_pos[7] = .6849;  zm_pos[8] = .7779;  zm_pos[9] = .8822;
+zm_pos[10] = 1;
 
 // Memory offsets for 25 color arrays × 13 theme slots
 Frm_Buf = 100;    FG_Covr = Frm_Buf + 13; MeterBG = FG_Covr + 13;
@@ -297,21 +303,21 @@ function round_dec (x, places) local (mult, div) (
 );
 
 // Peak sample/hold struct offsets (exact from ZenoMOD @init)
-peak_timeout = 0;
-value = 0;
-peak = 1;
-left = 0;
-right = 4;
-clip = 3;
+zm_pk_timeout = 0;
+zm_pk_value = 0;
+zm_pk_peak = 1;
+zm_pk_left = 0;
+zm_pk_right = 4;
+zm_pk_clip = 3;
 
 function _sample(ch, _spl, decay) local(s) (
   s = abs(_spl);
-  ch[value] = max(ch[value], s);
-  ch[peak_timeout] -= 1;
-  ch[peak_timeout] <= 0 || s > ch[peak] ? (
-    ch[peak] = s; ch[peak_timeout] = decay;
+  ch[zm_pk_value] = max(ch[zm_pk_value], s);
+  ch[zm_pk_timeout] -= 1;
+  ch[zm_pk_timeout] <= 0 || s > ch[zm_pk_peak] ? (
+    ch[zm_pk_peak] = s; ch[zm_pk_timeout] = decay;
   );
-  ch[clip] = max(ch[clip], s);
+  ch[zm_pk_clip] = max(ch[zm_pk_clip], s);
 );
 
 function dbfs(x) ( 20*log10(x); );
@@ -808,7 +814,7 @@ function vu_draw(cx, cy, radius, mode)
     gfx_set(0.15, 0.15, 0.15, 1);
     i = 0;
     loop(11,
-      frac = pos[i];
+      frac = zm_pos[i];
       tick_ph = (45 + frac * 90) * ($pi / 180);
       tick_cos = cos(tick_ph); tick_sin = sin(tick_ph);
       tx1 = cx - tick_cos * radius;
@@ -821,7 +827,7 @@ function vu_draw(cx, cy, radius, mode)
       i >= 8 ? gfx_set(0.82, 0.12, 0.10, 1) : gfx_set(0.15, 0.15, 0.15, 1);
       lx = cx - tick_cos * radius * 1.15;
       ly = cy - tick_sin * radius * 1.15;
-      sprintf(#_vu_lb, "%d", print[i]);
+      sprintf(#_vu_lb, "%d", zm_print[i]);
       gfx_measurestr(#_vu_lb, tw, th);
       gfx_x = lx - tw * 0.5; gfx_y = ly - th * 0.5;
       gfx_drawstr(#_vu_lb);
@@ -998,8 +1004,8 @@ function zm_draw_scale() (
   set_color(SclDig1[color]);
   jj = 0;
   while ( jj <= 10 ) (
-    ii = print[jj];
-    ph = pos[jj];
+    ii = zm_print[jj];
+    ph = zm_pos[jj];
     ph = (45 + ph*90) * $pi / 180;
     cosp = cos(ph) * r1;
     sinp = sin(ph) * r1;
@@ -1284,16 +1290,16 @@ function zm_draw_channel_label(ch_label) (
 function zm_gr_to_vu_db(gr_db) local(j, t, frac) (
   gr_db = min(max(gr_db, -20), 0);
   gr_db >= 0 ? (
-    frac = pos[7];   // "0" mark
+    frac = zm_pos[7];   // "0" mark
   ) : gr_db <= -20 ? (
-    frac = pos[0];   // "-20" mark
+    frac = zm_pos[0];   // "-20" mark
   ) : (
     // Search print[] array from index 0 (-20) to 7 (0) for bracket
     j = 0;
-    while (j < 7 && print[j + 1] < gr_db) ( j += 1; );
+    while (j < 7 && zm_print[j + 1] < gr_db) ( j += 1; );
     // j is now lower bracket, j+1 is upper
-    t = (gr_db - print[j]) / (print[j + 1] - print[j]);
-    frac = pos[j] + t * (pos[j + 1] - pos[j]);
+    t = (gr_db - zm_print[j]) / (zm_print[j + 1] - zm_print[j]);
+    frac = zm_pos[j] + t * (zm_pos[j + 1] - zm_pos[j]);
   );
   // Convert pos fraction back to "fake dB" for standard needle formula
   // needle formula: angle = 45 + (db+20)/23*90

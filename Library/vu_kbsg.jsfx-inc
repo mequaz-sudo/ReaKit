@@ -784,25 +784,35 @@ function vu_draw(cx, cy, radius, mode)
   sinp = sin(ph);
 
   // ── Arc background ────────────────────────────────────
-  arc_start = 0.22 * $pi;
-  arc_end   = 0.78 * $pi;
+  // ⚠️ TWO ANGLE FRAMES. gfx_arc measures from 12 o'clock, clockwise. The
+  // ticks and the needle below measure from 3 o'clock with an inverted y
+  // (cx - cos*r, cy - sin*r). They differ by 90 degrees, so every angle handed
+  // to gfx_arc carries -$pi/2. Without it the arc is drawn down the RIGHT side
+  // of the circle while the ticks sit across the TOP — same trap as the arc
+  // slider fix in sliders_kbsg 1.2.1.
+  arc_start = 0.22 * $pi - $pi * 0.5;   // -20 dB end, up-left
+  arc_end   = 0.78 * $pi - $pi * 0.5;   // +3 dB end, up-right
 
   // Base arc (dark)
   gfx_set(0.15, 0.15, 0.15, 1);
   gfx_arc(cx, cy, radius, arc_start, arc_end, 1);
   gfx_arc(cx, cy, radius + 1, arc_start, arc_end, 1);
 
-  // Red zone
+  // Red zone. On a VU it runs from 0 dB to the top of the scale — that is
+  // zm_pos[7] along the travel, converted through the SAME mapping the ticks
+  // use, not a fixed fraction of the arc. It also belongs at the +3 end; the
+  // old code painted the first 12% from arc_start, which is the -20 end.
   mode == 0 ? (
-    red_start = arc_start + (arc_end - arc_start) * 0.12;
+    red_start = (45 + zm_pos[7] * 90) * ($pi / 180) - $pi * 0.5;
     gfx_set(0.82, 0.12, 0.10, 1);
-    gfx_arc(cx, cy, radius + 2, arc_start, red_start, 1);
-    gfx_arc(cx, cy, radius + 3, arc_start, red_start, 1);
+    gfx_arc(cx, cy, radius + 2, red_start, arc_end, 1);
+    gfx_arc(cx, cy, radius + 3, red_start, arc_end, 1);
   ) : mode == 1 ? (
-    red_start = arc_start + (arc_end - arc_start) * 0.55;
+    // GR: heavy reduction is the far end of the same travel.
+    red_start = (45 + 0.55 * 90) * ($pi / 180) - $pi * 0.5;
     gfx_set(0.82, 0.12, 0.10, 1);
-    gfx_arc(cx, cy, radius + 2, arc_end, red_start, 1);
-    gfx_arc(cx, cy, radius + 3, arc_end, red_start, 1);
+    gfx_arc(cx, cy, radius + 2, red_start, arc_end, 1);
+    gfx_arc(cx, cy, radius + 3, red_start, arc_end, 1);
   );
 
   // ── Scale ticks ───────────────────────────────────────
@@ -887,7 +897,11 @@ function vu_draw(cx, cy, radius, mode)
   // dB readout
   fsz = max(9, floor(radius * 0.13 * ret + 0.5));
   gfx_setfont(1, "Arial", fsz, 'b');
-  gfx_set(0.9, 0.9, 0.9, 0.8);
+  // Every other mark this function makes is near-black (0.15 ticks, 0.05
+  // needle) because the face is assumed LIGHT. This readout was white at 0.8
+  // alpha, which is invisible on exactly the face the rest of the code draws
+  // for. Alpha is not a contrast plan — match the ink.
+  gfx_set(0.16, 0.16, 0.18, 0.90);
   sprintf(#_vu_db, "%.1f dB", db);
   gfx_measurestr(#_vu_db, tw, th);
   gfx_x = cx - tw * 0.5;

@@ -1,13 +1,16 @@
 desc:ReaKit Elements
 // @description ReaKit - UI widget library for JSFX (knobs, faders, buttons, meters, VU, pads, piano)
 // @author Quaz (EON Studios)
-// @version 1.2.1
+// @version 1.3.0
 // @changelog
-//   Arc slider fix: the arc BAND now sits on its own thumb. gfx_arc measures
-//   angles from 12 o'clock while the thumb/tick math measures from 3 o'clock;
-//   the band was drawn 90 degrees away from the thumb (dead zone at 3 o'clock
-//   instead of 6). Band angles now get the +90 offset; thumb, ticks and
-//   interaction were always correct and are untouched.
+//   New: ReaKit Starter - a working GUI skeleton to copy from. Installing this
+//   package now also drops a second JSFX alongside this showcase. Where
+//   Elements shows you every widget, Starter shows you a finished plugin face:
+//   grain / pitch / motion / envelope / reverb / delay / output, every control
+//   bound to a real automatable parameter, native sliders hidden so what you
+//   see is the GUI. Its layout chrome is ~120 lines of ordinary local
+//   functions, deliberately not a framework - copy them and change them.
+//   Library incs are unchanged.
 // @about
 //   19 procedural knob styles, 17 slider/fader types, 10 button styles,
 //   12 meter styles with DSP included, an analog VU with 11 face themes,
@@ -21,6 +24,7 @@ desc:ReaKit Elements
 //   *_kbsg.jsfx-inc files installed alongside it. The rk_ui_*.jsfx-inc files
 //   are compatibility aliases for .jsfx exported by Forge.
 // @provides
+//   ReaKit Starter.jsfx
 //   [nomain] knobs_kbsg.jsfx-inc
 //   [nomain] sliders_kbsg.jsfx-inc
 //   [nomain] buttons_kbsg.jsfx-inc

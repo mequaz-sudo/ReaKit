@@ -1,58 +1,57 @@
 desc:ReaKit Starter — GUI skeleton (grain / pitch / motion / reverb / delay)
-author:EON Studios
-version:1.1
-about:
-  A working ReaKit interface you can copy. Five sections, every widget family
-  wired to a real parameter with automation-safe writes, plus a hand-drawn
-  visualiser panel to show custom graphics living next to kit widgets.
-
-  The DSP here is a deliberate passthrough with an output gain: this file is a
-  GUI skeleton, not an effect. Replace @sample with your engine and keep the
-  @gfx block.
-
-  Everything here calls the SHIPPING ReaKit API — the *_kbsg draw/interact
-  pairs. There is no framework layer: the chrome helpers at the top of @init
-  are ordinary local functions, about 120 lines, and they are meant to be
-  copied and changed rather than imported.
-
-  Three controls are hand-rolled at the bottom of @init because ReaKit has no
-  widget for them yet — they are marked GAP. See the header of each.
-
-  Part of ReaKit, MIT licensed — see ReaKit/README.md for the guide.
-
+// @author Quaz (EON Studios)
+// @about
+//  A working ReaKit interface you can copy. Five sections, every widget family
+//  wired to a real parameter with automation-safe writes, plus a hand-drawn
+//  visualiser panel to show custom graphics living next to kit widgets.
+//
+//  The DSP here is a deliberate passthrough with an output gain: this file is a
+//  GUI skeleton, not an effect. Replace @sample with your engine and keep the
+//  @gfx block.
+//
+//  Everything here calls the SHIPPING ReaKit API — the *_kbsg draw/interact
+//  pairs. There is no framework layer: the chrome helpers at the top of @init
+//  are ordinary local functions, about 120 lines, and they are meant to be
+//  copied and changed rather than imported.
+//
+//  Three controls are hand-rolled at the bottom of @init because ReaKit has no
+//  widget for them yet — they are marked GAP. See the header of each.
+//
+//  Part of ReaKit, MIT licensed — see ReaKit/README.md for the guide.
+//
 // ── Grain ───────────────────────────────────────────────────────────────────
-slider1:g_size=40<1,500,0.1>Grain Size (ms)
-slider2:g_dens=12<0.5,80,0.1>Grain Density (Hz)
-slider3:g_spray=15<0,100,0.1>Spray (%)
-slider4:g_pos=50<0,100,0.1>Position (%)
-slider5:g_dir=0<0,2,1{Forward,Reverse,Alternate}>Direction
+slider1:g_size=40<1,500,0.1>-Grain Size (ms)
+slider2:g_dens=12<0.5,80,0.1>-Grain Density (Hz)
+slider3:g_spray=15<0,100,0.1>-Spray (%)
+slider4:g_pos=50<0,100,0.1>-Position (%)
+slider5:g_dir=0<0,2,1{Forward,Reverse,Alternate}>-Direction
 // ── Pitch ───────────────────────────────────────────────────────────────────
-slider6:p_semi=0<-24,24,1>Pitch (semitones)
-slider7:p_fine=0<-100,100,0.1>Fine (cents)
-slider8:p_mode=0<0,2,1{Repitch,Tuned,Stretch}>Pitch Mode
-slider26:p_scale=0<0,6,1{Chromatic,Major,Minor,Dorian,Phrygian,Lydian,Mixolydian}>Scale
+slider6:p_semi=0<-24,24,1>-Pitch (semitones)
+slider7:p_fine=0<-100,100,0.1>-Fine (cents)
+slider8:p_mode=0<0,2,1{Repitch,Tuned,Stretch}>-Pitch Mode
+slider26:p_scale=0<0,6,1{Chromatic,Major,Minor,Dorian,Phrygian,Lydian,Mixolydian}>-Scale
 // ── Motion ──────────────────────────────────────────────────────────────────
-slider9:m_x=0.5<0,1,0.001>Motion X
-slider10:m_y=0.5<0,1,0.001>Motion Y
-slider11:m_div=6<0,15,1>Motion Rate (division)
-slider12:m_on=1<0,1,1>Motion On
+slider9:m_x=0.5<0,1,0.001>-Motion X
+slider10:m_y=0.5<0,1,0.001>-Motion Y
+slider11:m_div=6<0,15,1>-Motion Rate (division)
+slider12:m_on=1<0,1,1>-Motion On
 // ── Grain envelope ──────────────────────────────────────────────────────────
-slider13:e_a=20<0,500,0.1>Env Attack (ms)
-slider14:e_d=180<0,2000,0.1>Env Decay (ms)
-slider15:e_s=0.6<0,1,0.001>Env Sustain
-slider16:e_r=300<0,2000,0.1>Env Release (ms)
+slider13:e_a=20<0,500,0.1>-Env Attack (ms)
+slider14:e_d=180<0,2000,0.1>-Env Decay (ms)
+slider15:e_s=0.6<0,1,0.001>-Env Sustain
+slider16:e_r=300<0,2000,0.1>-Env Release (ms)
 // ── Reverb ──────────────────────────────────────────────────────────────────
-slider17:r_size=0.45<0,1,0.001>Reverb Size
-slider18:r_damp=0.35<0,1,0.001>Reverb Damping
-slider19:r_mix=0.25<0,1,0.001>Reverb Mix
-slider20:r_freeze=0<0,1,1>Reverb Freeze
+slider17:r_size=0.45<0,1,0.001>-Reverb Size
+slider18:r_damp=0.35<0,1,0.001>-Reverb Damping
+slider19:r_mix=0.25<0,1,0.001>-Reverb Mix
+slider20:r_freeze=0<0,1,1>-Reverb Freeze
 // ── Delay ───────────────────────────────────────────────────────────────────
-slider21:d_div=7<0,15,1>Delay Division
-slider22:d_fb=0.35<0,0.95,0.001>Delay Feedback
-slider23:d_mix=0.20<0,1,0.001>Delay Mix
-slider24:d_ping=0<0,1,1>Ping-Pong
+slider21:d_div=7<0,15,1>-Delay Division
+slider22:d_fb=0.35<0,0.95,0.001>-Delay Feedback
+slider23:d_mix=0.20<0,1,0.001>-Delay Mix
+slider24:d_ping=0<0,1,1>-Ping-Pong
 // ── Output ──────────────────────────────────────────────────────────────────
-slider25:out_db=0<-24,12,0.1>Output (dB)
+slider25:out_db=0<-24,12,0.1>-Output (dB)
 
 // One library set, one place. These four are the whole shipping widget API.
 import knobs_kbsg.jsfx-inc

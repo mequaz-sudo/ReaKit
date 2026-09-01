@@ -109,6 +109,30 @@ Only sliders_kbsg.jsfx-inc changes; the showcase and all other incs are byte-ide
         <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_meter.jsfx-inc</source>
         <source file="rk_ui_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_vu.jsfx-inc</source>
       </version>
+  <version name="1.3.0" author="Quaz (EON Studios)" time="2026-09-01T14:07:54Z">
+        <changelog><![CDATA[New: ReaKit Starter - a working GUI skeleton to copy from.
+- Installing this package now also drops a second JSFX, ReaKit Starter, alongside the Elements showcase. Where Elements shows you every widget, Starter shows you a finished plugin face: five sections (grain / pitch / motion / envelope / reverb / delay / output) laid out on a fit-to-window canvas, every control bound to a real automatable parameter with automation-safe writes.
+- Its native sliders are hidden, so what you get is the GUI - the same thing your own plugin should look like.
+- The layout chrome (panels, sections, readouts, tooltips, palette, tempo divisions) is ~120 lines of ordinary local functions at the top of @init, deliberately NOT a framework: copy them into your plugin and change them.
+- Three controls are hand-rolled and marked GAP because the library has no widget for them yet: an XY pad, an ADSR envelope display, and a dropdown (that last one uses JSFX's own gfx_showmenu, which may stay the right answer for long lists).
+Library incs are unchanged - this release only adds the Starter JSFX.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/ReaKit%20Elements.jsfx</source>
+        <source main="true" file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/ReaKit%20Starter.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="vu_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/vu_kbsg.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_ui_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_vu.jsfx-inc</source>
+      </version>
     </reapack>
   </category>
   <metadata>

@@ -483,7 +483,7 @@ col_w = (W - px(42)) * 0.5;
 col_l = px(14);
 col_r = col_l + col_w + px(14);
 row_y = px(48);
-sec_h1 = px(120);
+sec_h1 = px(134);
 sec_h2 = px(132);
 sec_h3 = px(112);
 kr = px(19);
@@ -510,7 +510,7 @@ sprintf(#s, "%.0f %%", g_pos);
 _nv = ui_knob(m_gpos, kx + kp * 3, ky, kr, g_pos, 0, 100, 50, 0, 0, "POSITION", #s);
 _nv != g_pos ? ( g_pos = _nv; slider_automate(g_pos); );
 
-_sy = row_y + sec_h1 - px(24);
+_sy = row_y + sec_h1 - px(26);
 _nv = ui_segment3(m_gdir, col_l + px(10), _sy, col_w - px(20), px(18), g_dir,
                   "FORWARD", "REVERSE", "ALTERNATE");
 _nv != g_dir ? ( g_dir = _nv; slider_automate(g_dir); );

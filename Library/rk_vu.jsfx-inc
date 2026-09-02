@@ -156,13 +156,17 @@ function rk_vu_theme_name(i, dst) (
 // Publishes rkvu_cx / rkvu_cy / rkvu_r for the rect. The label ring is the
 // outermost thing drawn, so the radius is solved from ITS extent — that is
 // what keeps the numbers inside the plate at any aspect ratio.
-function rk_vu_geom(x, y, w, h) local(pad, rl, half, up) (
-  pad  = min(w, h) * 0.07;
-  rl   = 1.12;                                  // label ring, x arc radius
+function rk_vu_geom(x, y, w, h) local(pad, rl, half, tx) (
+  pad  = min(w, h) * 0.05;
+  rl   = 1.11;                                  // label ring, x arc radius
   half = sin(RKVU_SWEEP * 0.5);                 // horizontal reach at the ends
+  // The end labels ("-20", "3") are CENTRED on the ring, so half their text
+  // hangs outside it. At fsz = 0.135r a three-glyph label is ~0.32r wide;
+  // budgeting 0.16r keeps them off the bezel at any size. Seen clipping.
+  tx   = 0.16;
   rkvu_cx = x + w * 0.5;
   rkvu_cy = y + h * 0.90;                       // pivot low on the plate
-  rkvu_r  = min((w * 0.5 - pad) / (half * rl), (rkvu_cy - y - pad) / rl);
+  rkvu_r  = min((w * 0.5 - pad) / (half * rl + tx), (rkvu_cy - y - pad) / rl);
   rkvu_r  = max(rkvu_r, 4);
 );
 

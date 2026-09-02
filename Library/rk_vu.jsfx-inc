@@ -180,7 +180,7 @@ function _rk_vu_rrect(x, y, w, h, r) local(d) (
 // Bezel, then the face, then a soft vertical shade so the plate reads as a
 // surface rather than a filled rectangle.
 function _rk_vu_plate(x, y, w, h) local(i, n, t, br) (
-  br = min(w, h) * 0.05;
+  br = min(w, h) * 0.075;
   gfx_set(rkvu_bz_r, rkvu_bz_g, rkvu_bz_b, 1);
   _rk_vu_rrect(x, y, w, h, br);
 
@@ -222,19 +222,21 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv) (
   // reduction back (mode 1). Both come from the same frac->angle mapping.
   ared = mode == 1 ? rk_vu_ang(0.55) : rk_vu_ang(rk_vu_db2frac(0));
   gfx_set(rkvu_rd_r, rkvu_rd_g, rkvu_rd_b, 1);
-  gfx_arc(rkvu_cx, rkvu_cy, rkvu_r, ared, a1, 1);
-  gfx_arc(rkvu_cx, rkvu_cy, rkvu_r - 1, ared, a1, 1);
-  gfx_arc(rkvu_cx, rkvu_cy, rkvu_r - 2, ared, a1, 1);
+  i = -1;
+  loop(max(4, floor(rkvu_r * 0.03)),
+    gfx_arc(rkvu_cx, rkvu_cy, rkvu_r + i, ared, a1, 1);
+    i += 1;
+  );
 
-  gfx_setfont(1, "Arial", fsz);
+  gfx_setfont(1, "Arial", fsz, 'b');
   n = mode == 1 ? 5 : 11;
   i = 0;
   loop(n,
     mode == 1 ? ( frac = i / 4; dbv = -(i * 5); )
               : ( dbv = rk_vu_mark_db(i); frac = rk_vu_db2frac(dbv); );
     a  = rk_vu_ang(frac);
-    r1 = rkvu_r - 2;
-    r2 = rkvu_r - rkvu_r * ((mode == 1 || i == 0 || i == 7 || i == 10) ? 0.11 : 0.07);
+    r1 = rkvu_r - 1;
+    r2 = rkvu_r - rkvu_r * ((mode == 1 || i == 0 || i == 1 || i == 7 || i == 10) ? 0.13 : 0.07);
 
     (mode == 0 && dbv >= 0) || (mode == 1 && frac >= 0.55) ?
       gfx_set(rkvu_rd_r, rkvu_rd_g, rkvu_rd_b, 1) :
@@ -242,11 +244,14 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv) (
 
     gfx_line(rk_vu_px(rkvu_cx, r1, a), rk_vu_py(rkvu_cy, r1, a),
              rk_vu_px(rkvu_cx, r2, a), rk_vu_py(rkvu_cy, r2, a), 1);
+    (mode == 1 || i == 0 || i == 1 || i == 7 || i == 10) ?
+      gfx_line(rk_vu_px(rkvu_cx, r1, a) + 1, rk_vu_py(rkvu_cy, r1, a),
+               rk_vu_px(rkvu_cx, r2, a) + 1, rk_vu_py(rkvu_cy, r2, a), 1);
 
     sprintf(#_rkvu_l, "%d", dbv);
     gfx_measurestr(#_rkvu_l, tw, th);
-    lx = rk_vu_px(rkvu_cx, rkvu_r * 1.09, a);
-    ly = rk_vu_py(rkvu_cy, rkvu_r * 1.09, a);
+    lx = rk_vu_px(rkvu_cx, rkvu_r * 1.11, a);
+    ly = rk_vu_py(rkvu_cy, rkvu_r * 1.11, a);
     gfx_x = lx - tw * 0.5; gfx_y = ly - th * 0.5;
     gfx_drawstr(#_rkvu_l);
     i += 1;
@@ -261,7 +266,7 @@ function _rk_vu_arc_fill(frac, slot) local(a0, a1, rr, i, n) (
   a1 = rk_vu_ang(frac);
   a1 > a0 ? (
     rr = rkvu_r * (slot <= 0 ? 0.945 : 0.880);
-    n  = max(2, floor(rkvu_r * 0.032));
+    n  = max(3, floor(rkvu_r * 0.048));
     gfx_set(rkvu_ar_r, rkvu_ar_g, rkvu_ar_b, 0.92);
     i = 0;
     loop(n, gfx_arc(rkvu_cx, rkvu_cy, rr - i, a0, a1, 1); i += 1; );
@@ -271,7 +276,7 @@ function _rk_vu_arc_fill(frac, slot) local(a0, a1, rr, i, n) (
 // ── Needle ──────────────────────────────────────────────────────────────
 // `wide` tapers the root; `alpha` lets the hold needle share the code.
 function _rk_vu_needle(frac, wide, alpha, cr, cg, cb)
-local(a, tipx, tipy, rootx, rooty, i, sx, sy) (
+local(a, tipx, tipy, rootx, rooty, i, sx, sy, hw, px, py, n) (
   a = rk_vu_ang(frac);
   tipx  = rk_vu_px(rkvu_cx, rkvu_r * 0.955, a);
   tipy  = rk_vu_py(rkvu_cy, rkvu_r * 0.955, a);
@@ -292,9 +297,12 @@ local(a, tipx, tipy, rootx, rooty, i, sx, sy) (
   );
 
   gfx_set(cr, cg, cb, alpha);
-  i = 0;
-  loop(max(1, wide),
-    gfx_line(rootx + i, rooty, tipx + i, tipy, 1);
+  hw = wide > 1 ? rkvu_r * 0.020 : 0;         // hold needle stays a hairline
+  px = cos(a); py = sin(a);
+  n  = max(1, floor(hw * 2) + 1);
+  i  = 0;
+  loop(n,
+    gfx_line(rootx + px * (-hw + i), rooty + py * (-hw + i), tipx, tipy, 1);
     i += 1;
   );
 );
@@ -307,7 +315,7 @@ local(a, tipx, tipy, rootx, rooty, i, sx, sy) (
 // there is no counterweight tail: on a covered movement it is inside the
 // dome. Draw one and you are drawing something a real meter hides.)
 function _rk_vu_cover() local(R, i, dy, hw, n) (
-  R = rkvu_r * 0.26;
+  R = rkvu_r * 0.19;
   n = max(floor(R), 2);
   gfx_set(0, 0, 0, 0.22);                              // its shadow on the face
   i = 0;
@@ -362,11 +370,11 @@ function _rk_vu_led(on) local(lx, ly, lr) (
 
 function _rk_vu_label(s, fsz) local(tw, th) (
   strlen(s) > 0 ? (
-    gfx_setfont(1, "Arial", fsz, 'b');
-    gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.85);
+    gfx_setfont(1, "Arial", floor(fsz * 1.9 + 0.5), 'b');
+    gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.90);
     gfx_measurestr(s, tw, th);
     gfx_x = rkvu_cx - tw * 0.5;
-    gfx_y = rkvu_cy - rkvu_r * 0.52 - th * 0.5;
+    gfx_y = rkvu_cy - rkvu_r * 0.56 - th * 0.5;
     gfx_drawstr(s);
   );
 );
@@ -436,7 +444,7 @@ function rk_vu_sample(x) local(amp, tgt, a) (
 function rk_vu_face(x, y, w, h, mode, theme, label) (
   rk_vu_theme(theme);
   rk_vu_geom(x, y, w, h);
-  rkvu_fsz = max(7, floor(rkvu_r * 0.115 * max(1, gfx_ext_retina) + 0.5));
+  rkvu_fsz = max(8, floor(rkvu_r * 0.135 * max(1, gfx_ext_retina) + 0.5));
   _rk_vu_plate(x, y, w, h);
   _rk_vu_scale(mode, rkvu_fsz);
   _rk_vu_label(label, rkvu_fsz);

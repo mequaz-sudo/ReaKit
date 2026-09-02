@@ -6,22 +6,28 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 // rk_piano: hand it a rect and it paints a finished instrument, plate and
 // all. Nothing here is ported from another plugin.
 //
-// PROVENANCE OF THE SCALE. The nonlinear VU scale is COMPUTED, not copied,
-// from the equation Lubomir I. Ivanov (Liteon) published as a tutorial in
-// "Designing an analog VU meter in DSP" (2009):
+// PROVENANCE OF THE SCALE. A VU movement is LINEAR in rectified amplitude;
+// the dB figures are printed at nonlinear positions along that linear
+// travel. So every mark sits at 10^(dB/20), normalised across -20..+3.
+// That is the physics — and it is also exactly the equation Lubomir I.
+// Ivanov (Liteon) published as a tutorial, "Designing an analog VU meter
+// in DSP" (2009):
 //
 //     xl = exp(log(1.055) * C * dB)
 //
-// with C = 2.154 (his article gives 2.1 and says to tune it). Normalised
-// across -20..+3 dB this puts the eleven scale marks within 0.0006 of a
-// real VU face. It is his published method, worked from the article — an
-// equation, not an expression, and no table is transcribed.
+// with C = ln(10) / (20 ln 1.055) = 2.150 (his article gives 2.1 and says
+// to tune it; 2.154 fits the ZenoMOD table to 0.0006). The scale here is
+// COMPUTED from that law every frame. No table is transcribed from anyone.
 //
-// BALLISTIC. The IEC/ANSI definition of a VU movement: a damped second-order
-// system reaching 99% of a step in 300 ms with a small overshoot. That is
-// zeta = 0.7 and wn = 4.6 / (zeta * 0.3) ~= 21.9 rad/s, which is what
-// rk_vu_sample runs. Textbook control theory, derived from the published
-// spec rather than adapted from anyone's code.
+// BALLISTIC. ANSI C16.5 / IEC 60268-17 define the VU movement by its step
+// response: a sine at reference level applied from silence, the pointer
+// reaches 99% of reference deflection in 300 ms (+-10%) and overshoots by
+// at least 1% and at most 1.5%. rk_vu_sample runs a damped second-order
+// system, and its two constants were SOLVED for that spec by simulating
+// this exact code, 16-sample decimation included: zeta = 0.813 gives 1.22%
+// overshoot, wn = 13.54 rad/s puts the 99% crossing at 300 ms. The textbook
+// shortcut 4.6/(zeta*wn) is an envelope estimate — it was tried first and
+// measured at 146 ms with 4.5% overshoot. Measure, don't derive.
 //
 // ⚠️ ONE ANGLE FRAME, EVERYWHERE. Every angle in this file is gfx_arc's:
 // radians, 0 = 12 o'clock, positive = clockwise. Points are always
@@ -44,6 +50,9 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 //   vu.rk_vu_sample(spl0)                  feed it; abs() is taken here
 //   vu.rk_vu_draw(x, y, w, h, 0, 0, "L")   mode 0 = level, 1 = gain reduction
 //                                          theme 0..4, label "" for none
+//   rk_vu_draw_pair(x,y,w,h,mode,theme, posA,holdA,overA,labA, posB,...)
+//                                          stereo or mid/side, two plates
+//   rk_vu_face / rk_vu_ink / rk_vu_cap_led two needles on ONE plate
 //   rk_vu_set_hold(seconds)                hold-needle fall time (0 = off)
 //   rk_vu_theme_name(i, #dst)              theme name for a picker
 //
@@ -54,7 +63,7 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 @init
 
 RKVU_SWEEP  = 100 * ($pi / 180);   // total needle travel, radians
-RKVU_K      = log(1.055) * 2.154;  // Liteon's published scale constant
+RKVU_K      = log(10) / 20;        // exp(K*dB) = 10^(dB/20): linear travel
 RKVU_DB_LO  = -20;
 RKVU_DB_HI  = 3;
 RKVU_HOLD_S = 1.6;                 // hold needle fall time, seconds
@@ -187,8 +196,17 @@ function _rk_vu_plate(x, y, w, h) local(i, n, t, br) (
     gfx_rect(x, y + h - 1 - i, w, 1);
     i += 1;
   );
-  gfx_set(rkvu_bz_r, rkvu_bz_g, rkvu_bz_b, 0.30);
-  gfx_rect(x, y, w, 1);
+  // inner shadow under the bezel — light from above, so the top is deepest
+  i = 0;
+  loop(4,
+    gfx_set(0, 0, 0, 0.16 - i * 0.04);
+    gfx_rect(x, y + i, w, 1);
+    gfx_set(0, 0, 0, 0.08 - i * 0.02);
+    gfx_rect(x + i, y, 1, h);
+    gfx_rect(x + w - 1 - i, y, 1, h);
+    i += 1;
+  );
+  rkvu_fx = x; rkvu_fy = y; rkvu_fw = w; rkvu_fh = h;   // the face, for cover + glass
 );
 
 // ── Scale: arc, red zone, ticks, numbers ────────────────────────────────
@@ -253,16 +271,24 @@ function _rk_vu_arc_fill(frac, slot) local(a0, a1, rr, i, n) (
 // ── Needle ──────────────────────────────────────────────────────────────
 // `wide` tapers the root; `alpha` lets the hold needle share the code.
 function _rk_vu_needle(frac, wide, alpha, cr, cg, cb)
-local(a, tipx, tipy, rootx, rooty, i) (
+local(a, tipx, tipy, rootx, rooty, i, sx, sy) (
   a = rk_vu_ang(frac);
   tipx  = rk_vu_px(rkvu_cx, rkvu_r * 0.955, a);
   tipy  = rk_vu_py(rkvu_cy, rkvu_r * 0.955, a);
   rootx = rk_vu_px(rkvu_cx, rkvu_r * 0.10, a);
   rooty = rk_vu_py(rkvu_cy, rkvu_r * 0.10, a);
 
+  // Fixed light, upper-left: the offset is constant in the world, so it is
+  // the needle's ANGLE that decides how much shadow shows beside it. The
+  // offset scales with the meter — a 2px shadow vanishes on a 300px face.
   alpha >= 0.9 ? (
-    gfx_set(0, 0, 0, 0.18);
-    gfx_line(rootx + 2, rooty + 2, tipx + 2, tipy + 2, 1);
+    sx = rkvu_r * 0.012; sy = rkvu_r * 0.020;
+    gfx_set(0, 0, 0, 0.15);
+    i = 0;
+    loop(max(1, wide) + 1,
+      gfx_line(rootx + sx + i, rooty + sy, tipx + sx + i, tipy + sy, 1);
+      i += 1;
+    );
   );
 
   gfx_set(cr, cg, cb, alpha);
@@ -274,14 +300,50 @@ local(a, tipx, tipy, rootx, rooty, i) (
 );
 
 // ── Centre cap, peak LED, label ─────────────────────────────────────────
-function _rk_vu_cap() local(cr) (
-  cr = rkvu_r * 0.085;
-  gfx_set(0, 0, 0, 0.20);
-  gfx_circle(rkvu_cx + 1, rkvu_cy + 2, cr, 1, 1);
-  gfx_set(rkvu_cp_r, rkvu_cp_g, rkvu_cp_b, 1);
-  gfx_circle(rkvu_cx, rkvu_cy, cr, 1, 1);
-  gfx_set(1, 1, 1, 0.16);
-  gfx_circle(rkvu_cx - cr * 0.30, rkvu_cy - cr * 0.34, cr * 0.42, 1, 1);
+// The coil cover: the dome over the movement that the needle emerges from
+// and disappears behind. Built as the UPPER half of a disc, row by row, then
+// squared off down to the bezel — so it never pokes out of the plate however
+// low the pivot sits, and the pivot itself is never seen. (This is also why
+// there is no counterweight tail: on a covered movement it is inside the
+// dome. Draw one and you are drawing something a real meter hides.)
+function _rk_vu_cover() local(R, i, dy, hw, n) (
+  R = rkvu_r * 0.26;
+  n = max(floor(R), 2);
+  gfx_set(0, 0, 0, 0.22);                              // its shadow on the face
+  i = 0;
+  loop(n,
+    dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
+    gfx_rect(rkvu_cx - hw + 2, rkvu_cy - dy + 3, hw * 2, 1);
+    i += 1;
+  );
+  gfx_set(rkvu_cp_r, rkvu_cp_g, rkvu_cp_b, 1);         // the dome
+  i = 0;
+  loop(n,
+    dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
+    gfx_rect(rkvu_cx - hw, rkvu_cy - dy, hw * 2, 1);
+    i += 1;
+  );
+  gfx_rect(rkvu_cx - R, rkvu_cy, R * 2, max(rkvu_fy + rkvu_fh - rkvu_cy, 0));
+  gfx_set(1, 1, 1, 0.14);                              // rim light
+  gfx_arc(rkvu_cx, rkvu_cy, R - 1, -$pi * 0.5, $pi * 0.5, 1);
+  gfx_set(1, 1, 1, 0.06);
+  gfx_arc(rkvu_cx, rkvu_cy, R - 3, -$pi * 0.40, $pi * 0.40, 1);
+);
+
+// Glass. A soft diagonal highlight across the upper-left of the face and
+// nothing else — drawn LAST because it is in front of everything, and kept
+// faint so the ink underneath stays legible.
+function _rk_vu_glass() local(rows, i, t, wdt, a) (
+  rows = max(floor(rkvu_fh * 0.45), 4);
+  i = 0;
+  loop(rows,
+    t = i / rows;
+    wdt = rkvu_fw * (0.62 - t * 0.42);
+    a = 0.085 * (1 - t) * (1 - t);
+    gfx_set(1, 1, 1, a);
+    gfx_rect(rkvu_fx, rkvu_fy + i, wdt, 1);
+    i += 1;
+  );
 );
 
 function _rk_vu_led(on) local(lx, ly, lr) (
@@ -304,7 +366,7 @@ function _rk_vu_label(s, fsz) local(tw, th) (
     gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.85);
     gfx_measurestr(s, tw, th);
     gfx_x = rkvu_cx - tw * 0.5;
-    gfx_y = rkvu_cy - rkvu_r * 0.40 - th * 0.5;
+    gfx_y = rkvu_cy - rkvu_r * 0.52 - th * 0.5;
     gfx_drawstr(s);
   );
 );
@@ -314,8 +376,8 @@ function _rk_vu_label(s, fsz) local(tw, th) (
 // transcendentals in the audio path: the ballistic runs on linear
 // deflection and the dB/scale mapping happens once per frame in the draw.
 RKVU_DEC  = 16;
-RKVU_ZETA = 0.7;
-RKVU_WN   = 4.6 / (0.7 * 0.3);     // 99% of a step in 300 ms
+RKVU_ZETA = 0.813;   // 1.22% overshoot — spec says 1.0..1.5   (measured)
+RKVU_WN   = 13.54;   // 99% of a step at 300 ms                (measured)
 
 function rk_vu_init(ref_db) (
   this.pos = 0; this.vel = 0; this.hold = 0; this.hold_t = 0;
@@ -393,7 +455,8 @@ function rk_vu_ink(pos, hold, mode, slot) local(frac, hfrac) (
                 rkvu_nd_r, rkvu_nd_g, rkvu_nd_b);
 );
 
-function rk_vu_cap_led(over) ( _rk_vu_cap(); _rk_vu_led(over); );
+// Cover, LED, then the glass over the lot. Last call in every pattern.
+function rk_vu_cap_led(over) ( _rk_vu_cover(); _rk_vu_led(over); _rk_vu_glass(); );
 
 // One movement, one rect.
 function rk_vu_draw(x, y, w, h, mode, theme, label) (

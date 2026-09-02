@@ -67,8 +67,7 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 
 @init
 
-RKVU_SWEEP  = 88 * ($pi / 180);    // total needle travel; 88 deg puts the arc
-                                   // high on a 1.6:1 face with the pivot below it
+RKVU_SWEEP  = 100 * ($pi / 180);   // total needle travel, radians
 RKVU_K      = log(10) / 20;        // exp(K*dB) = 10^(dB/20): linear travel
 RKVU_DB_LO  = -20;
 RKVU_DB_HI  = 3;
@@ -159,31 +158,21 @@ function rk_vu_theme_name(i, dst) (
 );
 
 // ── Geometry ────────────────────────────────────────────────────────────
-// A VU face is wider than tall. Drawn to FILL a squarer rect, the arc is
-// width-limited and ends up mid-plate with a band of empty cream above it —
-// that was pass 3. So the face is 1.6:1, centred in whatever rect it is
-// given, and the leftover is the host's. ZenoMOD does the same: its cream is
-// 300x187 inside the 400x300 it is handed, the blue is its surround.
-//
-// Proportions measured off that face: arc chord 80% of the width, arc ends
-// 41% of the way down, arc top 15%, labels from 6%, pivot 7% below the
-// bottom edge so the needle rises out of the bezel, "VU" at ~65%.
-function rk_vu_geom(x, y, w, h) local(pad, half, rl, tx) (
-  rkvu_ow = min(w, h * 1.6);
-  rkvu_oh = rkvu_ow / 1.6;
-  rkvu_ox = x + (w - rkvu_ow) * 0.5;
-  rkvu_oy = y + (h - rkvu_oh) * 0.5;
-
-  rkvu_cx = rkvu_ox + rkvu_ow * 0.5;
-  rkvu_cy = rkvu_oy + rkvu_oh * 1.07;
-
-  half = sin(RKVU_SWEEP * 0.5);                 // 0.695 at 88 deg
-  rl   = 1.10;                                  // label ring, x arc radius
-  tx   = 0.05;                                  // half of "-20" at fsz 0.042r, in r
-  pad  = rkvu_ow * 0.02;
-  // chord rule first; the text guard only binds on very wide labels
-  rkvu_r = min(rkvu_ow * 0.40 / half, (rkvu_ow * 0.5 - pad) / (half * rl + tx));
-  rkvu_r = max(rkvu_r, 4);
+// Publishes rkvu_cx / rkvu_cy / rkvu_r for the rect. The label ring is the
+// outermost thing drawn, so the radius is solved from ITS extent — that is
+// what keeps the numbers inside the plate at any aspect ratio.
+function rk_vu_geom(x, y, w, h) local(pad, rl, half, tx) (
+  pad  = min(w, h) * 0.05;
+  rl   = 1.11;                                  // label ring, x arc radius
+  half = sin(RKVU_SWEEP * 0.5);                 // horizontal reach at the ends
+  // The end labels ("-20", "3") are CENTRED on the ring, so half their text
+  // hangs outside it. At fsz = 0.135r a three-glyph label is ~0.32r wide;
+  // budgeting 0.16r keeps them off the bezel at any size. Seen clipping.
+  tx   = 0.16;
+  rkvu_cx = x + w * 0.5;
+  rkvu_cy = y + h * 0.90;                       // pivot low on the plate
+  rkvu_r  = min((w * 0.5 - pad) / (half * rl + tx), (rkvu_cy - y - pad) / rl);
+  rkvu_r  = max(rkvu_r, 4);
 );
 
 // ── Plate ───────────────────────────────────────────────────────────────
@@ -212,7 +201,7 @@ function _rk_vu_plate(x, y, w, h) local(i, n, t, br) (
   i = 0;
   loop(n,
     t = i / n;
-    gfx_set(rkvu_p2_r, rkvu_p2_g, rkvu_p2_b, t * t * 0.16);
+    gfx_set(rkvu_p2_r, rkvu_p2_g, rkvu_p2_b, t * t * 0.5);
     gfx_rect(x, y + h - 1 - i, w, 1);
     i += 1;
   );
@@ -242,13 +231,13 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv) (
   // reduction back (mode 1). Both come from the same frac->angle mapping.
   ared = mode == 1 ? rk_vu_ang(0.55) : rk_vu_ang(rk_vu_db2frac(0));
   gfx_set(rkvu_rd_r, rkvu_rd_g, rkvu_rd_b, 1);
-  i = 0;
-  loop(max(2, floor(rkvu_r * 0.012)),
-    gfx_arc(rkvu_cx, rkvu_cy, rkvu_r + 1 + i, ared, a1, 1);
+  i = -1;
+  loop(max(4, floor(rkvu_r * 0.03)),
+    gfx_arc(rkvu_cx, rkvu_cy, rkvu_r + i, ared, a1, 1);
     i += 1;
   );
 
-  gfx_setfont(1, "Arial", fsz);
+  gfx_setfont(1, "Arial", fsz, 'b');
   n = mode == 1 ? 5 : 11;
   i = 0;
   loop(n,
@@ -256,7 +245,7 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv) (
               : ( dbv = rk_vu_mark_db(i); frac = rk_vu_db2frac(dbv); );
     a  = rk_vu_ang(frac);
     r1 = rkvu_r - 1;
-    r2 = rkvu_r - rkvu_r * ((mode == 1 || i == 0 || i == 1 || i == 7 || i == 10) ? 0.075 : 0.045);
+    r2 = rkvu_r - rkvu_r * ((mode == 1 || i == 0 || i == 1 || i == 7 || i == 10) ? 0.13 : 0.07);
 
     (mode == 0 && dbv >= 0) || (mode == 1 && frac >= 0.55) ?
       gfx_set(rkvu_rd_r, rkvu_rd_g, rkvu_rd_b, 1) :
@@ -264,11 +253,14 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv) (
 
     gfx_line(rk_vu_px(rkvu_cx, r1, a), rk_vu_py(rkvu_cy, r1, a),
              rk_vu_px(rkvu_cx, r2, a), rk_vu_py(rkvu_cy, r2, a), 1);
+    (mode == 1 || i == 0 || i == 1 || i == 7 || i == 10) ?
+      gfx_line(rk_vu_px(rkvu_cx, r1, a) + 1, rk_vu_py(rkvu_cy, r1, a),
+               rk_vu_px(rkvu_cx, r2, a) + 1, rk_vu_py(rkvu_cy, r2, a), 1);
 
     sprintf(#_rkvu_l, "%d", dbv);
     gfx_measurestr(#_rkvu_l, tw, th);
-    lx = rk_vu_px(rkvu_cx, rkvu_r * 1.10, a);
-    ly = rk_vu_py(rkvu_cy, rkvu_r * 1.10, a);
+    lx = rk_vu_px(rkvu_cx, rkvu_r * 1.11, a);
+    ly = rk_vu_py(rkvu_cy, rkvu_r * 1.11, a);
     gfx_x = lx - tw * 0.5; gfx_y = ly - th * 0.5;
     gfx_drawstr(#_rkvu_l);
     i += 1;
@@ -282,8 +274,8 @@ function _rk_vu_arc_fill(frac, slot) local(a0, a1, rr, i, n) (
   a0 = rk_vu_ang(0);
   a1 = rk_vu_ang(frac);
   a1 > a0 ? (
-    rr = rkvu_r * (slot <= 0 ? 0.955 : 0.900);
-    n  = max(2, floor(rkvu_r * 0.016));
+    rr = rkvu_r * (slot <= 0 ? 0.945 : 0.880);
+    n  = max(3, floor(rkvu_r * 0.048));
     gfx_set(rkvu_ar_r, rkvu_ar_g, rkvu_ar_b, 0.92);
     i = 0;
     loop(n, gfx_arc(rkvu_cx, rkvu_cy, rr - i, a0, a1, 1); i += 1; );
@@ -297,20 +289,24 @@ local(a, tipx, tipy, rootx, rooty, i, sx, sy, hw, px, py, n) (
   a = rk_vu_ang(frac);
   tipx  = rk_vu_px(rkvu_cx, rkvu_r * 0.955, a);
   tipy  = rk_vu_py(rkvu_cy, rkvu_r * 0.955, a);
-  rootx = rk_vu_px(rkvu_cx, rkvu_r * 0.04, a);
-  rooty = rk_vu_py(rkvu_cy, rkvu_r * 0.04, a);
+  rootx = rk_vu_px(rkvu_cx, rkvu_r * 0.10, a);
+  rooty = rk_vu_py(rkvu_cy, rkvu_r * 0.10, a);
 
   // Fixed light, upper-left: the offset is constant in the world, so it is
   // the needle's ANGLE that decides how much shadow shows beside it. The
   // offset scales with the meter — a 2px shadow vanishes on a 300px face.
   alpha >= 0.9 ? (
-    sx = rkvu_r * 0.010; sy = rkvu_r * 0.016;
-    gfx_set(0, 0, 0, 0.14);
-    gfx_line(rootx + sx, rooty + sy, tipx + sx, tipy + sy, 1);
+    sx = rkvu_r * 0.012; sy = rkvu_r * 0.020;
+    gfx_set(0, 0, 0, 0.15);
+    i = 0;
+    loop(max(1, wide) + 1,
+      gfx_line(rootx + sx + i, rooty + sy, tipx + sx + i, tipy + sy, 1);
+      i += 1;
+    );
   );
 
   gfx_set(cr, cg, cb, alpha);
-  hw = wide > 1 ? rkvu_r * 0.006 : 0;         // ~1.4px root at r=230; hold = hairline
+  hw = wide > 1 ? rkvu_r * 0.020 : 0;         // hold needle stays a hairline
   px = cos(a); py = sin(a);
   n  = max(1, floor(hw * 2) + 1);
   i  = 0;
@@ -321,6 +317,36 @@ local(a, tipx, tipy, rootx, rooty, i, sx, sy, hw, px, py, n) (
 );
 
 // ── Centre cap, peak LED, label ─────────────────────────────────────────
+// The coil cover: the dome over the movement that the needle emerges from
+// and disappears behind. Built as the UPPER half of a disc, row by row, then
+// squared off down to the bezel — so it never pokes out of the plate however
+// low the pivot sits, and the pivot itself is never seen. (This is also why
+// there is no counterweight tail: on a covered movement it is inside the
+// dome. Draw one and you are drawing something a real meter hides.)
+function _rk_vu_cover() local(R, i, dy, hw, n) (
+  R = rkvu_r * 0.19;
+  n = max(floor(R), 2);
+  gfx_set(0, 0, 0, 0.22);                              // its shadow on the face
+  i = 0;
+  loop(n,
+    dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
+    gfx_rect(rkvu_cx - hw + 2, rkvu_cy - dy + 3, hw * 2, 1);
+    i += 1;
+  );
+  gfx_set(rkvu_cp_r, rkvu_cp_g, rkvu_cp_b, 1);         // the dome
+  i = 0;
+  loop(n,
+    dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
+    gfx_rect(rkvu_cx - hw, rkvu_cy - dy, hw * 2, 1);
+    i += 1;
+  );
+  gfx_rect(rkvu_cx - R, rkvu_cy, R * 2, max(rkvu_fy + rkvu_fh - rkvu_cy, 0));
+  gfx_set(1, 1, 1, 0.14);                              // rim light
+  gfx_arc(rkvu_cx, rkvu_cy, R - 1, -$pi * 0.5, $pi * 0.5, 1);
+  gfx_set(1, 1, 1, 0.06);
+  gfx_arc(rkvu_cx, rkvu_cy, R - 3, -$pi * 0.40, $pi * 0.40, 1);
+);
+
 // Glass. A soft diagonal highlight across the upper-left of the face and
 // nothing else — drawn LAST because it is in front of everything, and kept
 // faint so the ink underneath stays legible.
@@ -338,9 +364,9 @@ function _rk_vu_glass() local(rows, i, t, wdt, a) (
 );
 
 function _rk_vu_led(on) local(lx, ly, lr) (
-  lr = rkvu_r * 0.040;
-  lx = rkvu_cx + rkvu_r * 0.62;
-  ly = rkvu_cy - rkvu_r * 0.30;
+  lr = rkvu_r * 0.055;
+  lx = rkvu_cx + rkvu_r * 0.66;
+  ly = rkvu_cy - rkvu_r * 0.16;
   gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.28);
   gfx_circle(lx, ly, lr * 1.45, 0, 1);
   on ? (
@@ -353,11 +379,11 @@ function _rk_vu_led(on) local(lx, ly, lr) (
 
 function _rk_vu_label(s, fsz) local(tw, th) (
   strlen(s) > 0 ? (
-    gfx_setfont(1, "Arial", floor(fsz * 1.45 + 0.5), 'b');
+    gfx_setfont(1, "Arial", floor(fsz * 1.4 + 0.5), 'b');
     gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.90);
     gfx_measurestr(s, tw, th);
     gfx_x = rkvu_cx - tw * 0.5;
-    gfx_y = rkvu_cy - rkvu_r * 0.46 - th * 0.5;
+    gfx_y = rkvu_cy - rkvu_r * 0.56 - th * 0.5;
     gfx_drawstr(s);
   );
 );
@@ -435,8 +461,8 @@ function rk_vu_sample(x) local(amp, tgt, a) (
 function rk_vu_face(x, y, w, h, mode, theme, label) (
   rk_vu_theme(theme);
   rk_vu_geom(x, y, w, h);
-  rkvu_fsz = max(7, floor(rkvu_r * 0.042 * max(1, gfx_ext_retina) + 0.5));
-  _rk_vu_plate(rkvu_ox, rkvu_oy, rkvu_ow, rkvu_oh);
+  rkvu_fsz = max(8, floor(rkvu_r * 0.135 * max(1, gfx_ext_retina) + 0.5));
+  _rk_vu_plate(x, y, w, h);
   _rk_vu_scale(mode, rkvu_fsz);
   _rk_vu_label(label, rkvu_fsz);
 );
@@ -450,12 +476,12 @@ function rk_vu_ink(pos, hold, mode, slot) local(frac, hfrac) (
   _rk_vu_arc_fill(frac, slot);
   RKVU_HOLD_S > 0 && hfrac > frac + 0.005 ?
     _rk_vu_needle(hfrac, 1, 0.42, rkvu_nd_r, rkvu_nd_g, rkvu_nd_b);
-  _rk_vu_needle(frac, 2, 1, rkvu_nd_r, rkvu_nd_g, rkvu_nd_b);
+  _rk_vu_needle(frac, max(2, floor(rkvu_r * 0.018)), 1,
+                rkvu_nd_r, rkvu_nd_g, rkvu_nd_b);
 );
 
-// LED, then the glass over the lot. Last call in every pattern. (The name
-// keeps its `cap` from when there was a pivot cover to draw; there is not.)
-function rk_vu_cap_led(over) ( _rk_vu_led(over); _rk_vu_glass(); );
+// Cover, LED, then the glass over the lot. Last call in every pattern.
+function rk_vu_cap_led(over) ( _rk_vu_cover(); _rk_vu_led(over); _rk_vu_glass(); );
 
 // One movement, one rect.
 function rk_vu_draw(x, y, w, h, mode, theme, label) (

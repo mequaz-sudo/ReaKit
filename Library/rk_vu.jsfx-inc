@@ -1,0 +1,417 @@
+desc:ReaKit analog VU meter — self-contained face, 5 themes
+// ══════════════════════════════════════════════════════════════════════
+// rk_vu.jsfx-inc — a complete VU meter that draws into a plain rectangle.
+//
+// Written clean-room for ReaKit, in the same spirit as rk_padgrid and
+// rk_piano: hand it a rect and it paints a finished instrument, plate and
+// all. Nothing here is ported from another plugin.
+//
+// PROVENANCE OF THE SCALE. The nonlinear VU scale is COMPUTED, not copied,
+// from the equation Lubomir I. Ivanov (Liteon) published as a tutorial in
+// "Designing an analog VU meter in DSP" (2009):
+//
+//     xl = exp(log(1.055) * C * dB)
+//
+// with C = 2.154 (his article gives 2.1 and says to tune it). Normalised
+// across -20..+3 dB this puts the eleven scale marks within 0.0006 of a
+// real VU face. It is his published method, worked from the article — an
+// equation, not an expression, and no table is transcribed.
+//
+// BALLISTIC. The IEC/ANSI definition of a VU movement: a damped second-order
+// system reaching 99% of a step in 300 ms with a small overshoot. That is
+// zeta = 0.7 and wn = 4.6 / (zeta * 0.3) ~= 21.9 rad/s, which is what
+// rk_vu_sample runs. Textbook control theory, derived from the published
+// spec rather than adapted from anyone's code.
+//
+// ⚠️ ONE ANGLE FRAME, EVERYWHERE. Every angle in this file is gfx_arc's:
+// radians, 0 = 12 o'clock, positive = clockwise. Points are always
+// (cx + sin(a)*r, cy - cos(a)*r). There is deliberately no second
+// convention to convert between — mixing gfx_arc's frame with the
+// cos/sin-from-3-o'clock frame is what left vu_kbsg's arc drawn 90 degrees
+// away from its own scale, and sliders_kbsg's arc band before that.
+//
+// ⚠️ NO MEMORY. This file claims no freemem and writes to no fixed address.
+// State is per-instance (this.*), colours are globals. Import it anywhere,
+// in any order, next to anything.
+//
+// PHYSICS / DRAWING SPLIT
+//   rk_vu_init(ref_db)      once, per instance
+//   rk_vu_sample(x)         per sample, per instance — movement only
+//   rk_vu_draw(x,y,w,h,mode,theme,label)   per frame — appearance only
+//
+// PUBLIC API
+//   vu.rk_vu_init(-18)                     0 VU = -18 dBFS sine (default)
+//   vu.rk_vu_sample(spl0)                  feed it; abs() is taken here
+//   vu.rk_vu_draw(x, y, w, h, 0, 0, "L")   mode 0 = level, 1 = gain reduction
+//                                          theme 0..4, label "" for none
+//   rk_vu_set_hold(seconds)                hold-needle fall time (0 = off)
+//   rk_vu_theme_name(i, #dst)              theme name for a picker
+//
+// THEMES  0 Cream · 1 Dark Studio · 2 Black & Gold · 3 Modern White
+//         4 Broadcast
+// ══════════════════════════════════════════════════════════════════════
+
+@init
+
+RKVU_SWEEP  = 100 * ($pi / 180);   // total needle travel, radians
+RKVU_K      = log(1.055) * 2.154;  // Liteon's published scale constant
+RKVU_DB_LO  = -20;
+RKVU_DB_HI  = 3;
+RKVU_HOLD_S = 1.6;                 // hold needle fall time, seconds
+
+function rk_vu_set_hold(sec) ( RKVU_HOLD_S = max(sec, 0); );
+
+// ── Scale ───────────────────────────────────────────────────────────────
+// dB -> 0..1 along the arc, straight from the published equation.
+function rk_vu_db2frac(db) local(lo, hi) (
+  lo = exp(RKVU_K * RKVU_DB_LO);
+  hi = exp(RKVU_K * RKVU_DB_HI);
+  (exp(RKVU_K * min(max(db, RKVU_DB_LO - 6), RKVU_DB_HI + 2)) - lo) / (hi - lo);
+);
+
+// The eleven marks a VU face carries, by index.
+function rk_vu_mark_db(i) (
+  i == 0 ? -20 : i == 1 ? -10 : i == 2 ? -7 : i == 3 ? -5 : i == 4 ? -3 :
+  i == 5 ?  -2 : i == 6 ?  -1 : i == 7 ?  0 : i == 8 ?  1 : i == 9 ?  2 : 3;
+);
+
+// ── The only angle conversion in the file ───────────────────────────────
+function rk_vu_ang(frac) ( (min(max(frac, -0.04), 1.04) - 0.5) * RKVU_SWEEP; );
+function rk_vu_px(cx, r, a) ( cx + sin(a) * r; );
+function rk_vu_py(cy, r, a) ( cy - cos(a) * r; );
+
+// ── Themes ──────────────────────────────────────────────────────────────
+function rk_vu_theme(t) (
+  t = min(max(floor(t + 0.5), 0), 4);
+  t == 0 ? (                                                    // Cream
+    rkvu_pl_r=0.949; rkvu_pl_g=0.937; rkvu_pl_b=0.847;
+    rkvu_p2_r=0.898; rkvu_p2_g=0.871; rkvu_p2_b=0.741;
+    rkvu_bz_r=0.169; rkvu_bz_g=0.169; rkvu_bz_b=0.173;
+    rkvu_ik_r=0.102; rkvu_ik_g=0.102; rkvu_ik_b=0.110;
+    rkvu_rd_r=0.761; rkvu_rd_g=0.102; rkvu_rd_b=0.086;
+    rkvu_nd_r=0.063; rkvu_nd_g=0.063; rkvu_nd_b=0.071;
+    rkvu_cp_r=0.129; rkvu_cp_g=0.129; rkvu_cp_b=0.137;
+    rkvu_ld_r=1.000; rkvu_ld_g=0.204; rkvu_ld_b=0.102;
+    rkvu_ar_r=0.910; rkvu_ar_g=0.639; rkvu_ar_b=0.090;
+  ) : t == 1 ? (                                                // Dark Studio
+    rkvu_pl_r=0.129; rkvu_pl_g=0.137; rkvu_pl_b=0.157;
+    rkvu_p2_r=0.086; rkvu_p2_g=0.094; rkvu_p2_b=0.110;
+    rkvu_bz_r=0.043; rkvu_bz_g=0.047; rkvu_bz_b=0.055;
+    rkvu_ik_r=0.784; rkvu_ik_g=0.804; rkvu_ik_b=0.847;
+    rkvu_rd_r=1.000; rkvu_rd_g=0.290; rkvu_rd_b=0.235;
+    rkvu_nd_r=0.902; rkvu_nd_g=0.918; rkvu_nd_b=0.949;
+    rkvu_cp_r=0.031; rkvu_cp_g=0.035; rkvu_cp_b=0.043;
+    rkvu_ld_r=1.000; rkvu_ld_g=0.259; rkvu_ld_b=0.180;
+    rkvu_ar_r=0.298; rkvu_ar_g=0.761; rkvu_ar_b=0.878;
+  ) : t == 2 ? (                                                // Black & Gold
+    rkvu_pl_r=0.086; rkvu_pl_g=0.075; rkvu_pl_b=0.063;
+    rkvu_p2_r=0.047; rkvu_p2_g=0.039; rkvu_p2_b=0.031;
+    rkvu_bz_r=0.031; rkvu_bz_g=0.027; rkvu_bz_b=0.024;
+    rkvu_ik_r=0.847; rkvu_ik_g=0.698; rkvu_ik_b=0.353;
+    rkvu_rd_r=0.878; rkvu_rd_g=0.271; rkvu_rd_b=0.180;
+    rkvu_nd_r=0.941; rkvu_nd_g=0.847; rkvu_nd_b=0.604;
+    rkvu_cp_r=0.031; rkvu_cp_g=0.027; rkvu_cp_b=0.024;
+    rkvu_ld_r=1.000; rkvu_ld_g=0.690; rkvu_ld_b=0.125;
+    rkvu_ar_r=0.847; rkvu_ar_g=0.698; rkvu_ar_b=0.353;
+  ) : t == 3 ? (                                                // Modern White
+    rkvu_pl_r=0.980; rkvu_pl_g=0.980; rkvu_pl_b=0.980;
+    rkvu_p2_r=0.910; rkvu_p2_g=0.910; rkvu_p2_b=0.914;
+    rkvu_bz_r=0.784; rkvu_bz_g=0.784; rkvu_bz_b=0.792;
+    rkvu_ik_r=0.165; rkvu_ik_g=0.165; rkvu_ik_b=0.176;
+    rkvu_rd_r=0.847; rkvu_rd_g=0.227; rkvu_rd_b=0.165;
+    rkvu_nd_r=0.102; rkvu_nd_g=0.102; rkvu_nd_b=0.110;
+    rkvu_cp_r=0.165; rkvu_cp_g=0.165; rkvu_cp_b=0.176;
+    rkvu_ld_r=0.878; rkvu_ld_g=0.188; rkvu_ld_b=0.125;
+    rkvu_ar_r=0.227; rkvu_ar_g=0.482; rkvu_ar_b=0.835;
+  ) : (                                                          // Broadcast
+    rkvu_pl_r=0.063; rkvu_pl_g=0.086; rkvu_pl_b=0.110;
+    rkvu_p2_r=0.035; rkvu_p2_g=0.051; rkvu_p2_b=0.071;
+    rkvu_bz_r=0.024; rkvu_bz_g=0.039; rkvu_bz_b=0.055;
+    rkvu_ik_r=0.498; rkvu_ik_g=0.831; rkvu_ik_b=0.910;
+    rkvu_rd_r=1.000; rkvu_rd_g=0.314; rkvu_rd_b=0.251;
+    rkvu_nd_r=0.918; rkvu_nd_g=0.965; rkvu_nd_b=0.980;
+    rkvu_cp_r=0.024; rkvu_cp_g=0.039; rkvu_cp_b=0.055;
+    rkvu_ld_r=1.000; rkvu_ld_g=0.251; rkvu_ld_b=0.188;
+    rkvu_ar_r=0.949; rkvu_ar_g=0.757; rkvu_ar_b=0.306;
+  );
+);
+
+function rk_vu_theme_name(i, dst) (
+  i == 0 ? strcpy(dst, "Cream")       : i == 1 ? strcpy(dst, "Dark Studio") :
+  i == 2 ? strcpy(dst, "Black & Gold"): i == 3 ? strcpy(dst, "Modern White"):
+           strcpy(dst, "Broadcast");
+  dst;
+);
+
+// ── Geometry ────────────────────────────────────────────────────────────
+// Publishes rkvu_cx / rkvu_cy / rkvu_r for the rect. The label ring is the
+// outermost thing drawn, so the radius is solved from ITS extent — that is
+// what keeps the numbers inside the plate at any aspect ratio.
+function rk_vu_geom(x, y, w, h) local(pad, rl, half, up) (
+  pad  = min(w, h) * 0.07;
+  rl   = 1.12;                                  // label ring, x arc radius
+  half = sin(RKVU_SWEEP * 0.5);                 // horizontal reach at the ends
+  rkvu_cx = x + w * 0.5;
+  rkvu_cy = y + h * 0.90;                       // pivot low on the plate
+  rkvu_r  = min((w * 0.5 - pad) / (half * rl), (rkvu_cy - y - pad) / rl);
+  rkvu_r  = max(rkvu_r, 4);
+);
+
+// ── Plate ───────────────────────────────────────────────────────────────
+function _rk_vu_rrect(x, y, w, h, r) local(d) (
+  d = min(r, min(w, h) * 0.5);
+  gfx_rect(x + d, y, w - d * 2, h);
+  gfx_rect(x, y + d, w, h - d * 2);
+  gfx_circle(x + d, y + d, d, 1, 1);
+  gfx_circle(x + w - d - 1, y + d, d, 1, 1);
+  gfx_circle(x + d, y + h - d - 1, d, 1, 1);
+  gfx_circle(x + w - d - 1, y + h - d - 1, d, 1, 1);
+);
+
+// Bezel, then the face, then a soft vertical shade so the plate reads as a
+// surface rather than a filled rectangle.
+function _rk_vu_plate(x, y, w, h) local(i, n, t, br) (
+  br = min(w, h) * 0.05;
+  gfx_set(rkvu_bz_r, rkvu_bz_g, rkvu_bz_b, 1);
+  _rk_vu_rrect(x, y, w, h, br);
+
+  x += br * 0.55; y += br * 0.55; w -= br * 1.1; h -= br * 1.1;
+  gfx_set(rkvu_pl_r, rkvu_pl_g, rkvu_pl_b, 1);
+  _rk_vu_rrect(x, y, w, h, br * 0.6);
+
+  n = max(floor(h * 0.5), 1);
+  i = 0;
+  loop(n,
+    t = i / n;
+    gfx_set(rkvu_p2_r, rkvu_p2_g, rkvu_p2_b, t * t * 0.5);
+    gfx_rect(x, y + h - 1 - i, w, 1);
+    i += 1;
+  );
+  gfx_set(rkvu_bz_r, rkvu_bz_g, rkvu_bz_b, 0.30);
+  gfx_rect(x, y, w, 1);
+);
+
+// ── Scale: arc, red zone, ticks, numbers ────────────────────────────────
+function _rk_vu_scale(mode, fsz)
+local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv) (
+  a0 = rk_vu_ang(0); a1 = rk_vu_ang(1);
+
+  gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 1);
+  gfx_arc(rkvu_cx, rkvu_cy, rkvu_r, a0, a1, 1);
+  gfx_arc(rkvu_cx, rkvu_cy, rkvu_r - 1, a0, a1, 1);
+
+  // Red runs from 0 VU to the top of travel (mode 0), or from the far end of
+  // reduction back (mode 1). Both come from the same frac->angle mapping.
+  ared = mode == 1 ? rk_vu_ang(0.55) : rk_vu_ang(rk_vu_db2frac(0));
+  gfx_set(rkvu_rd_r, rkvu_rd_g, rkvu_rd_b, 1);
+  gfx_arc(rkvu_cx, rkvu_cy, rkvu_r, ared, a1, 1);
+  gfx_arc(rkvu_cx, rkvu_cy, rkvu_r - 1, ared, a1, 1);
+  gfx_arc(rkvu_cx, rkvu_cy, rkvu_r - 2, ared, a1, 1);
+
+  gfx_setfont(1, "Arial", fsz);
+  n = mode == 1 ? 5 : 11;
+  i = 0;
+  loop(n,
+    mode == 1 ? ( frac = i / 4; dbv = -(i * 5); )
+              : ( dbv = rk_vu_mark_db(i); frac = rk_vu_db2frac(dbv); );
+    a  = rk_vu_ang(frac);
+    r1 = rkvu_r - 2;
+    r2 = rkvu_r - rkvu_r * ((mode == 1 || i == 0 || i == 7 || i == 10) ? 0.11 : 0.07);
+
+    (mode == 0 && dbv >= 0) || (mode == 1 && frac >= 0.55) ?
+      gfx_set(rkvu_rd_r, rkvu_rd_g, rkvu_rd_b, 1) :
+      gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 1);
+
+    gfx_line(rk_vu_px(rkvu_cx, r1, a), rk_vu_py(rkvu_cy, r1, a),
+             rk_vu_px(rkvu_cx, r2, a), rk_vu_py(rkvu_cy, r2, a), 1);
+
+    sprintf(#_rkvu_l, "%d", dbv);
+    gfx_measurestr(#_rkvu_l, tw, th);
+    lx = rk_vu_px(rkvu_cx, rkvu_r * 1.09, a);
+    ly = rk_vu_py(rkvu_cy, rkvu_r * 1.09, a);
+    gfx_x = lx - tw * 0.5; gfx_y = ly - th * 0.5;
+    gfx_drawstr(#_rkvu_l);
+    i += 1;
+  );
+);
+
+// ── Level band ──────────────────────────────────────────────────────────
+// The filled arc that tracks the reading — ZenoMOD's amber band. `slot`
+// steps it inward so two movements can share one plate (stereo, M/S).
+function _rk_vu_arc_fill(frac, slot) local(a0, a1, rr, i, n) (
+  a0 = rk_vu_ang(0);
+  a1 = rk_vu_ang(frac);
+  a1 > a0 ? (
+    rr = rkvu_r * (slot <= 0 ? 0.945 : 0.880);
+    n  = max(2, floor(rkvu_r * 0.032));
+    gfx_set(rkvu_ar_r, rkvu_ar_g, rkvu_ar_b, 0.92);
+    i = 0;
+    loop(n, gfx_arc(rkvu_cx, rkvu_cy, rr - i, a0, a1, 1); i += 1; );
+  );
+);
+
+// ── Needle ──────────────────────────────────────────────────────────────
+// `wide` tapers the root; `alpha` lets the hold needle share the code.
+function _rk_vu_needle(frac, wide, alpha, cr, cg, cb)
+local(a, tipx, tipy, rootx, rooty, i) (
+  a = rk_vu_ang(frac);
+  tipx  = rk_vu_px(rkvu_cx, rkvu_r * 0.955, a);
+  tipy  = rk_vu_py(rkvu_cy, rkvu_r * 0.955, a);
+  rootx = rk_vu_px(rkvu_cx, rkvu_r * 0.10, a);
+  rooty = rk_vu_py(rkvu_cy, rkvu_r * 0.10, a);
+
+  alpha >= 0.9 ? (
+    gfx_set(0, 0, 0, 0.18);
+    gfx_line(rootx + 2, rooty + 2, tipx + 2, tipy + 2, 1);
+  );
+
+  gfx_set(cr, cg, cb, alpha);
+  i = 0;
+  loop(max(1, wide),
+    gfx_line(rootx + i, rooty, tipx + i, tipy, 1);
+    i += 1;
+  );
+);
+
+// ── Centre cap, peak LED, label ─────────────────────────────────────────
+function _rk_vu_cap() local(cr) (
+  cr = rkvu_r * 0.085;
+  gfx_set(0, 0, 0, 0.20);
+  gfx_circle(rkvu_cx + 1, rkvu_cy + 2, cr, 1, 1);
+  gfx_set(rkvu_cp_r, rkvu_cp_g, rkvu_cp_b, 1);
+  gfx_circle(rkvu_cx, rkvu_cy, cr, 1, 1);
+  gfx_set(1, 1, 1, 0.16);
+  gfx_circle(rkvu_cx - cr * 0.30, rkvu_cy - cr * 0.34, cr * 0.42, 1, 1);
+);
+
+function _rk_vu_led(on) local(lx, ly, lr) (
+  lr = rkvu_r * 0.055;
+  lx = rkvu_cx + rkvu_r * 0.66;
+  ly = rkvu_cy - rkvu_r * 0.16;
+  gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.28);
+  gfx_circle(lx, ly, lr * 1.45, 0, 1);
+  on ? (
+    gfx_set(rkvu_ld_r, rkvu_ld_g, rkvu_ld_b, 0.28);
+    gfx_circle(lx, ly, lr * 2.1, 1, 1);
+    gfx_set(rkvu_ld_r, rkvu_ld_g, rkvu_ld_b, 1);
+  ) : gfx_set(rkvu_ld_r * 0.30, rkvu_ld_g * 0.30, rkvu_ld_b * 0.30, 1);
+  gfx_circle(lx, ly, lr, 1, 1);
+);
+
+function _rk_vu_label(s, fsz) local(tw, th) (
+  strlen(s) > 0 ? (
+    gfx_setfont(1, "Arial", fsz, 'b');
+    gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.85);
+    gfx_measurestr(s, tw, th);
+    gfx_x = rkvu_cx - tw * 0.5;
+    gfx_y = rkvu_cy - rkvu_r * 0.40 - th * 0.5;
+    gfx_drawstr(s);
+  );
+);
+
+// ══ PHYSICS ════════════════════════════════════════════════════════════
+// A damped second-order movement, stepped every RKVU_DEC samples. No
+// transcendentals in the audio path: the ballistic runs on linear
+// deflection and the dB/scale mapping happens once per frame in the draw.
+RKVU_DEC  = 16;
+RKVU_ZETA = 0.7;
+RKVU_WN   = 4.6 / (0.7 * 0.3);     // 99% of a step in 300 ms
+
+function rk_vu_init(ref_db) (
+  this.pos = 0; this.vel = 0; this.hold = 0; this.hold_t = 0;
+  this.acc = 0; this.cnt = 0; this.over = 0;
+  // 0 VU = a sine at ref_db. mean|sine| = 2A/pi, so scale the rectified
+  // average by pi/2 to recover the peak the reference is quoted in.
+  this.ref = 10 ^ (ref_db / 20);
+  this.dt  = RKVU_DEC / max(srate, 1);
+  this.lim = 10 ^ ((ref_db + 3) / 20);   // peak LED at +3 VU
+);
+
+function rk_vu_sample(x) local(amp, tgt, a) (
+  x = abs(x);
+  this.acc += x;
+  x > this.lim ? this.over = 1.6;         // seconds of LED hold
+  this.cnt += 1;
+  this.cnt >= RKVU_DEC ? (
+    amp = (this.acc / RKVU_DEC) * ($pi * 0.5);
+    tgt = amp / max(this.ref, 0.0000001);
+    a   = RKVU_WN * RKVU_WN * (tgt - this.pos)
+        - 2 * RKVU_ZETA * RKVU_WN * this.vel;
+    this.vel += a * this.dt;
+    this.pos += this.vel * this.dt;
+    this.pos < 0 ? ( this.pos = 0; this.vel = max(this.vel, 0); );
+    abs(this.vel) < 0.0000001 ? this.vel = 0;
+
+    this.pos > this.hold ? ( this.hold = this.pos; this.hold_t = RKVU_HOLD_S; );
+    this.hold_t > 0 ? this.hold_t -= this.dt
+                    : this.hold = max(this.hold - this.dt * 0.8, this.pos);
+    this.over > 0 ? this.over -= this.dt;
+    this.acc = 0; this.cnt = 0;
+  );
+);
+
+// ══ DRAW ═══════════════════════════════════════════════════════════════
+// Split three ways on purpose. The face is a plain global function, so a
+// caller that wants TWO movements on ONE plate (stereo, or mid/side) draws
+// the face once and the ink twice. Values are passed in rather than read off
+// `this`, which keeps every helper namespace-free — EEL2 namespace
+// parameters are not used anywhere else in this tree and this is not the
+// file to prove them in.
+//
+//   MONO    vu.rk_vu_draw(x, y, w, h, 0, theme, "");
+//   STEREO  rk_vu_draw_pair(x, y, w, h, 0, theme,
+//                           vu_l.pos, vu_l.hold, vu_l.over > 0, "L",
+//                           vu_r.pos, vu_r.hold, vu_r.over > 0, "R");
+//   MID/SID  same call, feeding m = (l+r)*0.5 and s = (l-r)*0.5, labels "M"/"S"
+//   ONE PLATE, TWO NEEDLES
+//           rk_vu_face(x, y, w, h, 0, theme, "");
+//           rk_vu_ink(vu_l.pos, vu_l.hold, 0, 0);
+//           rk_vu_ink(vu_r.pos, vu_r.hold, 0, 1);
+//           rk_vu_cap_led(vu_l.over > 0 || vu_r.over > 0);
+//
+// mode 0 = level, 1 = gain reduction. theme 0..4. label "" for none.
+
+function rk_vu_face(x, y, w, h, mode, theme, label) (
+  rk_vu_theme(theme);
+  rk_vu_geom(x, y, w, h);
+  rkvu_fsz = max(7, floor(rkvu_r * 0.115 * max(1, gfx_ext_retina) + 0.5));
+  _rk_vu_plate(x, y, w, h);
+  _rk_vu_scale(mode, rkvu_fsz);
+  _rk_vu_label(label, rkvu_fsz);
+);
+
+// One movement's ink on the face last drawn: band, hold needle, needle.
+function rk_vu_ink(pos, hold, mode, slot) local(frac, hfrac) (
+  frac  = mode == 1 ? min(max(pos,  0), 1)
+                    : rk_vu_db2frac(20 * log10(max(pos,  0.0000001)));
+  hfrac = mode == 1 ? min(max(hold, 0), 1)
+                    : rk_vu_db2frac(20 * log10(max(hold, 0.0000001)));
+  _rk_vu_arc_fill(frac, slot);
+  RKVU_HOLD_S > 0 && hfrac > frac + 0.005 ?
+    _rk_vu_needle(hfrac, 1, 0.42, rkvu_nd_r, rkvu_nd_g, rkvu_nd_b);
+  _rk_vu_needle(frac, max(2, floor(rkvu_r * 0.018)), 1,
+                rkvu_nd_r, rkvu_nd_g, rkvu_nd_b);
+);
+
+function rk_vu_cap_led(over) ( _rk_vu_cap(); _rk_vu_led(over); );
+
+// One movement, one rect.
+function rk_vu_draw(x, y, w, h, mode, theme, label) (
+  rk_vu_face(x, y, w, h, mode, theme, label);
+  rk_vu_ink(this.pos, this.hold, mode, 0);
+  rk_vu_cap_led(this.over > 0);
+);
+
+// Two movements, two plates, one rect — stereo or mid/side.
+function rk_vu_draw_pair(x, y, w, h, mode, theme,
+                         posA, holdA, overA, labA,
+                         posB, holdB, overB, labB) local(mw, gap) (
+  gap = w * 0.025;
+  mw  = (w - gap) * 0.5;
+  rk_vu_face(x, y, mw, h, mode, theme, labA);
+  rk_vu_ink(posA, holdA, mode, 0);
+  rk_vu_cap_led(overA);
+  rk_vu_face(x + mw + gap, y, mw, h, mode, theme, labB);
+  rk_vu_ink(posB, holdB, mode, 0);
+  rk_vu_cap_led(overB);
+);

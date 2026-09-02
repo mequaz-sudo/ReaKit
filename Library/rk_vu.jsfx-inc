@@ -46,7 +46,11 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 //   rk_vu_draw(x,y,w,h,mode,theme,label)   per frame — appearance only
 //
 // PUBLIC API
-//   vu.rk_vu_init(-18)                     0 VU = -18 dBFS sine (default)
+//   vu.rk_vu_init(0)                       0 VU = 0 dBFS: reads like REAPER's meters,
+//                                          a -16 dBFS signal shows -16. THE DEFAULT.
+//                                          -18 = hardware calibration (EBU / a real
+//                                          1176 in a DAW), -20 SMPTE. Product decision
+//                                          2026-09-01: 0 unless it is a hardware model.
 //   vu.rk_vu_sample(spl0)                  feed it; abs() is taken here
 //   vu.rk_vu_draw(x, y, w, h, 0, 0, "L")   mode 0 = level, 1 = gain reduction
 //                                          theme 0..4, label "" for none
@@ -375,7 +379,7 @@ function _rk_vu_led(on) local(lx, ly, lr) (
 
 function _rk_vu_label(s, fsz) local(tw, th) (
   strlen(s) > 0 ? (
-    gfx_setfont(1, "Arial", floor(fsz * 1.9 + 0.5), 'b');
+    gfx_setfont(1, "Arial", floor(fsz * 1.4 + 0.5), 'b');
     gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.90);
     gfx_measurestr(s, tw, th);
     gfx_x = rkvu_cx - tw * 0.5;
@@ -403,8 +407,8 @@ function rk_vu_init(ref_db) (
 );
 
 // Change the reference on a running meter. 0 VU = a sine at ref_db; the peak
-// LED trips 3 dB above it. -18 is EBU / most hardware in a DAW, -20 SMPTE,
-// and 0 makes the face read like REAPER's own track meter.
+// LED trips 3 dB above it. 0 reads like REAPER's own track meter (the
+// default); -18 is EBU / most hardware in a DAW, -20 SMPTE.
 function rk_vu_set_ref(ref_db) (
   this.ref = 10 ^ (ref_db / 20);
   this.lim = 10 ^ ((ref_db + 3) / 20);

@@ -53,6 +53,7 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 //   rk_vu_draw_pair(x,y,w,h,mode,theme, posA,holdA,overA,labA, posB,...)
 //                                          stereo or mid/side, two plates
 //   rk_vu_face / rk_vu_ink / rk_vu_cap_led two needles on ONE plate
+//   vu.rk_vu_set_ref(db)                   move 0 VU without resetting the needle
 //   rk_vu_set_hold(seconds)                hold-needle fall time (0 = off)
 //   rk_vu_theme_name(i, #dst)              theme name for a picker
 //
@@ -399,6 +400,14 @@ function rk_vu_init(ref_db) (
   this.ref = 10 ^ (ref_db / 20);
   this.dt  = RKVU_DEC / max(srate, 1);
   this.lim = 10 ^ ((ref_db + 3) / 20);   // peak LED at +3 VU
+);
+
+// Change the reference on a running meter. 0 VU = a sine at ref_db; the peak
+// LED trips 3 dB above it. -18 is EBU / most hardware in a DAW, -20 SMPTE,
+// and 0 makes the face read like REAPER's own track meter.
+function rk_vu_set_ref(ref_db) (
+  this.ref = 10 ^ (ref_db / 20);
+  this.lim = 10 ^ ((ref_db + 3) / 20);
 );
 
 function rk_vu_sample(x) local(amp, tgt, a) (

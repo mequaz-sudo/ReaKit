@@ -59,6 +59,11 @@ desc:ReaKit analog VU meter — self-contained face, 20 themes
 //   vu.rk_vu_init_gr() / vu.rk_vu_sample_gr(gain)   gain-reduction meter: feed
 //                                          LINEAR gain, 1.0 = none — vu_kbsg's
 //                                          vu_gr_sample contract. Draw with mode 1.
+//                                          The movement runs in dB: `pos` and
+//                                          `hold` ARE the reduction in dB (0 =
+//                                          none), so a readout is just -vu.pos.
+//   rk_vu_gain2db(g)                       linear gain -> dB of reduction, no
+//                                          transcendental (safe in @sample)
 //   vu.rk_vu_draw(x, y, w, h, 0, 0, "L")   mode 0 = level, 1 = gain reduction
 //                                          theme 0..19 (-1 host), label "" for none
 //   vu.rk_vu_draw_at(cx, cy, r, mode, theme, label)   vu_kbsg's centre+radius box
@@ -100,6 +105,7 @@ RKVU_K      = log(10) / 20;        // exp(K*dB) = 10^(dB/20): linear travel
 RKVU_DB_LO  = -20;
 RKVU_DB_HI  = 3;
 RKVU_HOLD_S = 1.6;                 // hold needle fall time, seconds
+RKVU_GR_FALL = 16;                 // GR hold needle fall rate, dB per second
 rkvu_hold_style = 1;               // default for callers that draw ink themselves
 rkvu_text_scale = 1;
 
@@ -336,19 +342,23 @@ function _rk_vu_plate(x, y, w, h) local(i, n, t, br) (
 // ── Scale: arc, red zone, ticks, numbers ────────────────────────────────
 function _rk_vu_scale(mode, fsz)
 local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv,
-      fmin, w2, w3, w7, ring, tier, minor, mid, show) (
+      air, w2, w3, w7, w10, w20, ring, tier, minor, mid, show) (
   a0 = rk_vu_ang(0); a1 = rk_vu_ang(1);
 
-  // which numerals fit: measure, don't guess. All numerals are ONE size; a
-  // tier drops the minors (-2 -1 1 2), then the mids (-7 -5 -3), never shrinks
-  // them. Neighbours may touch by up to 0.15 of the font before that happens.
+  // Which numerals fit: measure, don't guess. All numerals are ONE size; a
+  // tier drops the minors (-2 -1 1 2), then the mids (-7 -5 -3), then swaps
+  // -10 for a lone -5 (tier 3: -20 -5 0 3), never shrinks them. A numeral is kept only with clear AIR beside its
+  // neighbour (0.35 of the font): the earlier rule tolerated a small overlap,
+  // and at 8 px that read as one smear on the Drum Strip's embedded face.
   gfx_setfont(1, "Arial", fsz, 'b');
   gfx_measurestr("-3", w3, th); gfx_measurestr("-7", w7, th); gfx_measurestr("-2", w2, th);
+  gfx_measurestr("-20", w20, th); gfx_measurestr("-10", w10, th);
   ring = RKVU_SWEEP * rkvu_r * 1.11;            // arc length of the label ring
-  fmin = fsz * 0.15;                            // allowed overlap, px
+  air  = fsz * 0.35;                            // clear space between neighbours, px
   tier = 0;
-  (w3 + w2) * 0.5 - fmin > (rk_vu_db2frac(-2) - rk_vu_db2frac(-3)) * ring ? tier = 1;
-  tier == 1 && (w7 + w7) * 0.5 - fmin > (rk_vu_db2frac(-5) - rk_vu_db2frac(-7)) * ring ? tier = 2;
+  (w3 + w2) * 0.5 + air > (rk_vu_db2frac(-2) - rk_vu_db2frac(-3)) * ring ? tier = 1;
+  tier == 1 && (w7 + w7) * 0.5 + air > (rk_vu_db2frac(-5) - rk_vu_db2frac(-7)) * ring ? tier = 2;
+  tier == 2 && (w20 + w10) * 0.5 + air > (rk_vu_db2frac(-10) - rk_vu_db2frac(-20)) * ring ? tier = 3;
 
   gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 1);
   gfx_arc(rkvu_cx, rkvu_cy, rkvu_r, a0, a1, 1);
@@ -386,7 +396,11 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv,
 
     minor = mode == 0 && (i == 5 || i == 6 || i == 8 || i == 9);   // -2 -1 1 2
     mid   = mode == 0 && (i == 2 || i == 3 || i == 4);             // -7 -5 -3
-    show  = minor ? tier == 0 : mid ? tier < 2 : 1;
+    // tier 3 (the Drum Strip's embedded face): -20 and -10 sit too close on the
+    // log scale, so -10 goes and -5 comes back as the one numeral in between.
+    show  = minor ? tier == 0
+          : mid   ? (tier < 2 || (tier == 3 && i == 3))
+          : (mode == 0 && i == 1) ? tier < 3 : 1;
     show ? (
       gfx_setfont(1, "Arial", fsz, 'b');
       sprintf(#_rkvu_l, "%d", dbv);
@@ -620,9 +634,9 @@ function rk_vu_set_ref(ref_db) (
 // without changing what it passes. The needle rests at 0 on the left and
 // swings right with reduction — the dedicated-GR-scale convention vu_kbsg
 // used, not the 1176's rest-at-0-VU-and-drop-left. Hold tracks the DEEPEST
-// reduction. No transcendentals here: the dB mapping happens in the draw.
+// reduction. No transcendentals here: rk_vu_gain2db is a series.
 function rk_vu_init_gr() (
-  this.pos = 1; this.vel = 0; this.hold = 1; this.hold_t = 0;
+  this.pos = 0; this.vel = 0; this.hold = 0; this.hold_t = 0;   // dB of reduction, 0 = rest
   this.acc = 0; this.cnt = 0; this.over = 0;
   this.ref = 1; this.lim = 2;              // LED never trips on a GR meter
   this.dt  = RKVU_DEC / max(srate, 1);
@@ -630,25 +644,46 @@ function rk_vu_init_gr() (
   this.legacy = 0;
   this.gr  = 1;                            // marks the instance as GR
   this.led_hold = 1.6; this.pk_hold = -1; this.speed = 1; this.pk_open = 0;
+  this.hold_style = 1;                     // the thin needle that falls behind the main one
+  this.readout = 0; this.warn_on = 0;      // same fresh state rk_vu_init leaves
 );
 
+// Linear gain -> dB of reduction with no transcendental: double the value
+// (6.0206 dB each time, at most eight) until it sits in [0.5, 1), then the
+// atanh series for ln on that span (|t| <= 1/3, five terms, under 0.0002 dB).
+// Floors at 48 dB. Defined here because rk_vu_sample_gr runs per sample.
+function rk_vu_gain2db(g) local(k, m, t, t2, l) (
+  g <= 0.00390625 ? 48.1648 : g >= 1 ? 0 : (
+    k = 0; m = g;
+    loop(8, m < 0.5 ? ( m *= 2; k += 1; ); );
+    t  = (m - 1) / (m + 1); t2 = t * t;
+    l  = 2 * t * (1 + t2 * (0.333333333 + t2 * (0.2 + t2 * (0.142857143 + t2 * 0.111111111))));
+    6.02059991 * k - 8.68588964 * l;
+  );
+);
+
+// The GR scale is LINEAR IN dB (0, -5, -10, -15, -20 evenly spaced), so the
+// movement runs in dB: that is the only way its 300 ms / 1.2% overshoot mean
+// the same thing on this face as on the level face. Running it on linear
+// gain measured 314 ms and +1.0 dB of overshoot on a 20 dB step. The block
+// detector keeps the DEEPEST gain (the peak of reduction), converted once
+// per 16 samples.
 function rk_vu_sample_gr(gain) local(tgt, a) (
   gain = min(max(gain, 0), 1);
   this.acc = this.cnt == 0 ? gain : min(this.acc, gain);   // deepest in the block
   this.cnt += 1;
   this.cnt >= RKVU_DEC ? (
-    tgt = this.acc;
+    tgt = rk_vu_gain2db(this.acc);
     a   = this.wn * this.wn * (tgt - this.pos)
         - 2 * this.zeta * this.wn * this.vel;
     this.vel += a * this.dt;
     this.pos += this.vel * this.dt;
-    this.pos > 1 ? ( this.pos = 1; this.vel = min(this.vel, 0); );
-    this.pos < 0 ? ( this.pos = 0; this.vel = max(this.vel, 0); );
+    this.pos < 0 ? ( this.pos = 0; this.vel = max(this.vel, 0); );   // the rest peg
     abs(this.vel) < 0.0000001 ? this.vel = 0;
 
-    this.pos < this.hold ? ( this.hold = this.pos; this.hold_t = RKVU_HOLD_S; );
+    this.pos > this.hold ? ( this.hold = this.pos; this.hold_t = RKVU_HOLD_S; );
     this.hold_t > 0 ? this.hold_t -= this.dt
-                    : this.hold = min(this.hold + this.dt * 0.8, this.pos);
+                    : this.hold = max(this.hold - this.dt * RKVU_GR_FALL, this.pos);
     this.cnt = 0;
   );
 );
@@ -701,7 +736,7 @@ function rk_vu_sample(x) local(amp, tgt, a) (
 //           rk_vu_ink(vu_r.pos, vu_r.hold, 0, 1);
 //           rk_vu_cap_led(vu_l.over > 0 || vu_r.over > 0);
 //
-// mode 0 = level, 1 = gain reduction. theme 0..4. label "" for none.
+// mode 0 = level, 1 = gain reduction. theme 0..19 (-1 host). label "" for none.
 
 function rk_vu_face(x, y, w, h, mode, theme, label) (
   theme >= 0 ? rk_vu_theme(theme);      // -1: the host set the rkvu_* colours itself
@@ -713,12 +748,12 @@ function rk_vu_face(x, y, w, h, mode, theme, label) (
 );
 
 // One movement's ink on the face last drawn: band, hold needle, needle.
-// In GR mode `pos`/`hold` are linear GAIN and the scale is 0..-20 dB of
-// reduction, linear in dB, so 0.5 (6 dB) sits at 0.3 of the travel.
+// In GR mode `pos`/`hold` are dB of reduction and the scale is 0..20 dB,
+// linear in dB, so 6 dB sits at 0.3 of the travel.
 function rk_vu_ink(pos, hold, mode, slot) local(frac, hfrac) (
-  frac  = mode == 1 ? min(max(-20 * log10(max(pos,  0.01)) / 20, 0), 1)
+  frac  = mode == 1 ? min(max(pos  / 20, 0), 1)
                     : rk_vu_db2frac(20 * log10(max(pos,  0.0000001)));
-  hfrac = mode == 1 ? min(max(-20 * log10(max(hold, 0.01)) / 20, 0), 1)
+  hfrac = mode == 1 ? min(max(hold / 20, 0), 1)
                     : rk_vu_db2frac(20 * log10(max(hold, 0.0000001)));
   // rkvu_hold_style: 0 none, 1 needle, 2 arc (band to the held value), 3 both.
   // rk_vu_draw sets it from the instance; pair callers set it themselves.

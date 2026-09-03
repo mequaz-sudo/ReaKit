@@ -61,6 +61,8 @@ desc:ReaKit analog VU meter — self-contained face, 20 themes
 //                                          vu_gr_sample contract. Draw with mode 1.
 //   vu.rk_vu_draw(x, y, w, h, 0, 0, "L")   mode 0 = level, 1 = gain reduction
 //                                          theme 0..19 (-1 host), label "" for none
+//   vu.rk_vu_draw_at(cx, cy, r, mode, theme, label)   vu_kbsg's centre+radius box
+//   rk_vu_pal_rgb(slot, r, g, b)           the palette hook from 0..1 floats
 //   rk_vu_draw_pair(x,y,w,h,mode,theme, posA,holdA,overA,labA, posB,...)
 //                                          stereo or mid/side, two plates
 //   rk_vu_face / rk_vu_ink / rk_vu_cap_led two needles on ONE plate
@@ -240,6 +242,19 @@ function rk_vu_theme_name(i, dst) (
   i == 18 ? strcpy(dst, "Emerald") :
            strcpy(dst, "Cobalt");
   dst;
+);
+
+// Same, from 0..1 floats - for a host whose palette is already floats.
+function rk_vu_pal_rgb(slot, r, g, b) (
+  slot == 0 ? ( rkvu_pl_r = r; rkvu_pl_g = g; rkvu_pl_b = b; ) :
+  slot == 1 ? ( rkvu_p2_r = r; rkvu_p2_g = g; rkvu_p2_b = b; ) :
+  slot == 2 ? ( rkvu_bz_r = r; rkvu_bz_g = g; rkvu_bz_b = b; ) :
+  slot == 3 ? ( rkvu_ik_r = r; rkvu_ik_g = g; rkvu_ik_b = b; ) :
+  slot == 4 ? ( rkvu_rd_r = r; rkvu_rd_g = g; rkvu_rd_b = b; ) :
+  slot == 5 ? ( rkvu_nd_r = r; rkvu_nd_g = g; rkvu_nd_b = b; ) :
+  slot == 6 ? ( rkvu_cp_r = r; rkvu_cp_g = g; rkvu_cp_b = b; ) :
+  slot == 7 ? ( rkvu_ld_r = r; rkvu_ld_g = g; rkvu_ld_b = b; ) :
+              ( rkvu_ar_r = r; rkvu_ar_g = g; rkvu_ar_b = b; );
 );
 
 // ── Geometry ────────────────────────────────────────────────────────────
@@ -771,6 +786,14 @@ function rk_vu_draw(x, y, w, h, mode, theme, label) local(v, pk) (
 );
 
 // Two movements, two plates, one rect — stereo or mid/side.
+// One movement at a CENTRE and RADIUS, in the same box vu_kbsg's
+// mtr_vu_real_draw used (2.6r wide, 1.7r tall, centre 1.4r below the top).
+// A plugin that placed its meter that way changes one call and keeps its
+// layout numbers.
+function rk_vu_draw_at(cx, cy, r, mode, theme, label) (
+  this.rk_vu_draw(cx - r * 1.3, cy - r * 1.4, r * 2.6, r * 1.7, mode, theme, label);
+);
+
 function rk_vu_draw_pair(x, y, w, h, mode, theme,
                          posA, holdA, overA, labA,
                          posB, holdB, overB, labB) local(mw, gap) (

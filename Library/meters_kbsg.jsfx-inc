@@ -11,7 +11,7 @@ __meters_kbsg_loaded = 1;
 //   Page A — Level Meters:
 //     1.  LED Bar Graph (stereo) — vertical G/Y/R segments + peak hold
 //     2.  VU Needle              — spring-damper physics, non-linear IEC scale
-//     4.  Peak + RMS             — legacy single-bar + Mawi-style pro version
+//     4.  Peak + RMS             — single bar with RMS fill and a hold line
 //     5.  Gain Reduction         — horizontal bar, driven by compressor
 //     6.  Ring Meter             — circular arc fill, stereo pair
 //     7.  Clip Indicator         — red LED per channel, click to reset
@@ -403,107 +403,8 @@ local(n_segs, seg_h, gap, bar_w, i, norm_l, norm_r, seg_norm, sy,
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4. PEAK + RMS PRO (Mawi-style stretching with dB grid)
+// 4. PEAK + RMS
 // ═══════════════════════════════════════════════════════════════════════════
-
-function mtr_peak_rms_mawi_draw(x, y, w, h, peak_l, peak_r, rms_l, rms_r,
-                                             pk_hold_l, pk_hold_r, rms_hold_l, rms_hold_r,
-                                             floor_db, grid_step)
-local(db_min, db_max, center_gap, half_w, lx, lw, rx, rw2,
-      norm_pk_l, norm_pk_r, norm_rms_l, norm_rms_r,
-      norm_pkh_l, norm_pkh_r, norm_rmsh_l, norm_rmsh_r,
-      bar_pk_l, bar_pk_r, bar_rms_l, bar_rms_r,
-      hold_y, hold_h,
-      px_per_db, grid_px, font_sz, n_grids, gi, grid_y, grid_db,
-      tw, th, text_gap)
-(
-  mtr_update_db();
-  db_min = floor_db;
-  db_max = 0;
-  center_gap = max(1, w * 0.01) | 0;
-  half_w = ((w - center_gap) / 2) | 0;
-  lx = x; lw = half_w;
-  rx = x + half_w + center_gap;
-  rw2 = half_w;
-  hold_h = max(3, h * 0.008) | 0;
-
-  norm_pk_l  = mtr_db_to_norm(peak_l, db_min, db_max);
-  norm_pk_r  = mtr_db_to_norm(peak_r, db_min, db_max);
-  norm_rms_l = mtr_db_to_norm(rms_l, db_min, db_max);
-  norm_rms_r = mtr_db_to_norm(rms_r, db_min, db_max);
-  norm_pkh_l = mtr_db_to_norm(pk_hold_l, db_min, db_max);
-  norm_pkh_r = mtr_db_to_norm(pk_hold_r, db_min, db_max);
-  norm_rmsh_l = mtr_db_to_norm(rms_hold_l, db_min, db_max);
-  norm_rmsh_r = mtr_db_to_norm(rms_hold_r, db_min, db_max);
-
-  bar_pk_l  = (h * norm_pk_l) | 0;
-  bar_pk_r  = (h * norm_pk_r) | 0;
-  bar_rms_l = (h * norm_rms_l) | 0;
-  bar_rms_r = (h * norm_rms_r) | 0;
-
-  // Background
-  gfx_set(0.0, 0.0, 0.0, 0.3);
-  gfx_rect(x, y, w, h);
-
-  // Peak bars (dim green)
-  gfx_set(0.0, 1.0, 0.0, 0.25);
-  bar_pk_l > 0 ? gfx_rect(lx, y + h - bar_pk_l, lw, bar_pk_l);
-  bar_pk_r > 0 ? gfx_rect(rx, y + h - bar_pk_r, rw2, bar_pk_r);
-
-  // Peak hold (yellow)
-  gfx_set(1.0, 1.0, 0.0, 0.55);
-  norm_pkh_l > 0.001 ? (
-    hold_y = (y + h - h * norm_pkh_l) | 0;
-    gfx_rect(lx, hold_y, lw, min(hold_h, h * norm_pkh_l));
-  );
-  norm_pkh_r > 0.001 ? (
-    hold_y = (y + h - h * norm_pkh_r) | 0;
-    gfx_rect(rx, hold_y, rw2, min(hold_h, h * norm_pkh_r));
-  );
-
-  // RMS bars (brighter green)
-  gfx_set(0.0, 1.0, 0.0, 0.45);
-  bar_rms_l > 0 ? gfx_rect(lx, y + h - bar_rms_l, lw, bar_rms_l);
-  bar_rms_r > 0 ? gfx_rect(rx, y + h - bar_rms_r, rw2, bar_rms_r);
-
-  // RMS hold (green)
-  gfx_set(0.0, 1.0, 0.0, 0.50);
-  norm_rmsh_l > 0.001 ? (
-    hold_y = (y + h - h * norm_rmsh_l) | 0;
-    gfx_rect(lx, hold_y, lw, min(hold_h, h * norm_rmsh_l));
-  );
-  norm_rmsh_r > 0.001 ? (
-    hold_y = (y + h - h * norm_rmsh_r) | 0;
-    gfx_rect(rx, hold_y, rw2, min(hold_h, h * norm_rmsh_r));
-  );
-
-  // dB Grid overlay
-  grid_step > 0 && h > 20 ? (
-    px_per_db = (h - 1) / abs(db_min);
-    grid_px = grid_step * px_per_db;
-    font_sz = min(max(grid_px * 0.7, 8), 18) | 0;
-    gfx_setfont(1, "Verdana", font_sz);
-    n_grids = (abs(db_min) / grid_step) | 0;
-    gi = 0;
-    loop(n_grids + 1,
-      grid_db = gi * grid_step;
-      grid_y = (y + grid_px * gi) | 0;
-      grid_y >= y && grid_y <= y + h ? (
-        gi == 0 ? sprintf(#g_label, "0") : sprintf(#g_label, "%d", -grid_db);
-        gfx_measurestr(#g_label, tw, th);
-        (gi & 1) == 0 ? gfx_set(1, 1, 1, 0.65) : gfx_set(1, 1, 1, 0.40);
-        gfx_x = x + (w - tw) / 2; gfx_y = grid_y - th / 2;
-        gfx_drawstr(#g_label);
-        text_gap = tw / 2 + 4;
-        gfx_line(x + 4, grid_y, x + w / 2 - text_gap, grid_y);
-        gfx_line(x + w / 2 + text_gap, grid_y, x + w - 4, grid_y);
-      );
-      gi += 1;
-    );
-  );
-);
-
-
 // Legacy single-channel Peak+RMS wrapper
 function mtr_peak_rms_draw(x, y, w, h, peak_db, rms_db, db_min, db_max, hold_db)
 local(norm_p, norm_r, norm_h, hold_y, rms_h, tw, th)

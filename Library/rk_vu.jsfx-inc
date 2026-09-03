@@ -102,7 +102,10 @@ function rk_vu_mark_db(i) (
 );
 
 // ── The only angle conversion in the file ───────────────────────────────
-function rk_vu_ang(frac) ( (min(max(frac, -0.04), 1.04) - 0.5) * RKVU_SWEEP; );
+// The stops are AT -20 and +3, like ZenoMOD's and like a real movement's
+// pegs. This used to allow 4% of travel past each end, so at silence the
+// needle rested 4 degrees below -20 - visibly not where his rests.
+function rk_vu_ang(frac) ( (min(max(frac, 0), 1) - 0.5) * RKVU_SWEEP; );
 function rk_vu_px(cx, r, a) ( cx + sin(a) * r; );
 function rk_vu_py(cy, r, a) ( cy - cos(a) * r; );
 

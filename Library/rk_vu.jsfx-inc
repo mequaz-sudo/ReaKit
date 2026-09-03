@@ -168,7 +168,7 @@ function rk_vu_theme_name(i, dst) (
 // Publishes rkvu_cx / rkvu_cy / rkvu_r for the rect. The label ring is the
 // outermost thing drawn, so the radius is solved from ITS extent — that is
 // what keeps the numbers inside the plate at any aspect ratio.
-function rk_vu_geom(x, y, w, h) local(pad, rl, half, tx) (
+function rk_vu_geom(x, y, w, h) local(pad, rl, half, tx, ty) (
   // A VU face is wider than tall. With the pivot at 90% of the height and the
   // radius bound by the width, any rect taller than ~1.6:1 turns its extra
   // height into empty plate ABOVE the arc — a 195x300 stereo half was 60%
@@ -179,16 +179,21 @@ function rk_vu_geom(x, y, w, h) local(pad, rl, half, tx) (
   rkvu_ox = x + (w - rkvu_ow) * 0.5;
   rkvu_oy = y + (h - rkvu_oh) * 0.5;
 
-  pad  = min(rkvu_ow, rkvu_oh) * 0.05;
+  pad  = min(rkvu_ow, rkvu_oh) * 0.08;         // air between the numerals and the bezel
   rl   = 1.11;                                  // label ring, x arc radius
   half = sin(RKVU_SWEEP * 0.5);                 // horizontal reach at the ends
-  // The end labels ("-20", "3") are CENTRED on the ring, so half their text
-  // hangs outside it. At fsz = 0.12r a three-glyph label is ~0.28r wide;
-  // budgeting 0.14r keeps them off the bezel at any size.
+  // Numerals are CENTRED on the ring, so half of each one hangs outside it —
+  // sideways at the ends, UPWARD at the top. Both halves are budgeted here in
+  // units of r: at fsz = 0.12r a three-glyph label is ~0.28r wide (tx) and a
+  // glyph is ~0.14r tall (ty). The top budget was missing until 2026-09-02,
+  // and on a 400x250 face the "-10" sat 5 px INTO the bezel while the end
+  // labels had 14 px of air — the arc was sized to the ring's centre line.
   tx   = 0.14;
+  ty   = 0.07;
   rkvu_cx = rkvu_ox + rkvu_ow * 0.5;
   rkvu_cy = rkvu_oy + rkvu_oh * 0.90;           // pivot low on the plate
-  rkvu_r  = min((rkvu_ow * 0.5 - pad) / (half * rl + tx), (rkvu_cy - rkvu_oy - pad) / rl);
+  rkvu_r  = min((rkvu_ow * 0.5 - pad) / (half * rl + tx),
+                (rkvu_cy - rkvu_oy - pad) / (rl + ty));
   rkvu_r  = max(rkvu_r, 4);
 );
 

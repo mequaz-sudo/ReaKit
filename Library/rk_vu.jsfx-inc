@@ -46,11 +46,15 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 //   rk_vu_draw(x,y,w,h,mode,theme,label)   per frame — appearance only
 //
 // PUBLIC API
-//   vu.rk_vu_init(0)                       0 VU = 0 dBFS: reads like REAPER's meters,
-//                                          a -16 dBFS signal shows -16. THE DEFAULT.
-//                                          -18 = hardware calibration (EBU / a real
-//                                          1176 in a DAW), -20 SMPTE. Product decision
-//                                          2026-09-01: 0 unless it is a hardware model.
+//   vu.rk_vu_init(-18)                     0 VU = a -18 dBFS sine. THE DEFAULT: it is
+//                                          the hardware calibration (EBU, a real 1176
+//                                          in a DAW) AND what ZenoMOD and chris-s's
+//                                          Simple VU ship at, so a stock ZenoMOD on the
+//                                          next track agrees. -20 = SMPTE. 0 makes it
+//                                          read like REAPER's track meter. Product
+//                                          decision 2026-09-02, after finding that
+//                                          EON's own vu_kbsg port had 0 baked in where
+//                                          ZenoMOD has a -18 slider.
 //   vu.rk_vu_sample(spl0)                  feed it; abs() is taken here
 //   vu.rk_vu_init_gr() / vu.rk_vu_sample_gr(gain)   gain-reduction meter: feed
 //                                          LINEAR gain, 1.0 = none — vu_kbsg's
@@ -410,8 +414,8 @@ function rk_vu_init(ref_db) (
 );
 
 // Change the reference on a running meter. 0 VU = a sine at ref_db; the peak
-// LED trips 3 dB above it. 0 reads like REAPER's own track meter (the
-// default); -18 is EBU / most hardware in a DAW, -20 SMPTE.
+// LED trips 3 dB above it. -18 is the default (EBU, hardware, and what ZenoMOD
+// ships at); -20 SMPTE; 0 reads like REAPER's own track meter.
 function rk_vu_set_ref(ref_db) (
   this.ref = 10 ^ (ref_db / 20);
   this.lim = 10 ^ ((ref_db + 3) / 20);

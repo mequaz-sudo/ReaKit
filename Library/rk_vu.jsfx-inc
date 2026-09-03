@@ -217,8 +217,8 @@ function _rk_vu_plate(x, y, w, h) local(i, n, t, br) (
   n = max(floor(h * 0.5), 1);
   i = 0;
   loop(n,
-    t = i / n;
-    gfx_set(rkvu_p2_r, rkvu_p2_g, rkvu_p2_b, t * t * 0.5);
+    t = 1 - i / n;                             // 1 at the bottom row, 0 at mid-height
+    gfx_set(rkvu_p2_r, rkvu_p2_g, rkvu_p2_b, t * t * 0.14);
     gfx_rect(x, y + h - 1 - i, w, 1);
     i += 1;
   );
@@ -241,16 +241,16 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv,
       fmin, w2, w3, w7, ring, tier, minor, mid, show) (
   a0 = rk_vu_ang(0); a1 = rk_vu_ang(1);
 
-  // which numerals fit: measure, don't guess
-  fmin = max(7, floor(fsz * 0.72 + 0.5));
+  // which numerals fit: measure, don't guess. All numerals are ONE size; a
+  // tier drops the minors (-2 -1 1 2), then the mids (-7 -5 -3), never shrinks
+  // them. Neighbours may touch by up to 0.15 of the font before that happens.
   gfx_setfont(1, "Arial", fsz, 'b');
-  gfx_measurestr("-3", w3, th); gfx_measurestr("-7", w7, th);
-  gfx_setfont(1, "Arial", fmin, 'b');
-  gfx_measurestr("-2", w2, th);
+  gfx_measurestr("-3", w3, th); gfx_measurestr("-7", w7, th); gfx_measurestr("-2", w2, th);
   ring = RKVU_SWEEP * rkvu_r * 1.11;            // arc length of the label ring
+  fmin = fsz * 0.15;                            // allowed overlap, px
   tier = 0;
-  (w3 + w2) * 0.5 + 2 > (rk_vu_db2frac(-2) - rk_vu_db2frac(-3)) * ring ? tier = 1;
-  tier == 1 && (w7 + w7) * 0.5 + 2 > (rk_vu_db2frac(-5) - rk_vu_db2frac(-7)) * ring ? tier = 2;
+  (w3 + w2) * 0.5 - fmin > (rk_vu_db2frac(-2) - rk_vu_db2frac(-3)) * ring ? tier = 1;
+  tier == 1 && (w7 + w7) * 0.5 - fmin > (rk_vu_db2frac(-5) - rk_vu_db2frac(-7)) * ring ? tier = 2;
 
   gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 1);
   gfx_arc(rkvu_cx, rkvu_cy, rkvu_r, a0, a1, 1);
@@ -290,7 +290,7 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv,
     mid   = mode == 0 && (i == 2 || i == 3 || i == 4);             // -7 -5 -3
     show  = minor ? tier == 0 : mid ? tier < 2 : 1;
     show ? (
-      gfx_setfont(1, "Arial", minor ? fmin : fsz, 'b');
+      gfx_setfont(1, "Arial", fsz, 'b');
       sprintf(#_rkvu_l, "%d", dbv);
       gfx_measurestr(#_rkvu_l, tw, th);
       lx = rk_vu_px(rkvu_cx, rkvu_r * 1.11, a);

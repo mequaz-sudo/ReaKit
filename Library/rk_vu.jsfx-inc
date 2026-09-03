@@ -75,6 +75,13 @@ desc:ReaKit analog VU meter — self-contained face, 20 themes
 //   vu.rk_vu_set_readout(0..4)             box + PEAK label: 0 off, 1 VU, 2 VU held,
 //                                          3 peak dBFS held, 4 peak max (rk_vu_reset_peak)
 //   rk_vu_pal(slot, 0xRRGGBB) + theme -1   a plugin's own theme drives the colours
+//   vu.rk_vu_set_led_hold(sec)             peak LED lit time
+//   vu.rk_vu_set_peak_hold(sec)            peak readout hold (-1 = needle's)
+//   vu.rk_vu_set_speed(mult)               1 = standard 300 ms, 2 = twice as fast
+//   rk_vu_set_text_scale(mult)             numerals and labels, 1 = as designed
+//   vu.rk_vu_picker(x,y,w,h,cur) -> theme  click the cover: a sheet of live
+//                                          miniatures; returns the pick or -1.
+//                                          Call LAST in @gfx. Needs mx/my/lmb_down.
 //   rk_vu_set_hold(seconds)                hold-needle fall time (0 = off)
 //   rk_vu_theme_name(i, #dst)              theme name for a picker
 //
@@ -92,6 +99,7 @@ RKVU_DB_LO  = -20;
 RKVU_DB_HI  = 3;
 RKVU_HOLD_S = 1.6;                 // hold needle fall time, seconds
 rkvu_hold_style = 1;               // default for callers that draw ink themselves
+rkvu_text_scale = 1;
 
 function rk_vu_set_hold(sec) ( RKVU_HOLD_S = max(sec, 0); );
 
@@ -520,6 +528,10 @@ function rk_vu_init(ref_db) (
   this.readout = 0;                      // 0 off, 1 VU, 2 VU held, 3 peak, 4 peak max
   this.warn_on = 0;                      // 1 once rk_vu_set_warn has been called
   this.pkb = 0; this.pk_cur = 0; this.pk_t = 0; this.pk_max = 0;
+  this.led_hold = 1.6;                   // seconds the peak LED stays lit
+  this.pk_hold  = -1;                    // peak readout hold; -1 = same as the needle's
+  this.speed    = 1;                     // ballistic multiplier, 1 = the standard
+  this.pk_open  = 0;                     // theme picker sheet
 );
 
 // ── The four switches ───────────────────────────────────────────────────
@@ -540,6 +552,24 @@ function rk_vu_set_hold_style(style) ( this.hold_style = min(max(floor(style + 0
 function rk_vu_set_readout(mode) ( this.readout = min(max(floor(mode + 0.5), 0), 4); );
 function rk_vu_reset_peak() ( this.pk_max = 0; this.pk_cur = 0; );
 
+// How long the peak LED stays lit after a hit (ZenoMOD's "LED Hold").
+function rk_vu_set_led_hold(sec) ( this.led_hold = max(sec, 0.05); );
+
+// Hold time of the peak READOUT, separate from the needle's (rk_vu_set_hold).
+// -1 (the default) follows the needle's.
+function rk_vu_set_peak_hold(sec) ( this.pk_hold = sec; );
+
+// Speed. 1 = the standard, 300 ms. 2 = twice as fast, 0.5 = half. Scales the
+// movement's natural frequency, so the overshoot stays at 1.2%; a faster meter
+// is a less accurate one, which is why this is a multiplier and not a spec.
+function rk_vu_set_speed(mult) (
+  this.speed = min(max(mult, 0.2), 5);
+  this.wn = (this.legacy ? 12.12 : RKVU_WN) * this.speed;
+);
+
+// Text size multiplier for every numeral and label, 1 = as designed.
+function rk_vu_set_text_scale(mult) ( rkvu_text_scale = min(max(mult, 0.5), 2); );
+
 // LEGACY: read like the meter EON has been shipping (vu_kbsg section 7 at
 // speed 61 with a reference of 0 baked in). That meter is peak-driven, its
 // spring is a second order at wn 12.12 / zeta 0.99, and its scale is linear
@@ -556,7 +586,7 @@ function rk_vu_reset_peak() ( this.pk_max = 0; this.pk_cur = 0; );
 function rk_vu_set_legacy(on) (
   this.legacy = on ? 1 : 0;
   this.zeta = on ? 0.993 : RKVU_ZETA;
-  this.wn   = on ? 12.12 : RKVU_WN;
+  this.wn   = (on ? 12.12 : RKVU_WN) * this.speed;
   this.lim  = on ? 1.0 : (this.warn_on ? 10 ^ (this.warn_db / 20) : 10 ^ ((this.ref_db + 3) / 20));
 );
 
@@ -584,6 +614,7 @@ function rk_vu_init_gr() (
   this.zeta = RKVU_ZETA; this.wn = RKVU_WN;
   this.legacy = 0;
   this.gr  = 1;                            // marks the instance as GR
+  this.led_hold = 1.6; this.pk_hold = -1; this.speed = 1; this.pk_open = 0;
 );
 
 function rk_vu_sample_gr(gain) local(tgt, a) (
@@ -611,7 +642,7 @@ function rk_vu_sample(x) local(amp, tgt, a) (
   x = abs(x);
   this.acc = this.legacy ? max(this.acc, x) : this.acc + x;
   this.pkb = max(this.pkb, x);
-  x > this.lim ? this.over = 1.6;         // seconds of LED hold
+  x > this.lim ? this.over = this.led_hold;
   this.cnt += 1;
   this.cnt >= RKVU_DEC ? (
     amp = this.legacy ? this.acc : (this.acc / RKVU_DEC) * ($pi * 0.5);
@@ -628,7 +659,7 @@ function rk_vu_sample(x) local(amp, tgt, a) (
                     : this.hold = max(this.hold - this.dt * 0.8, this.pos);
     this.over > 0 ? this.over -= this.dt;
     // sample peak, held RKVU_HOLD_S then released, plus an all-time max
-    this.pkb > this.pk_cur ? ( this.pk_cur = this.pkb; this.pk_t = RKVU_HOLD_S; )
+    this.pkb > this.pk_cur ? ( this.pk_cur = this.pkb; this.pk_t = this.pk_hold >= 0 ? this.pk_hold : RKVU_HOLD_S; )
                            : ( this.pk_t > 0 ? this.pk_t -= this.dt : this.pk_cur = this.pkb; );
     this.pk_max = max(this.pk_max, this.pkb);
     this.pkb = 0;
@@ -660,7 +691,7 @@ function rk_vu_sample(x) local(amp, tgt, a) (
 function rk_vu_face(x, y, w, h, mode, theme, label) (
   theme >= 0 ? rk_vu_theme(theme);      // -1: the host set the rkvu_* colours itself
   rk_vu_geom(x, y, w, h);
-  rkvu_fsz = max(8, floor(rkvu_r * 0.12 * max(1, gfx_ext_retina) + 0.5));
+  rkvu_fsz = max(8, floor(rkvu_r * 0.12 * rkvu_text_scale * max(1, gfx_ext_retina) + 0.5));
   _rk_vu_plate(rkvu_ox, rkvu_oy, rkvu_ow, rkvu_oh);
   _rk_vu_scale(mode, rkvu_fsz);
   _rk_vu_label(label, rkvu_fsz);
@@ -751,4 +782,56 @@ function rk_vu_draw_pair(x, y, w, h, mode, theme,
   rk_vu_face(x + mw + gap, y, mw, h, mode, theme, labB);
   rk_vu_ink(posB, holdB, mode, 0);
   rk_vu_cap_led(overB);
+);
+
+// ── Theme picker ────────────────────────────────────────────────────────
+// Click the coil cover and a sheet opens showing every theme as a live
+// miniature of this same face; click a card to choose it, click anywhere
+// else to close. Call this LAST in @gfx, after everything the sheet may
+// cover, with the rect the meter was drawn in and the theme it is showing.
+// Needs the library's mouse globals: mx, my, lmb_down (a press edge, not the
+// held state). Returns the chosen theme on the frame it is chosen, else -1 -
+// write it into your theme slider and slider_automate it.
+//
+// The cards are drawn with rk_vu_face, so while the sheet is open the colour
+// globals end up holding the last card's palette. A host that draws with
+// theme -1 applies its own palette every frame before drawing, as it should.
+function rk_vu_picker(x, y, w, h, cur)
+local(chosen, cols, rows, sw, sh, sx, sy, cw, ch, fw, fh, i, cx, cy, hit, hover,
+      hx, hy, hw, hh, tw, th) (
+  chosen = -1;
+  rk_vu_geom(x, y, w, h);
+  hw = rkvu_r * 0.38; hx = rkvu_cx - hw * 0.5;
+  hy = rkvu_cy - rkvu_r * 0.19; hh = rkvu_r * 0.19 + max(rkvu_oy + rkvu_oh - rkvu_cy, 0);
+  hover = mx >= hx && mx < hx + hw && my >= hy && my < hy + hh;
+
+  !this.pk_open ? (
+    hover ? ( gfx_set(1, 1, 1, 0.10); gfx_circle(rkvu_cx, rkvu_cy, rkvu_r * 0.19, 1, 1); );
+    hover && lmb_down ? this.pk_open = 1;
+  ) : (
+    cols = 5; rows = ceil(RKVU_THEMES / cols);
+    sw = max(w, 380); sh = max(h, 264);
+    sx = min(max(x, 0), max(gfx_w - sw, 0)); sy = min(max(y, 0), max(gfx_h - sh, 0));
+    gfx_set(0, 0, 0, 0.72); gfx_rect(0, 0, gfx_w, gfx_h);
+    gfx_set(0.10, 0.10, 0.11, 1); _rk_vu_rrect(sx, sy, sw, sh, 6);
+    cw = (sw - 12) / cols; ch = (sh - 12 - 20) / rows;
+    fw = cw - 8; fh = min(fw / 1.6, ch - 16);
+    gfx_setfont(1, "Arial", 11, 'b'); gfx_set(0.85, 0.85, 0.85, 1);
+    gfx_x = sx + 8; gfx_y = sy + 5; gfx_drawstr("THEME");
+    i = 0;
+    loop(RKVU_THEMES,
+      cx = sx + 6 + (i % cols) * cw; cy = sy + 20 + floor(i / cols) * ch;
+      hit = mx >= cx && mx < cx + cw && my >= cy && my < cy + ch;
+      (hit || i == cur) ? ( gfx_set(1, 1, 1, hit ? 0.18 : 0.09); _rk_vu_rrect(cx, cy, cw - 2, ch - 2, 4); );
+      rk_vu_face(cx + 4, cy + 2, fw, fh, 0, i, "");
+      rk_vu_theme_name(i, #_rkvu_pn);
+      gfx_setfont(1, "Arial", 9); gfx_set(0.85, 0.85, 0.85, 1);
+      gfx_measurestr(#_rkvu_pn, tw, th);
+      gfx_x = cx + cw * 0.5 - tw * 0.5; gfx_y = cy + 2 + fh + 1; gfx_drawstr(#_rkvu_pn);
+      hit && lmb_down ? chosen = i;
+      i += 1;
+    );
+    lmb_down ? this.pk_open = 0;
+  );
+  chosen;
 );

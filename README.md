@@ -23,8 +23,8 @@ rocker, stomp, tab bar (the showcase's own tab bar is this widget).*
 
 ![ReaKit Elements — Meters tab](screenshots/tab_meters.png)
 
-*METERS — all 12 meters_kbsg styles plus the analog VU (scroll the VU to
-cycle its 11 face themes).*
+*METERS — all 12 meters_kbsg styles plus the analog VU (click the VU's coil
+cover to pick one of its 20 faces).*
 
 ![ReaKit Elements — Pads & Keys tab](screenshots/tab_padskeys.png)
 
@@ -36,8 +36,8 @@ cycle its 11 face themes).*
 Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader types**
 (incl. an SSL / Neve / Pro Tools / MPC console pack) · **10 button styles** ·
 **12 meter styles with the DSP included** (peak/RMS, GR, phase, goniometer,
-waveform, spectrum, LUFS) · **analog VU** with real ballistics and 11 face
-themes · **drum pad grid** (any size, MPC pad order) · **piano keyboard**
+waveform, spectrum, LUFS) · **analog VU** (rk_vu) that meets the VU spec —
+300 ms to 99%, 1.2% overshoot — with 20 faces, a GR face and a face picker · **drum pad grid** (any size, MPC pad order) · **piano keyboard**
 (horizontal or vertical, any note range).
 
 Every knob style shares one interaction model: drag, ctrl = fine, mousewheel,
@@ -104,10 +104,10 @@ https://forum.cockos.com/showthread.php?p=2952442
 
 ## License & credits
 
-EON Studios' code is MIT — see LICENSE. Some widgets derive from other JSFX
-authors' work and are included with their authors' permission — see
-THIRD_PARTY_CREDITS.md for the full honor roll (ZenoMOD, Liteon, Tukan,
-BirdBird, Joanny/MacFizz, Spice, Witti Sound).
+EON Studios' code is MIT — see LICENSE. A few knob and button styles derive
+from other JSFX authors' work — see THIRD_PARTY_CREDITS.md (BirdBird,
+Joanny/MacFizz, Spice, Witti Sound). The analog VU, the meters and everything
+else are original EON Studios code.
 
 AI tools are used in ReaKit's development; design, testing and direction by
 Quaz / EON Studios.

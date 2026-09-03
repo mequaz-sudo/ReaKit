@@ -4,15 +4,7 @@ __meters_kbsg_loaded = 1;
 // meters_kbsg.jsfx-inc — EON Studios Meter Library (ReaKit) v4.0 (13 Types + DSP)
 // ═══════════════════════════════════════════════════════════════════════════
 // v4.0 changelog:
-//   - VU DSP ported from ZenoMOD VU Meter v1.7.7
-//     * Spring-damper with hard-stop clamping (speed zeroed, no bounce)
-//     * Configurable response (0-100, default 50) — controls momentum
-//     * Configurable damping (0-0.01, default 0.0053 = ZenoMOD exact), clamped to [0, 0.999999]
-//     * 10-sample peak accumulator (captures transients between physics steps)
-//     * Denormal protection on all needle speed integrators
-//     * Configurable warn level (default -6 dBFS) + peak LED over states
-//     * mtr_set_vu_warn(db), mtr_set_vu_led_hold(ds), mtr_set_vu_response/damping
-//   - VU drawing ported from ZenoMOD: 90° sweep, pos[] scale, hold arc, peak LED
+//   - (the ZenoMOD-derived VU physics were removed 2026-09-03: rk_vu.jsfx-inc is the VU)
 //   - All other DSP unchanged (peak, RMS, LUFS, phase, gonio, etc.)
 //
 // Types included:
@@ -34,9 +26,8 @@ __meters_kbsg_loaded = 1;
 //
 // DSP GLOBALS (set by meter_process_sample):
 //   mtr_peak_l/r, mtr_pk_hold_l/r, mtr_rms_l/r, mtr_rms_hold_l/r
-//   mtr_vu_l/r, mtr_vu_hold_l/r, mtr_vu_m/s, mtr_vu_hold_m/s,
 //   mtr_gr_db, mtr_phase, mtr_lufs_s
-//   mtr_clip_l/r, mtr_vu_nd_pos_l/r/m/s, mtr_vu_ref_level
+//   mtr_clip_l/r
 //
 // MEMORY LAYOUT (mtr_base + offset):
 //   0..255    — goniometer ring buffer (128 x/y pairs)
@@ -96,7 +87,6 @@ function meter_init(base)
   memset(base, 0, 1380);
 
   // ── Feature flags (default OFF — plugins enable what they need) ──
-  mtr_en_vu      = 0;   // VU spring-damper physics
   mtr_en_rms     = 0;   // True RMS (300ms block)
   mtr_en_lufs    = 0;   // K-weighted LUFS
   mtr_en_phase   = 0;   // Phase correlation
@@ -108,8 +98,6 @@ function meter_init(base)
   mtr_lin_peak_l = 0; mtr_lin_peak_r = 0;
   mtr_lin_pk_hold_l = 0; mtr_lin_pk_hold_r = 0;
   mtr_rms_l  = -100; mtr_rms_r  = -100;
-  mtr_vu_l   = -20;  mtr_vu_r   = -20;
-  mtr_vu_m   = -20;  mtr_vu_s   = -20;
   mtr_gr_db  = 0;
   mtr_phase  = 1;
   mtr_lufs_s = -100;
@@ -124,38 +112,6 @@ function meter_init(base)
   mtr_rms_blk_cnt   = 0;
   mtr_rms_blk_pos   = 0;
   mtr_rms_filled    = 0;
-
-  // ── VU spring-damper model (ZenoMOD port) ───────────────────
-  mtr_vu_nd_pos_l = 0;   mtr_vu_nd_pos_r = 0;
-  mtr_vu_nd_speed_l = 0; mtr_vu_nd_speed_r = 0;
-  mtr_vu_nd_pos_m = 0;   mtr_vu_nd_pos_s = 0;
-  mtr_vu_nd_speed_m = 0; mtr_vu_nd_speed_s = 0;
-  mtr_vu_scnt = 0;
-
-  mtr_vu_ref_level = -18;
-  mtr_vu_response  = 50;   // ZenoMOD: 0-100, default 50
-  mtr_vu_damping   = 0.0053; // ZenoMOD exact @init value: damp = 1 - 0.0053 * (48000/srate)
-  mtr_vu_dt     = 10 / srate;
-  mtr_vu_mom    = 0.00010 + 0.00032 * mtr_vu_response * mtr_vu_response * mtr_vu_response / 125000;
-  mtr_vu_damp   = min(max(1 - mtr_vu_damping * (48000 / srate), 0), 0.999999);
-  mtr_vu_offset = 0.0074;
-  mtr_vu_fact   = pow(10, (-mtr_vu_ref_level - 10) / 20) * 0.3785;
-
-  // Peak accumulator for 10-sample window (captures transients)
-  mtr_vu_pk_acc_l = 0; mtr_vu_pk_acc_r = 0;
-  mtr_vu_pk_acc_m = 0; mtr_vu_pk_acc_s = 0;
-
-  // Warn level LED (ZenoMOD peak LED)
-  mtr_vu_warn_level = -6;   // dBFS threshold, configurable
-  mtr_vu_warn_lim   = pow(10, mtr_vu_warn_level / 20);
-  mtr_vu_led_hold   = 3;    // deciseconds (ZenoMOD default)
-  mtr_vu_over_l = 0; mtr_vu_over_r = 0;
-  mtr_vu_over_m = 0; mtr_vu_over_s = 0;
-
-  mtr_vu_hold_l = -20; mtr_vu_hold_r = -20;
-  mtr_vu_hold_cnt_l = 0; mtr_vu_hold_cnt_r = 0;
-  mtr_vu_hold_m = -20; mtr_vu_hold_s = -20;
-  mtr_vu_hold_cnt_m = 0; mtr_vu_hold_cnt_s = 0;
 
   mtr_ph_mid  = 0; mtr_ph_side = 0; mtr_ph_cnt = 0;
 
@@ -183,35 +139,6 @@ function meter_init(base)
   mtr_rms_n_blks   = 30;
   mtr_init_kweight();
   mtr_lufs_blk_size = (srate * 0.4) | 0;
-);
-
-function mtr_set_vu_ref(ref_db)
-(
-  mtr_vu_ref_level = ref_db;
-  mtr_vu_fact = pow(10, (-ref_db - 10) / 20) * 0.3785;
-);
-
-function mtr_set_vu_response(resp)
-(
-  mtr_vu_response = resp;
-  mtr_vu_mom = 0.00010 + 0.00032 * resp * resp * resp / 125000;
-);
-
-function mtr_set_vu_damping(dmp)
-(
-  mtr_vu_damping = dmp;
-  mtr_vu_damp = min(max(1 - dmp * (48000 / srate), 0), 0.999999);
-);
-
-function mtr_set_vu_warn(warn_db)
-(
-  mtr_vu_warn_level = warn_db;
-  mtr_vu_warn_lim = pow(10, warn_db / 20);
-);
-
-function mtr_set_vu_led_hold(ds)
-(
-  mtr_vu_led_hold = ds;
 );
 
 
@@ -298,111 +225,6 @@ local(abs_l, abs_r,
       mtr_rms_hold_cnt_r -= 1;
     ) : (
       mtr_rms_hold_r = max(mtr_rms_hold_r - mtr_pk_hold_decay, -100);
-    );
-  );
-
-  // ── VU — gated by mtr_en_vu ────────────────────────────────────
-  mtr_en_vu ? (
-    // VU sum accumulator (ZenoMOD exact: smpL_sum += abs(smpL))
-    mtr_vu_pk_acc_l += abs_l;
-    mtr_vu_pk_acc_r += abs_r;
-
-    // VU warn LED detection (per-sample, like ZenoMOD)
-    abs_l > mtr_vu_warn_lim ? mtr_vu_over_l = srate;
-    abs_r > mtr_vu_warn_lim ? mtr_vu_over_r = srate;
-
-    // VU spring-damper — ZenoMOD physics (every 10 samples)
-    mtr_vu_scnt += 1;
-    mtr_vu_scnt >= 10 ? (
-      // L channel (ZenoMOD exact: average over 10-sample window)
-      force_l = (mtr_vu_pk_acc_l * 0.1) * mtr_vu_fact - (mtr_vu_nd_pos_l * 0.1 + mtr_vu_offset);
-      mtr_vu_nd_speed_l += force_l * mtr_vu_dt / mtr_vu_mom;
-      mtr_vu_nd_speed_l *= mtr_vu_damp;
-      mtr_vu_nd_pos_l += mtr_vu_nd_speed_l * mtr_vu_dt;
-      mtr_vu_nd_pos_l < 0 || mtr_vu_nd_pos_l > 1 ? mtr_vu_nd_speed_l = 0;
-      mtr_vu_nd_pos_l = min(max(mtr_vu_nd_pos_l, 0), 1);
-      abs(mtr_vu_nd_speed_l) < 0.0000001 ? mtr_vu_nd_speed_l = 0;
-
-      // R channel (ZenoMOD exact: average over 10-sample window)
-      force_r = (mtr_vu_pk_acc_r * 0.1) * mtr_vu_fact - (mtr_vu_nd_pos_r * 0.1 + mtr_vu_offset);
-      mtr_vu_nd_speed_r += force_r * mtr_vu_dt / mtr_vu_mom;
-      mtr_vu_nd_speed_r *= mtr_vu_damp;
-      mtr_vu_nd_pos_r += mtr_vu_nd_speed_r * mtr_vu_dt;
-      mtr_vu_nd_pos_r < 0 || mtr_vu_nd_pos_r > 1 ? mtr_vu_nd_speed_r = 0;
-      mtr_vu_nd_pos_r = min(max(mtr_vu_nd_pos_r, 0), 1);
-      abs(mtr_vu_nd_speed_r) < 0.0000001 ? mtr_vu_nd_speed_r = 0;
-
-      // M/S channels
-      abs_m = abs((l + r) * 0.5);
-      abs_s = abs((l - r) * 0.5);
-      mtr_vu_pk_acc_m += abs_m;
-      mtr_vu_pk_acc_s += abs_s;
-      // M/S warn detection
-      abs_m > mtr_vu_warn_lim ? mtr_vu_over_m = srate;
-      abs_s > mtr_vu_warn_lim ? mtr_vu_over_s = srate;
-
-      force_m = (mtr_vu_pk_acc_m * 0.1) * mtr_vu_fact - (mtr_vu_nd_pos_m * 0.1 + mtr_vu_offset);
-      mtr_vu_nd_speed_m += force_m * mtr_vu_dt / mtr_vu_mom;
-      mtr_vu_nd_speed_m *= mtr_vu_damp;
-      mtr_vu_nd_pos_m += mtr_vu_nd_speed_m * mtr_vu_dt;
-      mtr_vu_nd_pos_m < 0 || mtr_vu_nd_pos_m > 1 ? mtr_vu_nd_speed_m = 0;
-      mtr_vu_nd_pos_m = min(max(mtr_vu_nd_pos_m, 0), 1);
-      abs(mtr_vu_nd_speed_m) < 0.0000001 ? mtr_vu_nd_speed_m = 0;
-
-      force_s = (mtr_vu_pk_acc_s * 0.1) * mtr_vu_fact - (mtr_vu_nd_pos_s * 0.1 + mtr_vu_offset);
-      mtr_vu_nd_speed_s += force_s * mtr_vu_dt / mtr_vu_mom;
-      mtr_vu_nd_speed_s *= mtr_vu_damp;
-      mtr_vu_nd_pos_s += mtr_vu_nd_speed_s * mtr_vu_dt;
-      mtr_vu_nd_pos_s < 0 || mtr_vu_nd_pos_s > 1 ? mtr_vu_nd_speed_s = 0;
-      mtr_vu_nd_pos_s = min(max(mtr_vu_nd_pos_s, 0), 1);
-      abs(mtr_vu_nd_speed_s) < 0.0000001 ? mtr_vu_nd_speed_s = 0;
-
-      // Decay warn LEDs (ZenoMOD: overL -= 100 / led_hold every 10 samples)
-      mtr_vu_over_l -= 100 / mtr_vu_led_hold;
-      mtr_vu_over_r -= 100 / mtr_vu_led_hold;
-      mtr_vu_over_m -= 100 / mtr_vu_led_hold;
-      mtr_vu_over_s -= 100 / mtr_vu_led_hold;
-
-      // Reset sum accumulators (ZenoMOD: smpL_sum = 0)
-      mtr_vu_pk_acc_l = 0; mtr_vu_pk_acc_r = 0;
-      mtr_vu_pk_acc_m = 0; mtr_vu_pk_acc_s = 0;
-
-      mtr_vu_scnt = 0;
-    );
-    // Convert needle positions → VU dB via linear remap (ZenMod method)
-    mtr_vu_l = mtr_vu_nd_pos_l * 23 - 20;
-    mtr_vu_r = mtr_vu_nd_pos_r * 23 - 20;
-    mtr_vu_m = mtr_vu_nd_pos_m * 23 - 20;
-    mtr_vu_s = mtr_vu_nd_pos_s * 23 - 20;
-
-    // ── VU hold ──────────────────────────────────────────────────
-    mtr_vu_l >= mtr_vu_hold_l ? (
-      mtr_vu_hold_l = mtr_vu_l; mtr_vu_hold_cnt_l = mtr_pk_hold_time;
-    ) : mtr_vu_hold_cnt_l > 0 ? (
-      mtr_vu_hold_cnt_l -= 1;
-    ) : (
-      mtr_vu_hold_l = max(mtr_vu_hold_l - mtr_pk_hold_decay, -20);
-    );
-    mtr_vu_r >= mtr_vu_hold_r ? (
-      mtr_vu_hold_r = mtr_vu_r; mtr_vu_hold_cnt_r = mtr_pk_hold_time;
-    ) : mtr_vu_hold_cnt_r > 0 ? (
-      mtr_vu_hold_cnt_r -= 1;
-    ) : (
-      mtr_vu_hold_r = max(mtr_vu_hold_r - mtr_pk_hold_decay, -20);
-    );
-    mtr_vu_m >= mtr_vu_hold_m ? (
-      mtr_vu_hold_m = mtr_vu_m; mtr_vu_hold_cnt_m = mtr_pk_hold_time;
-    ) : mtr_vu_hold_cnt_m > 0 ? (
-      mtr_vu_hold_cnt_m -= 1;
-    ) : (
-      mtr_vu_hold_m = max(mtr_vu_hold_m - mtr_pk_hold_decay, -20);
-    );
-    mtr_vu_s >= mtr_vu_hold_s ? (
-      mtr_vu_hold_s = mtr_vu_s; mtr_vu_hold_cnt_s = mtr_pk_hold_time;
-    ) : mtr_vu_hold_cnt_s > 0 ? (
-      mtr_vu_hold_cnt_s -= 1;
-    ) : (
-      mtr_vu_hold_s = max(mtr_vu_hold_s - mtr_pk_hold_decay, -20);
     );
   );
 
@@ -576,7 +398,7 @@ local(n_segs, seg_h, gap, bar_w, i, norm_l, norm_r, seg_norm, sy,
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2. VU NEEDLE METER — REMOVED (replaced by vu_real_kbsg.jsfx-inc)
+// 2. VU NEEDLE METER — not here: rk_vu.jsfx-inc is the analog VU
 // ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -865,7 +687,7 @@ local(center_x, bar_w, tw, th)
 // ═══════════════════════════════════════════════════════════════════════════
 
 function mtr_gonio_draw(cx, cy, radius)
-local(i, gx, gy, px, py, age, alpha, k, dx, dy, r_sq, agc_scale, tw, th)
+local(i, gx, gy, px, py, age, k, dx, dy, r_sq, agc_scale, tw, th)
 (
   gfx_set(0.04, 0.04, 0.06, 1); gfx_circle(cx, cy, radius, 1);
   gfx_set(0.15, 0.15, 0.18, 1); gfx_circle(cx, cy, radius, 0);
@@ -886,6 +708,8 @@ local(i, gx, gy, px, py, age, alpha, k, dx, dy, r_sq, agc_scale, tw, th)
   agc_scale = mtr_gonio_gain > 0.001 ? (0.8 / mtr_gonio_gain) : 1;
   agc_scale = min(agc_scale, 500);
   r_sq = radius * radius;
+  // Colour is constant across all 128 dots — set once, vary only gfx_a.
+  gfx_set(0.3, 0.9, 0.4, 1);
   i = 0;
   loop(128,
     gx = mtr_base[i * 2]; gy = mtr_base[i * 2 + 1];
@@ -893,8 +717,8 @@ local(i, gx, gy, px, py, age, alpha, k, dx, dy, r_sq, agc_scale, tw, th)
     dx = px - cx; dy = py - cy;
     dx * dx + dy * dy <= r_sq ? (
       age = ((mtr_gonio_pos - i + 128) & 127) / 127;
-      alpha = (1 - age) * 0.8;
-      gfx_set(0.3, 0.9, 0.4, alpha); gfx_circle(px, py, 1, 1);
+      gfx_a = (1 - age) * 0.8;
+      gfx_circle(px, py, 1, 1);
     );
     i += 1;
   );
@@ -906,18 +730,21 @@ local(i, gx, gy, px, py, age, alpha, k, dx, dy, r_sq, agc_scale, tw, th)
 // ═══════════════════════════════════════════════════════════════════════════
 
 function mtr_wave_draw(x, y, w, h, channel)
-local(buf_off, n_points, i, sx, sy, samp, prev_x, prev_y, half_h)
+local(buf_off, n_points, i, sx, sy, samp, prev_x, prev_y, half_h, dx_)
 (
   buf_off = channel == 0 ? 256 : 768;
   n_points = min(w, 512); half_h = h / 2;
+  // dx_ = w/n_points is bit-identical to (i*w)/n_points in both branches:
+  // w<=512 -> w/w = 1.0 exactly; w>512 -> /512 is a pure exponent shift.
+  dx_ = w / n_points;
   gfx_set(0.04, 0.04, 0.06, 1); gfx_rect(x, y, w, h);
   gfx_set(0.15, 0.15, 0.18, 1); gfx_rect(x, y, w, h, 0);
-  gfx_set(0.15, 0.15, 0.18, 1); gfx_line(x, y + half_h, x + w, y + half_h);
+  gfx_line(x, y + half_h, x + w, y + half_h);
   channel == 0 ? gfx_set(0.3, 0.85, 0.4, 0.9) : gfx_set(0.3, 0.5, 0.9, 0.9);
   prev_x = x; prev_y = y + half_h;
   i = 0;
   loop(n_points,
-    sx = x + (i * w) / n_points;
+    sx = x + i * dx_;
     samp = mtr_base[buf_off + ((mtr_wave_pos + i) & 511)];
     sy = y + half_h - samp * half_h;
     i > 0 ? gfx_line(prev_x, prev_y, sx, sy);

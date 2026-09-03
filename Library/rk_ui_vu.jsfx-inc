@@ -1,9 +1,0 @@
-// rk_ui_vu.jsfx-inc — Forge compatibility alias for vu_kbsg.jsfx-inc
-// ═══════════════════════════════════════════════════════════════════════════
-// .jsfx exported by Forge (quazmusic.com/forge) import this name. The analog
-// VU library (ballistics + faces) lives in vu_kbsg.jsfx-inc — vu_init /
-// vu_sample / vu_draw / zm_draw_meter and friends all have identical
-// signatures there, so this alias just pulls the real library in.
-// ═══════════════════════════════════════════════════════════════════════════
-
-import vu_kbsg.jsfx-inc

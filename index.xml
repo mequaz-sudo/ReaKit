@@ -3,7 +3,7 @@
   <category name="Library">
     <reapack name="ReaKit Elements.jsfx" type="effect" desc="ReaKit - UI widget library for JSFX (19 knobs / 17 faders / 10 buttons / 12 meters / analog VU / pads / piano) + showcase">
       <metadata>
-        <description><![CDATA[ReaKit is a free, procedural UI/widget library for JSFX. 19 knob styles, 17 slider/fader types, 10 buttons, 12 meters with DSP, analog VU with 11 themes. Crisp at any size, themable with one call, one shared interaction model (drag / ctrl-fine / wheel / double-click reset / automation-safe). Installing this package brings the library incs plus the all-elements showcase JSFX. MIT licensed.]]></description>
+        <description><![CDATA[ReaKit is a free, procedural UI/widget library for JSFX. 19 knob styles, 17 slider/fader types, 10 buttons, 12 meters with DSP, analog VU with 20 faces. Crisp at any size, themable with one call, one shared interaction model (drag / ctrl-fine / wheel / double-click reset / automation-safe). Installing this package brings the library incs plus the all-elements showcase JSFX. MIT licensed.]]></description>
         <link rel="website">https://forum.cockos.com/showthread.php?p=2952442</link>
         <link rel="repository">https://github.com/mequaz-sudo/ReaKit</link>
       </metadata>
@@ -115,13 +115,17 @@ Only sliders_kbsg.jsfx-inc changes; the showcase and all other incs are byte-ide
 - Its native sliders are hidden, so what you get is the GUI - the same thing your own plugin should look like.
 - The layout chrome (panels, sections, readouts, tooltips, palette, tempo divisions) is ~120 lines of ordinary local functions at the top of @init, deliberately NOT a framework: copy them into your plugin and change them.
 - Three controls are hand-rolled and marked GAP because the library has no widget for them yet: an XY pad, an ADSR envelope display, and a dropdown (that last one uses JSFX's own gfx_showmenu, which may stay the right answer for long lists).
-Library incs are unchanged - this release only adds the Starter JSFX.]]></changelog>
+New: rk_vu, the analog VU, rewritten clean-room.
+- The VU meter is new code: rk_vu.jsfx-inc replaces vu_kbsg.jsfx-inc (and rk_ui_vu.jsfx-inc). The movement meets the VU spec - a sine at reference reaches 99% deflection in 300 ms with about 1.2% overshoot, measured on the code itself - and the scale is computed from the published law rather than copied from a table. Twenty faces (Cream, Dark Studio, Black & Gold, Modern White, Broadcast, Midnight, Vintage Amber, Olive, Ivory, Blackface, SSL, Neve, API, Ableton, FL Studio, Red, Yellow, Orange, Emerald, Cobalt), a level face and a gain-reduction face, a hold needle, a peak LED with a settable warn level, a readout, a bezel colour hook, and a face picker: click the meter's coil cover.
+- Calls: vu.rk_vu_init(ref_dbfs) / vu.rk_vu_sample(x) / vu.rk_vu_draw(x, y, w, h, mode, theme, label); vu.rk_vu_init_gr() / vu.rk_vu_sample_gr(linear_gain) for compressors. rk_vu claims no memory, so freemem no longer has to start at 440.
+- If you used vu_kbsg: swap the four calls above; the eleven old faces map onto the twenty by look (Classic->Cream, Knight->Dark Studio, Ivory->Ivory, Black->API, ...). The showcase's Meters tab shows it.
+- meters_kbsg drops its unused ZenoMOD-derived VU physics; its twelve meter styles are unchanged.]]></changelog>
         <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/ReaKit%20Elements.jsfx</source>
         <source main="true" file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/ReaKit%20Starter.jsfx</source>
         <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/knobs_kbsg.jsfx-inc</source>
         <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/sliders_kbsg.jsfx-inc</source>
         <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/buttons_kbsg.jsfx-inc</source>
-        <source file="vu_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/vu_kbsg.jsfx-inc</source>
+        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_vu.jsfx-inc</source>
         <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/meters_kbsg.jsfx-inc</source>
         <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_padgrid.jsfx-inc</source>
         <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_piano.jsfx-inc</source>
@@ -131,7 +135,6 @@ Library incs are unchanged - this release only adds the Starter JSFX.]]></change
         <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_button.jsfx-inc</source>
         <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_slider.jsfx-inc</source>
         <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_meter.jsfx-inc</source>
-        <source file="rk_ui_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Library/rk_ui_vu.jsfx-inc</source>
       </version>
     </reapack>
   </category>

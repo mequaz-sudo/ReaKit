@@ -28,7 +28,7 @@ desc:ReaKit Elements
 //   [nomain] knobs_kbsg.jsfx-inc
 //   [nomain] sliders_kbsg.jsfx-inc
 //   [nomain] buttons_kbsg.jsfx-inc
-//   [nomain] vu_kbsg.jsfx-inc
+//   [nomain] rk_vu.jsfx-inc
 //   [nomain] meters_kbsg.jsfx-inc
 //   [nomain] rk_padgrid.jsfx-inc
 //   [nomain] rk_piano.jsfx-inc
@@ -97,16 +97,15 @@ slider75:55<0,127,1>-KeysV
 import knobs_kbsg.jsfx-inc
 import buttons_kbsg.jsfx-inc
 import sliders_kbsg.jsfx-inc
-import vu_kbsg.jsfx-inc
+import rk_vu.jsfx-inc
 import meters_kbsg.jsfx-inc
 import rk_padgrid.jsfx-inc
 import rk_piano.jsfx-inc
 
 @init
 gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below follows
-freemem = 440;
+freemem = 0;      // rk_vu claims no memory
 KS = 16;
-// freemem starts at 440: vu_kbsg owns addresses 0..437
 km = freemem; freemem += 19 * KS;   // 16 words/knob
 btnmem = freemem; freemem += 11 * 8;   // 8 words/button-family (10 demo styles + nav tab bar)
 sldmem = freemem; freemem += 16 * 16;  // 16 words/slider
@@ -120,16 +119,15 @@ mtr_en_phase = 1;   // enable (set after meter_init resets flags)
 mtr_en_wave = 1;   // enable (set after meter_init resets flags)
 mtr_en_spectrum = 1;   // enable (set after meter_init resets flags)
 mtr_en_lufs = 1;   // enable (set after meter_init resets flags)
-vu_0.vu_init(2);   // VU ballistics (speed 2)
-zm_theme = 0;      // analog VU face theme (scroll over the meter to cycle)
+vu_0.rk_vu_init(-18);   // analog VU: 300 ms movement, 0 VU = a -18 dBFS sine
+_vu_face = 0;           // face 0..19 (Cream); click the meter's coil cover to pick another
 
 @slider
 
 @block
 
 @sample
-vu_0.vu_sample(abs(spl0));
-mtr_0 = max(abs(spl0), mtr_0 * 0.999);   // placeholder peak-decay feed
+vu_0.rk_vu_sample((spl0 + spl1) * 0.5);   // mono sum; the meter rectifies
 meter_process_sample(spl0, spl1);   // drives mtr_peak_l/r, mtr_rms_l/r, mtr_phase, …
 wf_0[wfp_0] = spl0; wfp_0 = wfp_0 < WF_LEN - 1 ? wfp_0 + 1 : 0;
 // audio passthrough — insert DSP above; spl0/spl1 left unchanged
@@ -143,7 +141,6 @@ gfx_clear = 0x2e1a1a;   // canvas #1a1a2e packed as r+g*256+b*65536
 // gfx_w/gfx_h arrive pre-doubled when gfx_ext_retina kicks in).
 sc = min(gfx_w / 740, gfx_h / 480);
 sc < 0.35 ? sc = 0.35;
-zoom = sc;              // vu_kbsg barmeter_hor multiplies its coords by this
 
 // --- per-frame input globals required by the kbsg libs ---
 mx = mouse_x; my = mouse_y;
@@ -528,16 +525,12 @@ sld_vconsole_draw(sc*630, sc*205, sc*36, sc*170, _n2, sm);
 slider1 == 3 ? (
 
 // METERS — all 12 meters_kbsg styles + analog VU (label)
-gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80); gfx_x=sc*14; gfx_y=sc*56; gfx_drawstr("METERS — all 12 meters_kbsg styles + analog VU (scroll VU to cycle its face)");
+gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80); gfx_x=sc*14; gfx_y=sc*56; gfx_drawstr("METERS — all 12 meters_kbsg styles + analog VU (click the VU's cover to pick its face)");
 
-// VU (vu)
-// zm_draw_meter consumes the raw mouse_wheel for its built-in face-theme
-// scroll — hand it back only while the cursor is over the meter, so knobs
-// elsewhere keep their own wheel behavior.
-_vu_hover = mx >= sc*14 && mx <= sc*264 && my >= sc*80 && my <= sc*230;
-_vu_hover && frame_wheel ? mouse_wheel = frame_wheel * 120;
-zm_draw_meter(sc*14, sc*80, sc*250, sc*150, vu_0.nd_pos*23-20, -21, vu_0.over_g>0, zm_theme, 0);   // analog VU (vu_kbsg zm); vu_0.vu_init/vu_sample @init/@sample
-mouse_wheel = 0;
+// VU (vu) — rk_vu, the house analog VU: twenty faces, 300 ms movement.
+// The face picker (rk_vu_picker) is called at the very end of @gfx so its
+// sheet opens over everything; see the bottom of this file.
+vu_0.rk_vu_draw(sc*14, sc*80, sc*250, sc*150, 0, _vu_face, "VU");
 
 // LEDBar (meter)
 mtr_update_db();   // meters_kbsg: linear→dB once per frame
@@ -565,7 +558,7 @@ mtr_gr_draw(sc*190, sc*250, sc*150, sc*18, mtr_gr_db);   // meters_kbsg gr — f
 mtr_phase_draw(sc*366, sc*250, sc*130, sc*18, mtr_phase);   // meters_kbsg phase
 
 // Level (meter)
-barmeter_hor(mtr_0, 250, 16, 700, 180, 0);   // vu_kbsg bar; design coords — zoom (=sc) scales inside, bar spans x 520..700
+mtr_gr_draw(sc*520, sc*250, sc*180, sc*16, mtr_gr_db);   // meters_kbsg gr bar (was the vu_kbsg bar)
 
 // Wave (meter)
 mtr_wave_draw(sc*14, sc*300, sc*160, sc*72, 0);   // meters_kbsg wave
@@ -622,3 +615,11 @@ gfx_setfont(1,"Arial",max(9,floor(18*sc)),'b'); gfx_set(0.91,0.91,0.94); gfx_x=s
 gfx_setfont(1,"Arial",max(9,floor(11*sc)),0); gfx_set(0.66,0.68,0.74); gfx_x=sc*14; gfx_y=sc*362; gfx_drawstr("small caption label");
 
 ); // end PADS & KEYS tab
+
+// ── Analog VU face picker: click the coil cover for a sheet of all twenty faces
+// as live miniatures; click one to pick it, anywhere else to close. LAST in
+// @gfx (it draws over everything), Meters tab only. ──
+slider1 == 3 ? (
+  _vu_pk = vu_0.rk_vu_picker(sc*14, sc*80, sc*250, sc*150, _vu_face);
+  _vu_pk >= 0 ? _vu_face = _vu_pk;
+);

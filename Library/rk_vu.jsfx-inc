@@ -1,4 +1,4 @@
-desc:ReaKit analog VU meter — self-contained face, 5 themes
+desc:ReaKit analog VU meter — self-contained face, 20 themes
 // ══════════════════════════════════════════════════════════════════════
 // rk_vu.jsfx-inc — a complete VU meter that draws into a plain rectangle.
 //
@@ -60,7 +60,7 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 //                                          LINEAR gain, 1.0 = none — vu_kbsg's
 //                                          vu_gr_sample contract. Draw with mode 1.
 //   vu.rk_vu_draw(x, y, w, h, 0, 0, "L")   mode 0 = level, 1 = gain reduction
-//                                          theme 0..4, label "" for none
+//                                          theme 0..19 (-1 host), label "" for none
 //   rk_vu_draw_pair(x,y,w,h,mode,theme, posA,holdA,overA,labA, posB,...)
 //                                          stereo or mid/side, two plates
 //   rk_vu_face / rk_vu_ink / rk_vu_cap_led two needles on ONE plate
@@ -78,8 +78,10 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 //   rk_vu_set_hold(seconds)                hold-needle fall time (0 = off)
 //   rk_vu_theme_name(i, #dst)              theme name for a picker
 //
-// THEMES  0 Cream · 1 Dark Studio · 2 Black & Gold · 3 Modern White
-//         4 Broadcast
+// THEMES  0 Cream  1 Dark Studio  2 Black & Gold  3 Modern White  4 Broadcast
+//         5 Midnight  6 Vintage Amber  7 Olive  8 Ivory  9 Blackface
+//         10 SSL  11 Neve  12 API  13 Ableton  14 FL Studio
+//         15 Red  16 Yellow  17 Orange  18 Emerald  19 Cobalt   (-1 = host palette)
 // ══════════════════════════════════════════════════════════════════════
 
 @init
@@ -115,69 +117,6 @@ function rk_vu_ang(frac) ( (min(max(frac, 0), 1) - 0.5) * RKVU_SWEEP; );
 function rk_vu_px(cx, r, a) ( cx + sin(a) * r; );
 function rk_vu_py(cy, r, a) ( cy - cos(a) * r; );
 
-// ── Themes ──────────────────────────────────────────────────────────────
-function rk_vu_theme(t) (
-  t = min(max(floor(t + 0.5), 0), 4);
-  t == 0 ? (                                                    // Cream
-    rkvu_pl_r=0.949; rkvu_pl_g=0.937; rkvu_pl_b=0.847;
-    rkvu_p2_r=0.898; rkvu_p2_g=0.871; rkvu_p2_b=0.741;
-    rkvu_bz_r=0.169; rkvu_bz_g=0.169; rkvu_bz_b=0.173;
-    rkvu_ik_r=0.102; rkvu_ik_g=0.102; rkvu_ik_b=0.110;
-    rkvu_rd_r=0.761; rkvu_rd_g=0.102; rkvu_rd_b=0.086;
-    rkvu_nd_r=0.063; rkvu_nd_g=0.063; rkvu_nd_b=0.071;
-    rkvu_cp_r=0.129; rkvu_cp_g=0.129; rkvu_cp_b=0.137;
-    rkvu_ld_r=1.000; rkvu_ld_g=0.204; rkvu_ld_b=0.102;
-    rkvu_ar_r=0.910; rkvu_ar_g=0.639; rkvu_ar_b=0.090;
-  ) : t == 1 ? (                                                // Dark Studio
-    rkvu_pl_r=0.129; rkvu_pl_g=0.137; rkvu_pl_b=0.157;
-    rkvu_p2_r=0.086; rkvu_p2_g=0.094; rkvu_p2_b=0.110;
-    rkvu_bz_r=0.043; rkvu_bz_g=0.047; rkvu_bz_b=0.055;
-    rkvu_ik_r=0.784; rkvu_ik_g=0.804; rkvu_ik_b=0.847;
-    rkvu_rd_r=1.000; rkvu_rd_g=0.290; rkvu_rd_b=0.235;
-    rkvu_nd_r=0.902; rkvu_nd_g=0.918; rkvu_nd_b=0.949;
-    rkvu_cp_r=0.031; rkvu_cp_g=0.035; rkvu_cp_b=0.043;
-    rkvu_ld_r=1.000; rkvu_ld_g=0.259; rkvu_ld_b=0.180;
-    rkvu_ar_r=0.298; rkvu_ar_g=0.761; rkvu_ar_b=0.878;
-  ) : t == 2 ? (                                                // Black & Gold
-    rkvu_pl_r=0.086; rkvu_pl_g=0.075; rkvu_pl_b=0.063;
-    rkvu_p2_r=0.047; rkvu_p2_g=0.039; rkvu_p2_b=0.031;
-    rkvu_bz_r=0.031; rkvu_bz_g=0.027; rkvu_bz_b=0.024;
-    rkvu_ik_r=0.847; rkvu_ik_g=0.698; rkvu_ik_b=0.353;
-    rkvu_rd_r=0.878; rkvu_rd_g=0.271; rkvu_rd_b=0.180;
-    rkvu_nd_r=0.941; rkvu_nd_g=0.847; rkvu_nd_b=0.604;
-    rkvu_cp_r=0.031; rkvu_cp_g=0.027; rkvu_cp_b=0.024;
-    rkvu_ld_r=1.000; rkvu_ld_g=0.690; rkvu_ld_b=0.125;
-    rkvu_ar_r=0.847; rkvu_ar_g=0.698; rkvu_ar_b=0.353;
-  ) : t == 3 ? (                                                // Modern White
-    rkvu_pl_r=0.980; rkvu_pl_g=0.980; rkvu_pl_b=0.980;
-    rkvu_p2_r=0.910; rkvu_p2_g=0.910; rkvu_p2_b=0.914;
-    rkvu_bz_r=0.784; rkvu_bz_g=0.784; rkvu_bz_b=0.792;
-    rkvu_ik_r=0.165; rkvu_ik_g=0.165; rkvu_ik_b=0.176;
-    rkvu_rd_r=0.847; rkvu_rd_g=0.227; rkvu_rd_b=0.165;
-    rkvu_nd_r=0.102; rkvu_nd_g=0.102; rkvu_nd_b=0.110;
-    rkvu_cp_r=0.165; rkvu_cp_g=0.165; rkvu_cp_b=0.176;
-    rkvu_ld_r=0.878; rkvu_ld_g=0.188; rkvu_ld_b=0.125;
-    rkvu_ar_r=0.227; rkvu_ar_g=0.482; rkvu_ar_b=0.835;
-  ) : (                                                          // Broadcast
-    rkvu_pl_r=0.063; rkvu_pl_g=0.086; rkvu_pl_b=0.110;
-    rkvu_p2_r=0.035; rkvu_p2_g=0.051; rkvu_p2_b=0.071;
-    rkvu_bz_r=0.024; rkvu_bz_g=0.039; rkvu_bz_b=0.055;
-    rkvu_ik_r=0.498; rkvu_ik_g=0.831; rkvu_ik_b=0.910;
-    rkvu_rd_r=1.000; rkvu_rd_g=0.314; rkvu_rd_b=0.251;
-    rkvu_nd_r=0.918; rkvu_nd_g=0.965; rkvu_nd_b=0.980;
-    rkvu_cp_r=0.024; rkvu_cp_g=0.039; rkvu_cp_b=0.055;
-    rkvu_ld_r=1.000; rkvu_ld_g=0.251; rkvu_ld_b=0.188;
-    rkvu_ar_r=0.949; rkvu_ar_g=0.757; rkvu_ar_b=0.306;
-  );
-);
-
-function rk_vu_theme_name(i, dst) (
-  i == 0 ? strcpy(dst, "Cream")       : i == 1 ? strcpy(dst, "Dark Studio") :
-  i == 2 ? strcpy(dst, "Black & Gold"): i == 3 ? strcpy(dst, "Modern White"):
-           strcpy(dst, "Broadcast");
-  dst;
-);
-
 // ── Host palette ────────────────────────────────────────────────────────
 // A plugin's own theme drives the meter: set the nine colour slots from
 // packed 0xRRGGBB, then draw with theme -1 and rk_vu_face leaves them alone.
@@ -196,6 +135,103 @@ function rk_vu_pal(slot, hex) local(r, g, b) (
   slot == 6 ? ( rkvu_cp_r = r; rkvu_cp_g = g; rkvu_cp_b = b; ) :
   slot == 7 ? ( rkvu_ld_r = r; rkvu_ld_g = g; rkvu_ld_b = b; ) :
               ( rkvu_ar_r = r; rkvu_ar_g = g; rkvu_ar_b = b; );
+);
+
+// ── Themes ──────────────────────────────────────────────────────────────
+// Twenty faces, nine colours each: plate, plate shade, bezel, ink, red zone,
+// needle, cover, LED, level band. The console ones are designed from the
+// hardware's look (SSL's cream and charcoal, Neve's blue, API's black and
+// blue, Live's flat grey and orange, FL's charcoal and orange), not from
+// anyone's code. On the red and orange plates the "red zone" is yellow or
+// dark red, because red on red does not read.
+RKVU_THEMES = 20;
+
+function rk_vu_theme(t) (
+  t = min(max(floor(t + 0.5), 0), RKVU_THEMES - 1);
+  t == 0 ? (           // Cream
+    rk_vu_pal(0, $xF2EFD8); rk_vu_pal(1, $xE5DEBD); rk_vu_pal(2, $x2B2B2C); rk_vu_pal(3, $x1A1A1C); rk_vu_pal(4, $xC21A16); rk_vu_pal(5, $x101012); rk_vu_pal(6, $x212123); rk_vu_pal(7, $xFF341A); rk_vu_pal(8, $xE8A317);
+  ) :
+  t == 1 ? (     // Dark Studio
+    rk_vu_pal(0, $x212328); rk_vu_pal(1, $x16181C); rk_vu_pal(2, $x0B0C0E); rk_vu_pal(3, $xC8CDD8); rk_vu_pal(4, $xFF4A3C); rk_vu_pal(5, $xE6EAF2); rk_vu_pal(6, $x08090B); rk_vu_pal(7, $xFF422E); rk_vu_pal(8, $x4CC2E0);
+  ) :
+  t == 2 ? (    // Black & Gold
+    rk_vu_pal(0, $x16130F); rk_vu_pal(1, $x0C0A08); rk_vu_pal(2, $x080706); rk_vu_pal(3, $xD8B25A); rk_vu_pal(4, $xE0452E); rk_vu_pal(5, $xF0D89A); rk_vu_pal(6, $x080706); rk_vu_pal(7, $xFFB020); rk_vu_pal(8, $xD8B25A);
+  ) :
+  t == 3 ? (    // Modern White
+    rk_vu_pal(0, $xFAFAFA); rk_vu_pal(1, $xE8E8E9); rk_vu_pal(2, $xC8C8CA); rk_vu_pal(3, $x2A2A2D); rk_vu_pal(4, $xD83A2A); rk_vu_pal(5, $x1A1A1C); rk_vu_pal(6, $x2A2A2D); rk_vu_pal(7, $xE03020); rk_vu_pal(8, $x3A7BD5);
+  ) :
+  t == 4 ? (       // Broadcast
+    rk_vu_pal(0, $x10161C); rk_vu_pal(1, $x090D12); rk_vu_pal(2, $x060A0E); rk_vu_pal(3, $x7FD4E8); rk_vu_pal(4, $xFF5040); rk_vu_pal(5, $xEAF6FA); rk_vu_pal(6, $x060A0E); rk_vu_pal(7, $xFF4030); rk_vu_pal(8, $xF2C14E);
+  ) :
+  t == 5 ? (        // Midnight
+    rk_vu_pal(0, $x2A2B30); rk_vu_pal(1, $x1C1D21); rk_vu_pal(2, $x101114); rk_vu_pal(3, $x9EA3AD); rk_vu_pal(4, $xFF3FA8); rk_vu_pal(5, $x57D7FF); rk_vu_pal(6, $x0B0C0E); rk_vu_pal(7, $xFF3FA8); rk_vu_pal(8, $x57D7FF);
+  ) :
+  t == 6 ? (   // Vintage Amber
+    rk_vu_pal(0, $xD9B37A); rk_vu_pal(1, $xC29A5E); rk_vu_pal(2, $x3A2A18); rk_vu_pal(3, $x3B2A14); rk_vu_pal(4, $xB8321E); rk_vu_pal(5, $x2A1C0C); rk_vu_pal(6, $x3A2A18); rk_vu_pal(7, $xFF5A1A); rk_vu_pal(8, $xE07A1F);
+  ) :
+  t == 7 ? (           // Olive
+    rk_vu_pal(0, $x6B7A55); rk_vu_pal(1, $x566344); rk_vu_pal(2, $x2A3020); rk_vu_pal(3, $xF0EAD0); rk_vu_pal(4, $xE24B2E); rk_vu_pal(5, $xF5F0DC); rk_vu_pal(6, $x222818); rk_vu_pal(7, $xFF4A2A); rk_vu_pal(8, $xD9C36A);
+  ) :
+  t == 8 ? (           // Ivory
+    rk_vu_pal(0, $xF6F1E4); rk_vu_pal(1, $xE9E1CE); rk_vu_pal(2, $x1E1E20); rk_vu_pal(3, $x141416); rk_vu_pal(4, $xC8241C); rk_vu_pal(5, $xC8241C); rk_vu_pal(6, $x1E1E20); rk_vu_pal(7, $xFF2A1A); rk_vu_pal(8, $xC89A3A);
+  ) :
+  t == 9 ? (       // Blackface
+    rk_vu_pal(0, $x1A1A1A); rk_vu_pal(1, $x0F0F0F); rk_vu_pal(2, $x050505); rk_vu_pal(3, $xF0F0F0); rk_vu_pal(4, $xE0302A); rk_vu_pal(5, $xE0302A); rk_vu_pal(6, $x050505); rk_vu_pal(7, $xFF3A2A); rk_vu_pal(8, $xC8C8C8);
+  ) :
+  t == 10 ? (             // SSL
+    rk_vu_pal(0, $xF0EDE3); rk_vu_pal(1, $xDCD8CC); rk_vu_pal(2, $x2C2F33); rk_vu_pal(3, $x1B1D20); rk_vu_pal(4, $xD22B2B); rk_vu_pal(5, $x15171A); rk_vu_pal(6, $x2C2F33); rk_vu_pal(7, $xFF3A2A); rk_vu_pal(8, $x6F8BA6);
+  ) :
+  t == 11 ? (            // Neve
+    rk_vu_pal(0, $xF3EAD3); rk_vu_pal(1, $xE3D7B8); rk_vu_pal(2, $x2E4057); rk_vu_pal(3, $x1E1A14); rk_vu_pal(4, $xC8102E); rk_vu_pal(5, $xC8102E); rk_vu_pal(6, $x2E4057); rk_vu_pal(7, $xFF2A1A); rk_vu_pal(8, $x2E4057);
+  ) :
+  t == 12 ? (             // API
+    rk_vu_pal(0, $x141414); rk_vu_pal(1, $x0A0A0A); rk_vu_pal(2, $x050505); rk_vu_pal(3, $xF2F2F2); rk_vu_pal(4, $xE03A2A); rk_vu_pal(5, $xFFFFFF); rk_vu_pal(6, $x050505); rk_vu_pal(7, $xFF3A2A); rk_vu_pal(8, $x1E6FB8);
+  ) :
+  t == 13 ? (         // Ableton
+    rk_vu_pal(0, $xE9E9E9); rk_vu_pal(1, $xDADADA); rk_vu_pal(2, $xC4C4C4); rk_vu_pal(3, $x3C3C3C); rk_vu_pal(4, $xE8552B); rk_vu_pal(5, $xFF9F1A); rk_vu_pal(6, $x6A6A6A); rk_vu_pal(7, $xFF5A1A); rk_vu_pal(8, $xFF9F1A);
+  ) :
+  t == 14 ? (       // FL Studio
+    rk_vu_pal(0, $x1E1F26); rk_vu_pal(1, $x15161B); rk_vu_pal(2, $x0E0F13); rk_vu_pal(3, $xC9CCD6); rk_vu_pal(4, $xFF4D3A); rk_vu_pal(5, $xF98F19); rk_vu_pal(6, $x0E0F13); rk_vu_pal(7, $xFF4D3A); rk_vu_pal(8, $xF98F19);
+  ) :
+  t == 15 ? (             // Red
+    rk_vu_pal(0, $x9B1F1F); rk_vu_pal(1, $x7A1616); rk_vu_pal(2, $x2A0A0A); rk_vu_pal(3, $xF6E8D8); rk_vu_pal(4, $xFFD84A); rk_vu_pal(5, $xFFF4E0); rk_vu_pal(6, $x2A0A0A); rk_vu_pal(7, $xFFE04A); rk_vu_pal(8, $xFFB347);
+  ) :
+  t == 16 ? (          // Yellow
+    rk_vu_pal(0, $xF2C230); rk_vu_pal(1, $xD9A81E); rk_vu_pal(2, $x2A2418); rk_vu_pal(3, $x1A1A1A); rk_vu_pal(4, $xD22B2B); rk_vu_pal(5, $x1A1A1A); rk_vu_pal(6, $x2A2418); rk_vu_pal(7, $xFF2A1A); rk_vu_pal(8, $xE0641E);
+  ) :
+  t == 17 ? (          // Orange
+    rk_vu_pal(0, $xF07A2A); rk_vu_pal(1, $xD4661C); rk_vu_pal(2, $x3A1C08); rk_vu_pal(3, $x2A1608); rk_vu_pal(4, $x8E0E0E); rk_vu_pal(5, $x2A1608); rk_vu_pal(6, $x3A1C08); rk_vu_pal(7, $xFF1E1E); rk_vu_pal(8, $xFFD24A);
+  ) :
+  t == 18 ? (         // Emerald
+    rk_vu_pal(0, $x1F7A4F); rk_vu_pal(1, $x16603D); rk_vu_pal(2, $x0C2A1B); rk_vu_pal(3, $xEAF5EC); rk_vu_pal(4, $xFF6A3A); rk_vu_pal(5, $xFFFFFF); rk_vu_pal(6, $x0C2A1B); rk_vu_pal(7, $xFF5A2A); rk_vu_pal(8, $xA8E6A0);
+  ) :
+  (          // Cobalt
+    rk_vu_pal(0, $x1F4FA8); rk_vu_pal(1, $x163C84); rk_vu_pal(2, $x0B1F45); rk_vu_pal(3, $xEAF0FF); rk_vu_pal(4, $xFF5A4A); rk_vu_pal(5, $xFFFFFF); rk_vu_pal(6, $x0B1F45); rk_vu_pal(7, $xFF4A3A); rk_vu_pal(8, $x8FD3FF);
+  );
+);
+
+function rk_vu_theme_name(i, dst) (
+  i == 0  ? strcpy(dst, "Cream") :
+  i == 1  ? strcpy(dst, "Dark Studio") :
+  i == 2  ? strcpy(dst, "Black & Gold") :
+  i == 3  ? strcpy(dst, "Modern White") :
+  i == 4  ? strcpy(dst, "Broadcast") :
+  i == 5  ? strcpy(dst, "Midnight") :
+  i == 6  ? strcpy(dst, "Vintage Amber") :
+  i == 7  ? strcpy(dst, "Olive") :
+  i == 8  ? strcpy(dst, "Ivory") :
+  i == 9  ? strcpy(dst, "Blackface") :
+  i == 10 ? strcpy(dst, "SSL") :
+  i == 11 ? strcpy(dst, "Neve") :
+  i == 12 ? strcpy(dst, "API") :
+  i == 13 ? strcpy(dst, "Ableton") :
+  i == 14 ? strcpy(dst, "FL Studio") :
+  i == 15 ? strcpy(dst, "Red") :
+  i == 16 ? strcpy(dst, "Yellow") :
+  i == 17 ? strcpy(dst, "Orange") :
+  i == 18 ? strcpy(dst, "Emerald") :
+           strcpy(dst, "Cobalt");
+  dst;
 );
 
 // ── Geometry ────────────────────────────────────────────────────────────

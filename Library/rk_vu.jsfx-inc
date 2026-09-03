@@ -52,6 +52,9 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 //                                          1176 in a DAW), -20 SMPTE. Product decision
 //                                          2026-09-01: 0 unless it is a hardware model.
 //   vu.rk_vu_sample(spl0)                  feed it; abs() is taken here
+//   vu.rk_vu_init_gr() / vu.rk_vu_sample_gr(gain)   gain-reduction meter: feed
+//                                          LINEAR gain, 1.0 = none — vu_kbsg's
+//                                          vu_gr_sample contract. Draw with mode 1.
 //   vu.rk_vu_draw(x, y, w, h, 0, 0, "L")   mode 0 = level, 1 = gain reduction
 //                                          theme 0..4, label "" for none
 //   rk_vu_draw_pair(x,y,w,h,mode,theme, posA,holdA,overA,labA, posB,...)
@@ -414,6 +417,42 @@ function rk_vu_set_ref(ref_db) (
   this.lim = 10 ^ ((ref_db + 3) / 20);
 );
 
+// Gain-reduction meter. Same movement, same ballistic, but the thing being
+// tracked is the compressor's GAIN, fed linear (1.0 = no reduction, 0.5 = 6 dB)
+// exactly as vu_kbsg's vu_gr_sample took it, so a compressor swaps over
+// without changing what it passes. The needle rests at 0 on the left and
+// swings right with reduction — the dedicated-GR-scale convention vu_kbsg
+// used, not the 1176's rest-at-0-VU-and-drop-left. Hold tracks the DEEPEST
+// reduction. No transcendentals here: the dB mapping happens in the draw.
+function rk_vu_init_gr() (
+  this.pos = 1; this.vel = 0; this.hold = 1; this.hold_t = 0;
+  this.acc = 0; this.cnt = 0; this.over = 0;
+  this.ref = 1; this.lim = 2;              // LED never trips on a GR meter
+  this.dt  = RKVU_DEC / max(srate, 1);
+  this.gr  = 1;                            // marks the instance as GR
+);
+
+function rk_vu_sample_gr(gain) local(tgt, a) (
+  gain = min(max(gain, 0), 1);
+  this.acc = this.cnt == 0 ? gain : min(this.acc, gain);   // deepest in the block
+  this.cnt += 1;
+  this.cnt >= RKVU_DEC ? (
+    tgt = this.acc;
+    a   = RKVU_WN * RKVU_WN * (tgt - this.pos)
+        - 2 * RKVU_ZETA * RKVU_WN * this.vel;
+    this.vel += a * this.dt;
+    this.pos += this.vel * this.dt;
+    this.pos > 1 ? ( this.pos = 1; this.vel = min(this.vel, 0); );
+    this.pos < 0 ? ( this.pos = 0; this.vel = max(this.vel, 0); );
+    abs(this.vel) < 0.0000001 ? this.vel = 0;
+
+    this.pos < this.hold ? ( this.hold = this.pos; this.hold_t = RKVU_HOLD_S; );
+    this.hold_t > 0 ? this.hold_t -= this.dt
+                    : this.hold = min(this.hold + this.dt * 0.8, this.pos);
+    this.cnt = 0;
+  );
+);
+
 function rk_vu_sample(x) local(amp, tgt, a) (
   x = abs(x);
   this.acc += x;
@@ -468,10 +507,12 @@ function rk_vu_face(x, y, w, h, mode, theme, label) (
 );
 
 // One movement's ink on the face last drawn: band, hold needle, needle.
+// In GR mode `pos`/`hold` are linear GAIN and the scale is 0..-20 dB of
+// reduction, linear in dB, so 0.5 (6 dB) sits at 0.3 of the travel.
 function rk_vu_ink(pos, hold, mode, slot) local(frac, hfrac) (
-  frac  = mode == 1 ? min(max(pos,  0), 1)
+  frac  = mode == 1 ? min(max(-20 * log10(max(pos,  0.01)) / 20, 0), 1)
                     : rk_vu_db2frac(20 * log10(max(pos,  0.0000001)));
-  hfrac = mode == 1 ? min(max(hold, 0), 1)
+  hfrac = mode == 1 ? min(max(-20 * log10(max(hold, 0.01)) / 20, 0), 1)
                     : rk_vu_db2frac(20 * log10(max(hold, 0.0000001)));
   _rk_vu_arc_fill(frac, slot);
   RKVU_HOLD_S > 0 && hfrac > frac + 0.005 ?

@@ -456,7 +456,12 @@ function rk_vu_init(ref_db) (
 // LEGACY: read like the meter EON has been shipping (vu_kbsg section 7 at
 // speed 61 with a reference of 0 baked in). That meter is peak-driven, its
 // spring is a second order at wn 12.12 / zeta 0.99, and its scale is linear
-// position labelled as dB. This switch runs THIS movement on a block-peak
+// position labelled as dB. ⚠️ That is chris-s's ORIGINAL physics, NOT the
+// current ZenoMOD: ZenoMOD 1.8.0 averages its detector and solves Rise Time /
+// Overshoot to zeta 0.813, wn 13.79 — which is this file's STANDARD mode.
+// Measured side by side on sines from -38 to 0 dBFS, standard rk_vu and
+// ZenoMOD 1.8.0 agree to 0.24 dB and both hit 99% of a step at ~300 ms. So:
+// standard = ZenoMOD as installed; legacy = what EON's plugins showed before. This switch runs THIS movement on a block-peak
 // detector at that spring's constants, then maps the settled position onto
 // the old reading through rk_vu_legacy_ratio. Matches the shipping meter to
 // 0.11 dB on sines from -24 to 0 dBFS. For a migrated plugin that must show
@@ -474,7 +479,7 @@ function rk_vu_set_legacy(on) (
 function rk_vu_set_ref(ref_db) (
   this.ref = 10 ^ (ref_db / 20);
   this.ref_db = ref_db;
-  this.legacy ? 0 : this.lim = 10 ^ ((ref_db + 3) / 20);
+  !this.legacy ? this.lim = 10 ^ ((ref_db + 3) / 20);   // legacy keeps its 0 dBFS LED
 );
 
 // Gain-reduction meter. Same movement, same ballistic, but the thing being
@@ -601,8 +606,9 @@ function rk_vu_legacy_ratio(p) local(l) (
 // One movement, one rect.
 function rk_vu_draw(x, y, w, h, mode, theme, label) (
   rk_vu_face(x, y, w, h, mode, theme, label);
-  this.legacy ? rk_vu_ink(rk_vu_legacy_ratio(this.pos), rk_vu_legacy_ratio(this.hold), mode, 0)
-              : rk_vu_ink(this.pos, this.hold, mode, 0);
+  this.legacy && mode == 0
+    ? rk_vu_ink(rk_vu_legacy_ratio(this.pos), rk_vu_legacy_ratio(this.hold), mode, 0)
+    : rk_vu_ink(this.pos, this.hold, mode, 0);
   rk_vu_cap_led(this.over > 0);
 );
 

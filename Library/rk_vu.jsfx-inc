@@ -169,16 +169,26 @@ function rk_vu_theme_name(i, dst) (
 // outermost thing drawn, so the radius is solved from ITS extent — that is
 // what keeps the numbers inside the plate at any aspect ratio.
 function rk_vu_geom(x, y, w, h) local(pad, rl, half, tx) (
-  pad  = min(w, h) * 0.05;
+  // A VU face is wider than tall. With the pivot at 90% of the height and the
+  // radius bound by the width, any rect taller than ~1.6:1 turns its extra
+  // height into empty plate ABOVE the arc — a 195x300 stereo half was 60%
+  // dead space. So the face is capped at 1.6:1 and centred in the rect; the
+  // leftover belongs to the host. A 400x300 rect draws a 400x250 face.
+  rkvu_ow = min(w, h * 1.6);
+  rkvu_oh = rkvu_ow / 1.6;
+  rkvu_ox = x + (w - rkvu_ow) * 0.5;
+  rkvu_oy = y + (h - rkvu_oh) * 0.5;
+
+  pad  = min(rkvu_ow, rkvu_oh) * 0.05;
   rl   = 1.11;                                  // label ring, x arc radius
   half = sin(RKVU_SWEEP * 0.5);                 // horizontal reach at the ends
   // The end labels ("-20", "3") are CENTRED on the ring, so half their text
-  // hangs outside it. At fsz = 0.135r a three-glyph label is ~0.32r wide;
-  // budgeting 0.16r keeps them off the bezel at any size. Seen clipping.
-  tx   = 0.16;
-  rkvu_cx = x + w * 0.5;
-  rkvu_cy = y + h * 0.90;                       // pivot low on the plate
-  rkvu_r  = min((w * 0.5 - pad) / (half * rl + tx), (rkvu_cy - y - pad) / rl);
+  // hangs outside it. At fsz = 0.12r a three-glyph label is ~0.28r wide;
+  // budgeting 0.14r keeps them off the bezel at any size.
+  tx   = 0.14;
+  rkvu_cx = rkvu_ox + rkvu_ow * 0.5;
+  rkvu_cy = rkvu_oy + rkvu_oh * 0.90;           // pivot low on the plate
+  rkvu_r  = min((rkvu_ow * 0.5 - pad) / (half * rl + tx), (rkvu_cy - rkvu_oy - pad) / rl);
   rkvu_r  = max(rkvu_r, 4);
 );
 
@@ -227,8 +237,20 @@ function _rk_vu_plate(x, y, w, h) local(i, n, t, br) (
 
 // ── Scale: arc, red zone, ticks, numbers ────────────────────────────────
 function _rk_vu_scale(mode, fsz)
-local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv) (
+local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv,
+      fmin, w2, w3, w7, ring, tier, minor, mid, show) (
   a0 = rk_vu_ang(0); a1 = rk_vu_ang(1);
+
+  // which numerals fit: measure, don't guess
+  fmin = max(7, floor(fsz * 0.72 + 0.5));
+  gfx_setfont(1, "Arial", fsz, 'b');
+  gfx_measurestr("-3", w3, th); gfx_measurestr("-7", w7, th);
+  gfx_setfont(1, "Arial", fmin, 'b');
+  gfx_measurestr("-2", w2, th);
+  ring = RKVU_SWEEP * rkvu_r * 1.11;            // arc length of the label ring
+  tier = 0;
+  (w3 + w2) * 0.5 + 2 > (rk_vu_db2frac(-2) - rk_vu_db2frac(-3)) * ring ? tier = 1;
+  tier == 1 && (w7 + w7) * 0.5 + 2 > (rk_vu_db2frac(-5) - rk_vu_db2frac(-7)) * ring ? tier = 2;
 
   gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 1);
   gfx_arc(rkvu_cx, rkvu_cy, rkvu_r, a0, a1, 1);
@@ -264,12 +286,18 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv) (
       gfx_line(rk_vu_px(rkvu_cx, r1, a) + 1, rk_vu_py(rkvu_cy, r1, a),
                rk_vu_px(rkvu_cx, r2, a) + 1, rk_vu_py(rkvu_cy, r2, a), 1);
 
-    sprintf(#_rkvu_l, "%d", dbv);
-    gfx_measurestr(#_rkvu_l, tw, th);
-    lx = rk_vu_px(rkvu_cx, rkvu_r * 1.11, a);
-    ly = rk_vu_py(rkvu_cy, rkvu_r * 1.11, a);
-    gfx_x = lx - tw * 0.5; gfx_y = ly - th * 0.5;
-    gfx_drawstr(#_rkvu_l);
+    minor = mode == 0 && (i == 5 || i == 6 || i == 8 || i == 9);   // -2 -1 1 2
+    mid   = mode == 0 && (i == 2 || i == 3 || i == 4);             // -7 -5 -3
+    show  = minor ? tier == 0 : mid ? tier < 2 : 1;
+    show ? (
+      gfx_setfont(1, "Arial", minor ? fmin : fsz, 'b');
+      sprintf(#_rkvu_l, "%d", dbv);
+      gfx_measurestr(#_rkvu_l, tw, th);
+      lx = rk_vu_px(rkvu_cx, rkvu_r * 1.11, a);
+      ly = rk_vu_py(rkvu_cy, rkvu_r * 1.11, a);
+      gfx_x = lx - tw * 0.5; gfx_y = ly - th * 0.5;
+      gfx_drawstr(#_rkvu_l);
+    );
     i += 1;
   );
 );
@@ -357,15 +385,14 @@ function _rk_vu_cover() local(R, i, dy, hw, n) (
 // Glass. A soft diagonal highlight across the upper-left of the face and
 // nothing else — drawn LAST because it is in front of everything, and kept
 // faint so the ink underneath stays legible.
-function _rk_vu_glass() local(rows, i, t, wdt, a) (
-  rows = max(floor(rkvu_fh * 0.45), 4);
+function _rk_vu_glass() local(rows, i, t, a) (
+  rows = max(floor(rkvu_fh * 0.30), 3);
   i = 0;
   loop(rows,
     t = i / rows;
-    wdt = rkvu_fw * (0.62 - t * 0.42);
-    a = 0.085 * (1 - t) * (1 - t);
+    a = 0.055 * (1 - t) * (1 - t);
     gfx_set(1, 1, 1, a);
-    gfx_rect(rkvu_fx, rkvu_fy + i, wdt, 1);
+    gfx_rect(rkvu_fx, rkvu_fy + i, rkvu_fw, 1);
     i += 1;
   );
 );
@@ -504,8 +531,8 @@ function rk_vu_sample(x) local(amp, tgt, a) (
 function rk_vu_face(x, y, w, h, mode, theme, label) (
   rk_vu_theme(theme);
   rk_vu_geom(x, y, w, h);
-  rkvu_fsz = max(8, floor(rkvu_r * 0.135 * max(1, gfx_ext_retina) + 0.5));
-  _rk_vu_plate(x, y, w, h);
+  rkvu_fsz = max(8, floor(rkvu_r * 0.12 * max(1, gfx_ext_retina) + 0.5));
+  _rk_vu_plate(rkvu_ox, rkvu_oy, rkvu_ow, rkvu_oh);
   _rk_vu_scale(mode, rkvu_fsz);
   _rk_vu_label(label, rkvu_fsz);
 );

@@ -65,6 +65,11 @@ desc:ReaKit analog VU meter — self-contained face, 5 themes
 //                                          stereo or mid/side, two plates
 //   rk_vu_face / rk_vu_ink / rk_vu_cap_led two needles on ONE plate
 //   vu.rk_vu_set_ref(db)                   move 0 VU without resetting the needle
+//   vu.rk_vu_set_legacy(1)                 read like the meter EON shipped before this
+//                                          one (peak-driven, its calibration, its
+//                                          feel) - for a migration that must not
+//                                          change what users see. 0 = the standard.
+//   rk_vu_legacy_ratio(pos)                the same map, for rk_vu_draw_pair callers
 //   rk_vu_set_hold(seconds)                hold-needle fall time (0 = off)
 //   rk_vu_theme_name(i, #dst)              theme name for a picker
 //
@@ -441,8 +446,26 @@ function rk_vu_init(ref_db) (
   // 0 VU = a sine at ref_db. mean|sine| = 2A/pi, so scale the rectified
   // average by pi/2 to recover the peak the reference is quoted in.
   this.ref = 10 ^ (ref_db / 20);
+  this.ref_db = ref_db;
   this.dt  = RKVU_DEC / max(srate, 1);
   this.lim = 10 ^ ((ref_db + 3) / 20);   // peak LED at +3 VU
+  this.zeta = RKVU_ZETA; this.wn = RKVU_WN;
+  this.legacy = 0;
+);
+
+// LEGACY: read like the meter EON has been shipping (vu_kbsg section 7 at
+// speed 61 with a reference of 0 baked in). That meter is peak-driven, its
+// spring is a second order at wn 12.12 / zeta 0.99, and its scale is linear
+// position labelled as dB. This switch runs THIS movement on a block-peak
+// detector at that spring's constants, then maps the settled position onto
+// the old reading through rk_vu_legacy_ratio. Matches the shipping meter to
+// 0.11 dB on sines from -24 to 0 dBFS. For a migrated plugin that must show
+// its users exactly what they saw yesterday; the standard mode is the truth.
+function rk_vu_set_legacy(on) (
+  this.legacy = on ? 1 : 0;
+  this.zeta = on ? 0.993 : RKVU_ZETA;
+  this.wn   = on ? 12.12 : RKVU_WN;
+  this.lim  = on ? 1.0 : 10 ^ ((this.ref_db + 3) / 20);   // its LED trips at 0 dBFS
 );
 
 // Change the reference on a running meter. 0 VU = a sine at ref_db; the peak
@@ -450,7 +473,8 @@ function rk_vu_init(ref_db) (
 // ships at); -20 SMPTE; 0 reads like REAPER's own track meter.
 function rk_vu_set_ref(ref_db) (
   this.ref = 10 ^ (ref_db / 20);
-  this.lim = 10 ^ ((ref_db + 3) / 20);
+  this.ref_db = ref_db;
+  this.legacy ? 0 : this.lim = 10 ^ ((ref_db + 3) / 20);
 );
 
 // Gain-reduction meter. Same movement, same ballistic, but the thing being
@@ -465,6 +489,8 @@ function rk_vu_init_gr() (
   this.acc = 0; this.cnt = 0; this.over = 0;
   this.ref = 1; this.lim = 2;              // LED never trips on a GR meter
   this.dt  = RKVU_DEC / max(srate, 1);
+  this.zeta = RKVU_ZETA; this.wn = RKVU_WN;
+  this.legacy = 0;
   this.gr  = 1;                            // marks the instance as GR
 );
 
@@ -474,8 +500,8 @@ function rk_vu_sample_gr(gain) local(tgt, a) (
   this.cnt += 1;
   this.cnt >= RKVU_DEC ? (
     tgt = this.acc;
-    a   = RKVU_WN * RKVU_WN * (tgt - this.pos)
-        - 2 * RKVU_ZETA * RKVU_WN * this.vel;
+    a   = this.wn * this.wn * (tgt - this.pos)
+        - 2 * this.zeta * this.wn * this.vel;
     this.vel += a * this.dt;
     this.pos += this.vel * this.dt;
     this.pos > 1 ? ( this.pos = 1; this.vel = min(this.vel, 0); );
@@ -491,14 +517,14 @@ function rk_vu_sample_gr(gain) local(tgt, a) (
 
 function rk_vu_sample(x) local(amp, tgt, a) (
   x = abs(x);
-  this.acc += x;
+  this.acc = this.legacy ? max(this.acc, x) : this.acc + x;
   x > this.lim ? this.over = 1.6;         // seconds of LED hold
   this.cnt += 1;
   this.cnt >= RKVU_DEC ? (
-    amp = (this.acc / RKVU_DEC) * ($pi * 0.5);
-    tgt = amp / max(this.ref, 0.0000001);
-    a   = RKVU_WN * RKVU_WN * (tgt - this.pos)
-        - 2 * RKVU_ZETA * RKVU_WN * this.vel;
+    amp = this.legacy ? this.acc : (this.acc / RKVU_DEC) * ($pi * 0.5);
+    tgt = this.legacy ? amp : amp / max(this.ref, 0.0000001);
+    a   = this.wn * this.wn * (tgt - this.pos)
+        - 2 * this.zeta * this.wn * this.vel;
     this.vel += a * this.dt;
     this.pos += this.vel * this.dt;
     this.pos < 0 ? ( this.pos = 0; this.vel = max(this.vel, 0); );
@@ -560,10 +586,23 @@ function rk_vu_ink(pos, hold, mode, slot) local(frac, hfrac) (
 // Cover, LED, then the glass over the lot. Last call in every pattern.
 function rk_vu_cap_led(over) ( _rk_vu_cover(); _rk_vu_led(over); _rk_vu_glass(); );
 
+// The legacy map: three straight segments through four points MEASURED off
+// the shipping meter - where this movement settles on a 1 kHz sine at
+// -24 / -9 / -2 / 0 dBFS, against what that meter reads there. Returns a
+// linear ratio so rk_vu_ink's 20*log10 lands on the old reading. Pair
+// callers in legacy mode pass their pos/hold through this first.
+function rk_vu_legacy_ratio(p) local(l) (
+  l = p <= 0.3389 ? (p - 0.0603) / (0.3389 - 0.0603) * 0.3102
+    : p <= 0.7588 ? 0.3102 + (p - 0.3389) / (0.7588 - 0.3389) * (0.7861 - 0.3102)
+    :               0.7861 + (p - 0.7588) / (0.9553 - 0.7588) * (1.0 - 0.7861);
+  10 ^ ((min(max(l, 0), 1) * 23 - 20) / 20);
+);
+
 // One movement, one rect.
 function rk_vu_draw(x, y, w, h, mode, theme, label) (
   rk_vu_face(x, y, w, h, mode, theme, label);
-  rk_vu_ink(this.pos, this.hold, mode, 0);
+  this.legacy ? rk_vu_ink(rk_vu_legacy_ratio(this.pos), rk_vu_legacy_ratio(this.hold), mode, 0)
+              : rk_vu_ink(this.pos, this.hold, mode, 0);
   rk_vu_cap_led(this.over > 0);
 );
 

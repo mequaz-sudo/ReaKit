@@ -56,6 +56,17 @@ with it and doubles as the element showcase, organized into category tabs
 (Knobs / Buttons / Sliders / Meters / Pads & Keys — drop it on a track to see
 and feel every widget).
 
+## EON Floatter
+
+Also in this repo: **EON Floatter**, a script. Every EON plugin's floating
+window opens at the size EON designed for it, and any JSFX float can be
+captured at a size of your own. Run it once from the Action List: it switches
+on, starts with REAPER from then on, and shows its panel (shape cards to
+scale, a live resize handle, Capture / Reset, one dial for all EON sizes,
+Apply EON sizes to this project). Run it again to open the panel; closing
+the panel never stops it. Needs js_ReaScriptAPI; the panel needs ReaImGui,
+both from ReaTeam Extensions. MIT.
+
 ## Use in your JSFX
 
 The library installs to `Effects/ReaKit/Library/`. From your own plugin:

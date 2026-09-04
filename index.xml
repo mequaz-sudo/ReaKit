@@ -138,6 +138,27 @@ New: rk_vu, the analog VU, rewritten clean-room.
       </version>
     </reapack>
   </category>
+  <category name="Floatter">
+    <reapack name="EON_Floatter.lua" type="script" desc="EON Floatter - JSFX floating windows open at the size you chose">
+      <metadata>
+        <description><![CDATA[EON Floatter opens every EON plugin's floating window at the size EON designed for it, and lets you keep your own size for any JSFX. Run it once: it switches on, starts with REAPER from then on, and shows its panel. Run it again to open the panel. Closing the panel never stops it.
+
+The panel: every plugin drawn to scale against its default, Capture to keep a size as yours, Reset to go back to EON's, a live handle that resizes the real window, one dial for all EON sizes (75 to 150 percent for small laptops and big screens), and "Apply EON sizes to this project".
+
+Needs js_ReaScriptAPI (ReaTeam Extensions). The panel needs ReaImGui; without it the sizing still works. MIT licensed.]]></description>
+        <link rel="website">https://forum.cockos.com/showthread.php?p=2952442</link>
+        <link rel="repository">https://github.com/mequaz-sudo/ReaKit</link>
+      </metadata>
+      <version name="1.0.0" author="Quaz (EON Studios)" time="2026-09-04T16:37:39Z">
+        <changelog><![CDATA[First release.
+- EON plugins open at the size EON set for them; a window you sized yourself stays that way.
+- Capture any JSFX float's size as yours; Reset to EON's size per plugin.
+- Panel: to-scale shape cards, live resize handle with dimension lines, W/H steppers, the 75-150% dial, Apply EON sizes to this project, Show all EON plugins.
+- Replaces the EON_FloatSize_Capture / EON_FloatSize_Watch pair from the Swing beta: the first run retires them and keeps every capture. If you had run the old Watch by hand, REAPER may show one "Can't load file" message at the next launch; it is gone after that.]]></changelog>
+        <source main="main" file="EON_Floatter.lua">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/Floatter/EON_Floatter.lua</source>
+      </version>
+    </reapack>
+  </category>
   <metadata>
     <description><![CDATA[ReaKit - free procedural UI/widget library for JSFX by EON Studios. Knobs, faders, buttons, meters, VU - drawn in code. MIT.]]></description>
     <link rel="website">https://forum.cockos.com/showthread.php?p=2952442</link>

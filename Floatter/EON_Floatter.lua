@@ -109,6 +109,7 @@ function L.find_canvas(hwnd)
   local arr = r.new_array({}, 256)
   local n = r.JS_Window_ArrayAllChild(hwnd, arr)
   if not n or n <= 0 then return nil end
+  if n > 256 then n = 256 end
   local t = arr.table(1, n)
   for i = 1, n do
     local h = r.JS_Window_HandleFromAddress(t[i])
@@ -343,10 +344,13 @@ do
   S.hand_age  = hand  and (S.now - hand)  or 1e9
 end
 
--- A REAPER without set_action_options cannot replace a running instance: a
--- second launch would become a second watcher. Poke the live one and leave.
-if not r.set_action_options and S.alive_age < STALE_S and S.hand_age >= STALE_S then
-  r.SetExtState(EXT_F, REQ_KEY, "open_panel", false)
+-- An instance is alive and REAPER did not just end it (no fresh handoff):
+-- that is a DIFFERENT copy of this script -- the Swing bundle's and the
+-- ReaKit package's can both be installed -- or a REAPER without
+-- set_action_options. Two watchers would fight over every window. Poke the
+-- live one to open its panel and leave.
+if S.alive_age < STALE_S and S.hand_age >= STALE_S then
+  if not S.quiet then r.SetExtState(EXT_F, REQ_KEY, "open_panel", false) end
   return
 end
 
@@ -395,14 +399,24 @@ end
 -- crash or full disk mid-write must never be able to eat it. Global on
 -- purpose: same helper as the other EON self-registering scripts.
 function eon_write_startup(path, content)
-  local tmp = path .. ".eon-tmp"
+  local tmp, prev = path .. ".eon-tmp", path .. ".eon-prev"
   local f = io.open(tmp, "w")
   if not f then return false end
   local wok = f:write(content)
   local cok = f:close()
   if not wok or not cok then os.remove(tmp) return false end
-  os.remove(path)                    -- Windows os.rename won't overwrite
-  return os.rename(tmp, path) and true or false
+  -- Windows os.rename won't overwrite, so the old file steps aside first --
+  -- and steps back if the new one cannot take its place. Nothing is ever
+  -- deleted before the replacement is in.
+  os.remove(prev)
+  local had_old = os.rename(path, prev)
+  if os.rename(tmp, path) then
+    os.remove(prev)
+    return true
+  end
+  if had_old then os.rename(prev, path) end
+  os.remove(tmp)
+  return false
 end
 
 local function startup_path()
@@ -578,30 +592,54 @@ end
 local function apply(e, w, h, src)
   if not e.canvas then return false end
   if not L.set_canvas(e.hwnd, e.canvas, w, h) then return false end
-  e.src, e.applied, e.applied_t = src, { w = round(w), h = round(h) }, r.time_precise()
+  e.src, e.applied, e.applied_t, e.adopted = src, { w = round(w), h = round(h) }, r.time_precise(), false
   W.rev = W.rev + 1
   return true
 end
 
--- Whatever the key should be, now, regardless of freshness.
+-- A fresh window says what the display scale is; learn it whenever one is
+-- in hand, whatever is about to be done to it.
+local function learn_scale(e, rc)
+  local ship = SIZES[e.key]
+  if not ship or not rc then return nil end
+  local s = L.fresh_scale(e.hwnd, rc, ship.gfx_w, ship.gfx_h)
+  if s then
+    if s ~= W.scale_session then W.rev = W.rev + 1 end
+    W.scale_session = s
+    r.SetExtState(EXT_D, "scale", tostring(s), true)
+  end
+  return s
+end
+
+-- Whatever the key should be, now, regardless of freshness. A legacy outer
+-- capture is converted first, against this very window, so the passes see
+-- it the way first sight would.
 function W.force_apply(e)
+  if not e.canvas then return false end
+  if not L.get_capture(e.key) and L.get_legacy(e.key) then
+    L.convert_legacy(e.hwnd, e.canvas, e.key)
+  end
   local w, h, src = W.effective(e.key)
   if not w then return false end
   return apply(e, w, h, src)
 end
 
--- One window, first sight. True when settled (sized, kept, or none of ours),
--- false when it should be looked at again (no canvas child yet).
+-- One window, first sight. Returns true when settled (sized, kept, or none of
+-- ours), false when the canvas child is not there yet (counted), and "later"
+-- for a minimized window (not counted: it comes back).
 function W.first_sight(e)
   local canvas = L.find_canvas(e.hwnd)
   if not canvas then return false end
   e.canvas = canvas
   local rc = L.rect(canvas)
-  if not rc or rc.x <= -32000 then return false end          -- minimized: not now
+  if not rc then return false end
+  if rc.x <= -32000 then return "later" end
 
-  -- A pass asked for this window: whatever it should be, freshness aside.
+  -- A pass asked for this window: whatever it should be, freshness aside --
+  -- but a fresh window still teaches the scale first.
   if e.force then
     e.force = nil
+    learn_scale(e, rc)
     if W.force_apply(e) then return true end
   end
 
@@ -622,26 +660,36 @@ function W.first_sight(e)
   -- 2. EON's size, on a fresh window only.
   local ship = SIZES[key]
   if not ship then e.src = nil; return true end
-  local s = L.fresh_scale(e.hwnd, rc, ship.gfx_w, ship.gfx_h)
+  local s = learn_scale(e, rc)
   if not s then e.src = "kept"; W.rev = W.rev + 1; return true end
-  W.scale_session = s
-  r.SetExtState(EXT_D, "scale", tostring(s), true)
   local g = W.global() / 100
-  apply(e, ship.w * s * g, ship.h * s * g, "eon")
-  e.scale_used = s
-  S.say(("%s opened at %d x %d"):format(L.pretty(key), e.applied.w, e.applied.h))
+  if apply(e, ship.w * s * g, ship.h * s * g, "eon") then
+    e.scale_used = s
+    S.say(("%s opened at %d x %d"):format(L.pretty(key), e.applied.w, e.applied.h))
+  else
+    e.src = "kept"
+  end
   return true
 end
 
--- A window we sized that no longer measures what we set: somebody dragged it.
--- The global dial then leaves it alone.
+-- A window we sized that no longer measures what we set: somebody dragged it,
+-- and the global dial then leaves it alone. The first mismatch after an apply
+-- is where the window actually landed (a size the screen or REAPER would not
+-- allow): adopted, not blamed on anyone.
 function W.detect_manual(e, now)
   if not e.applied or not e.canvas or (now - (e.applied_t or 0)) < 0.5 then return end
   local rc = L.rect(e.canvas)
-  if not rc then return end
+  if not rc then
+    e.canvas = L.find_canvas(e.hwnd)                 -- the child was rebuilt; find it again
+    return
+  end
   if math.abs(rc.w - e.applied.w) > 1 or math.abs(rc.h - e.applied.h) > 1 then
-    e.src, e.applied = "manual", nil
-    W.rev = W.rev + 1
+    if not e.adopted then
+      e.applied, e.adopted = { w = rc.w, h = rc.h }, true
+    else
+      e.src, e.applied = "manual", nil
+      W.rev = W.rev + 1
+    end
   end
 end
 
@@ -677,14 +725,15 @@ function W.poll(now)
       -- a quiet-pass window: finished by quiet_tick, not here
     elseif not e.settled then
       if enabled then
-        if W.first_sight(e) then
+        local got = W.first_sight(e)
+        if got == true then
           e.settled = true
-        else
+        elseif got == false then
           -- No canvas child yet: a JSFX gets 20 polls (5 s) in case REAPER is
           -- still building the window; a VST never grows one and is let go.
           e.tries = e.tries + 1
           if e.tries >= 20 then e.settled = true; e.src = nil end
-        end
+        end                                          -- "later": minimized, look again
       end
     else
       W.detect_manual(e, now)
@@ -770,6 +819,11 @@ function W.quiet_tick(now)
   for a, q in pairs(W.quiet_q) do
     local canvas = L.find_canvas(q.hwnd)
     if canvas then
+      -- This float is fresh: it teaches the scale. A legacy capture converts here too.
+      learn_scale({ key = q.key, hwnd = q.hwnd }, L.rect(canvas))
+      if not L.get_capture(q.key) and L.get_legacy(q.key) then
+        L.convert_legacy(q.hwnd, canvas, q.key)
+      end
       local w, h = W.effective(q.key)
       if w then
         L.set_canvas(q.hwnd, canvas, w, h)
@@ -853,7 +907,7 @@ function S.take_requests()
   if req == "" then return end
   r.DeleteExtState(EXT_F, REQ_KEY, false)
   if req == "open_panel" then UI.open()
-  elseif req == "apply_project" then W.quiet_pass()
+  elseif req == "apply_project" then if not next(W.quiet_q) then W.quiet_pass() end
   elseif req == "show_all" then W.loud_pass()
   end
 end
@@ -1088,9 +1142,15 @@ function UI.build_cards()
     local cw, ch = L.get_capture(key)
     local lw, lh = L.get_legacy(key)
     if not eon and not cw and not lw then return end
+    local eon_px
+    if eon then
+      local ew, eh = W.eon_size(key)
+      local sc = W.scale_now()
+      eon_px = { w = round(ew), h = round(eh), gfx_w = round(eon.gfx_w * sc), gfx_h = round(eon.gfx_h * sc) }
+    end
     cards[#cards + 1] = {
       key = key, name = L.pretty(key), fam = family_of(key),
-      eon = eon, cap = cw and { w = cw, h = ch } or nil,
+      eon = eon_px, cap = cw and { w = cw, h = ch } or nil,
       legacy = (not cw) and lw and { w = lw, h = lh } or nil,
     }
   end
@@ -1158,6 +1218,7 @@ function UI.header(ImGui, ctx)
   ImGui.SameLine(ctx, 0, 8)
   if UI.switch(ImGui, ctx, "##enabled", on) then
     r.SetExtState(EXT_F, "enabled", on and "0" or "1", true)
+    S.set_toggle(not on)
     S.say(on and "Paused: windows open as they are" or "On: EON plugins open at their sizes")
   end
   if ImGui.IsItemHovered(ctx) then ImGui.SetTooltip(ctx, on and "Pause the sizing" or "Resume the sizing") end
@@ -1312,7 +1373,7 @@ function UI.library(ImGui, ctx)
   ImGui.SameLine(ctx, 0, 14)
   UI.tab = UI.pill_tabs(ImGui, ctx, "tab", { "ALL", "EON", "YOURS" }, UI.tab)
   local used = ImGui.GetCursorPosX(ctx) + 8            -- still on the tabs' line
-  local fw = math.max(90, math.min(200, line_w - used))
+  local fw = math.max(60, math.min(200, line_w - used))
   ImGui.SameLine(ctx, line_w - fw)
   ImGui.SetNextItemWidth(ctx, fw)
   local _, txt = ImGui.InputTextWithHint(ctx, "##filter", "filter plugins", UI.filter)
@@ -1463,7 +1524,9 @@ function UI.dial(ImGui, ctx, value)
     committed = UI.dial_drag.v or value
     UI.dial_drag = nil
   end
-  if hov and ImGui.IsMouseDoubleClicked(ctx, ImGui.MouseButton_Left) then committed = 100 end
+  if hov and ImGui.IsMouseDoubleClicked(ctx, ImGui.MouseButton_Left) then
+    committed, UI.dial_drag, shown = 100, nil, 100
+  end
 
   -- face
   ImGui.DrawList_AddCircleFilled(dl, cx, cy, R, P.sunken)
@@ -1618,7 +1681,7 @@ end
 function UI.draw(ImGui, ctx)
   UI.push_theme(ImGui, ctx)
   ImGui.SetNextWindowSize(ctx, 860, 720, ImGui.Cond_FirstUseEver)
-  ImGui.SetNextWindowSizeConstraints(ctx, 640, 520, 4096, 4096)
+  ImGui.SetNextWindowSizeConstraints(ctx, 700, 520, 4096, 4096)
   local visible, open = ImGui.Begin(ctx, "EON Floatter###eon_floatter", true, ImGui.WindowFlags_NoCollapse)
   if visible then
     if UI.dirty or UI.cards_rev ~= W.rev then UI.build_cards() end
@@ -1691,7 +1754,7 @@ elseif r.GetExtState(EXT_F, "autostart") ~= "0" then
   S.self_register()                                    -- heals a stripped block
 end
 
-S.set_toggle(true)
+S.set_toggle(S.enabled())
 r.atexit(function()
   r.SetExtState(EXT_F, "handoff_t", tostring(r.time_precise()), false)
   for a, q in pairs(W.quiet_q) do quiet_finish(a, q) end   -- never leave an invisible float behind

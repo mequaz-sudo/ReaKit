@@ -65,6 +65,12 @@ slider22:eq_f1=80<40,16000,1>-EQ Low (Hz)
 slider23:eq_f2=400<40,16000,1>-EQ Lo-Mid (Hz)
 slider24:eq_f3=2000<40,16000,1>-EQ Hi-Mid (Hz)
 slider25:eq_f4=8000<40,16000,1>-EQ High (Hz)
+// Bell width in octaves -- the wheel over a node turns these. Narrower reads
+// as higher Q; it is stored as width because that is what the fill needs.
+slider26:eq_w1=1.1<0.2,3,0.01>-EQ Low Width (oct)
+slider27:eq_w2=1.1<0.2,3,0.01>-EQ Lo-Mid Width (oct)
+slider28:eq_w3=1.1<0.2,3,0.01>-EQ Hi-Mid Width (oct)
+slider29:eq_w4=1.1<0.2,3,0.01>-EQ High Width (oct)
 
 // One library set, one place. These five are the whole shipping widget API.
 import knobs_kbsg.jsfx-inc
@@ -141,6 +147,7 @@ eqbuf  = freemem; freemem += EQ_PTS;      // the response, one dB value per poin
 eqspec = freemem; freemem += 16;          // the analyser, in dB
 eqf    = freemem; freemem += 4;           // node frequencies
 eqd    = freemem; freemem += 4;           // node gains
+eqw    = freemem; freemem += 4;           // bell widths, in octaves
 eqnm   = freemem; freemem += 8 + 4;       // node drag state: 8 + one per node
 eqnm[0] = -1;                             // nothing grabbed
 eq_hash = -1;                             // forces the first fill
@@ -380,17 +387,18 @@ function ui_segment3(mem, x, y, w, h, cur, l0, l1, l2) local(nv, sw, gap) (
 // ⭐ It refills only when something changed. Four bands over 256 points is
 // ~2000 transcendentals a fill, and doing that every frame is exactly how the
 // Drum Strip's graph once burned ~600k of them a second while nothing moved.
-function eq_fill(buf, n, g0, g1, g2, g3, f0, f1, f2, f3)
-local(i, f, d, sum, bw) (
-  bw = 1.1;                               // bell width, in octaves
+function eq_fill(buf, n, fbuf, gbuf, wbuf, nb)
+local(i, j, f, d, sum) (
   i = 0;
   loop(n,
     f = rk_curve_x2f(i, 0, n - 1);        // a unit rect: point index IS the x
     sum = 0;
-    d = log(f / f0) / 0.69314718 / bw; sum += g0 * exp(-d * d);
-    d = log(f / f1) / 0.69314718 / bw; sum += g1 * exp(-d * d);
-    d = log(f / f2) / 0.69314718 / bw; sum += g2 * exp(-d * d);
-    d = log(f / f3) / 0.69314718 / bw; sum += g3 * exp(-d * d);
+    j = 0;
+    loop(nb,
+      d = log(f / fbuf[j]) / 0.69314718 / max(wbuf[j], 0.05);   // octaves away
+      sum += gbuf[j] * exp(-d * d);
+      j += 1;
+    );
     buf[i] = sum;
     i += 1;
   );
@@ -612,33 +620,33 @@ _nv = ui_knob(m_eqhi, c2 + w2 * 0.855, ky, kr, eq_hi, -15, 15, 0, 0, 1, "HIGH", 
 _nv != eq_hi ? ( eq_hi = _nv; slider_automate(eq_hi); );
 
 // ── The curve ───────────────────────────────────────────────────────────────
+// ⚠️ ONE rect for all five calls. Insetting the trace by a pixel while the
+// plate kept the full rect put the 500 Hz gridline and the 500 Hz node a pixel
+// apart — the exact drift the shared mapping exists to prevent.
 _cx = c2 + px(10); _cy = row_y + px(100);
 _cw = w2 - px(20); _ch = px(168);
 
 eqf[0] = eq_f1; eqf[1] = eq_f2; eqf[2] = eq_f3; eqf[3] = eq_f4;
 eqd[0] = eq_lo; eqd[1] = eq_lmf; eqd[2] = eq_hmf; eqd[3] = eq_hi;
+eqw[0] = eq_w1; eqw[1] = eq_w2; eqw[2] = eq_w3; eqw[3] = eq_w4;
 
 // Refill only on a change. The hash is every input the fill reads.
 _h = eq_lo + eq_lmf * 7 + eq_hmf * 31 + eq_hi * 127
-   + eq_f1 * 0.001 + eq_f2 * 0.003 + eq_f3 * 0.007 + eq_f4 * 0.013;
-_h != eq_hash ? (
-  eq_hash = _h;
-  eq_fill(eqbuf, EQ_PTS, eq_lo, eq_lmf, eq_hmf, eq_hi, eq_f1, eq_f2, eq_f3, eq_f4);
-);
+   + eq_f1 * 0.001 + eq_f2 * 0.003 + eq_f3 * 0.007 + eq_f4 * 0.013
+   + eq_w1 * 11 + eq_w2 * 53 + eq_w3 * 211 + eq_w4 * 907;
+_h != eq_hash ? ( eq_hash = _h; eq_fill(eqbuf, EQ_PTS, eqf, eqd, eqw, 4); );
 
 // The meter's sixteen bands, in dB, on the same span as the graph.
 _i = 0;
 loop(16, eqspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
 
 rk_curve_plate(_cx, _cy, _cw, _ch, 18);
-rk_curve_analyser(_cx + 1, _cy + 1, _cw - 2, _ch - 2, eqspec, 16, 0, -60,
-                  a2_r, a2_g, a2_b);
-rk_curve_trace(_cx + 1, _cy + 1, _cw - 2, _ch - 2, eqbuf, EQ_PTS, 18, 1,
-               ac_r, ac_g, ac_b);
+rk_curve_analyser(_cx, _cy, _cw, _ch, eqspec, 16, 0, -60, a2_r, a2_g, a2_b);
+rk_curve_trace(_cx, _cy, _cw, _ch, eqbuf, EQ_PTS, 18, 1, ac_r, ac_g, ac_b);
 
 // Nodes. rk_curve hands back where the grabbed node WANTS to be; clamping and
 // automation stay here, which is the whole reason it is reusable.
-_n = rk_curve_nodes(eqnm, _cx + 1, _cy + 1, _cw - 2, _ch - 2, 18, eqf, eqd, 4);
+_n = rk_curve_nodes(eqnm, _cx, _cy, _cw, _ch, 18, eqf, eqd, 4);
 rk_curve_moved && _n >= 0 ? (
   _nf = max(40, min(rk_curve_nf, 16000));
   _nd = max(-15, min(rk_curve_ndb, 15));
@@ -647,6 +655,14 @@ rk_curve_moved && _n >= 0 ? (
   _n == 2 ? ( eq_f3 = _nf; slider_automate(eq_f3); eq_hmf = _nd; slider_automate(eq_hmf); ) :
             ( eq_f4 = _nf; slider_automate(eq_f4); eq_hi  = _nd; slider_automate(eq_hi);  );
 );
+// Wheel over a node narrows or widens that band.
+rk_curve_nwheel != 0 && _n >= 0 ? (
+  _nw = max(0.2, min(eqw[_n] * (1 - rk_curve_nwheel * 0.12), 3));
+  _n == 0 ? ( eq_w1 = _nw; slider_automate(eq_w1); ) :
+  _n == 1 ? ( eq_w2 = _nw; slider_automate(eq_w2); ) :
+  _n == 2 ? ( eq_w3 = _nw; slider_automate(eq_w3); ) :
+            ( eq_w4 = _nw; slider_automate(eq_w4); );
+);
 // Double-click a node to flatten that band.
 rk_curve_dblclk && _n >= 0 ? (
   _n == 0 ? ( eq_lo  = 0; slider_automate(eq_lo);  ) :
@@ -654,9 +670,9 @@ rk_curve_dblclk && _n >= 0 ? (
   _n == 2 ? ( eq_hmf = 0; slider_automate(eq_hmf); ) :
             ( eq_hi  = 0; slider_automate(eq_hi);  );
 );
-rk_curve_nodes_draw(eqnm, _cx + 1, _cy + 1, _cw - 2, _ch - 2, 18, eqf, eqd, 4,
+rk_curve_nodes_draw(eqnm, _cx, _cy, _cw, _ch, 18, eqf, eqd, 4,
                     rk_curve_hov, ac_r, ac_g, ac_b);
-ui_tip(_cx, _cy, _cw, _ch, "EQ curve — rk_curve. Drag a node, double-click to flatten");
+ui_tip(_cx, _cy, _cw, _ch, "EQ curve — rk_curve. Drag a node, wheel for width, double-click to flatten");
 
 _nv = ui_toggle(m_eqon, c2 + px(10), row_y + px(280), w2 - px(20), px(24),
                 eq_on, "EQ IN");

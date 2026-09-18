@@ -38,13 +38,13 @@ desc:ReaKit Elements
 //   [nomain] rk_ui_button.jsfx-inc
 //   [nomain] rk_ui_slider.jsfx-inc
 //   [nomain] rk_ui_meter.jsfx-inc
-//   [nomain] rk_ui_vu.jsfx-inc
+//   [nomain] rk_curve.jsfx-inc
 tags: effect
 
 // Requires the EON ReaKit *_kbsg.jsfx-inc libs on the JSFX import path
 //   (knobs_kbsg must be the dispatcher build that defines rk_knob_draw).
 
-slider1:0<0,4,1{Knobs,Buttons,Sliders,Meters,Pads & Keys}>-Tab
+slider1:0<0,5,1{Knobs,Buttons,Sliders,Meters,Pads & Keys,Curve}>-Tab
 slider3:60<0,100,0.01>-SSL
 slider4:6<-24,24,0.01>-Vari-Mu
 slider5:70<0,100,0.01>-API
@@ -101,6 +101,7 @@ import rk_vu.jsfx-inc
 import meters_kbsg.jsfx-inc
 import rk_padgrid.jsfx-inc
 import rk_piano.jsfx-inc
+import rk_curve.jsfx-inc
 
 @init
 gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below follows
@@ -122,6 +123,19 @@ mtr_en_lufs = 1;   // enable (set after meter_init resets flags)
 vu_0.rk_vu_init(-18);   // analog VU: 300 ms movement, 0 VU = a -18 dBFS sine
 _vu_face = 0;           // face 0..19 (Cream); click the meter's coil cover to pick another
 
+// CURVE tab. The graph runs 40 Hz to 16 kHz because that is exactly the span of
+// the meter's sixteen spectrum bands, so the analyser lines up with the curve by
+// construction rather than by a fudge factor.
+rk_curve_init(40, 16000);
+CV_PTS = 256;
+cvbuf  = freemem; freemem += CV_PTS;
+cvspec = freemem; freemem += 16;
+cvf    = freemem; freemem += 4;   cvf[0] = 80; cvf[1] = 400; cvf[2] = 2000; cvf[3] = 8000;
+cvd    = freemem; freemem += 4;   cvd[0] = 4;  cvd[1] = -3;  cvd[2] = 5;    cvd[3] = -2;
+cvw    = freemem; freemem += 4;   cvw[0] = 1.1; cvw[1] = 1.1; cvw[2] = 1.1; cvw[3] = 1.1;
+cvnm   = freemem; freemem += 8 + 4;  cvnm[0] = -1;
+cv_hash = -1;
+
 @slider
 
 @block
@@ -139,7 +153,14 @@ gfx_clear = 0x2e1a1a;   // canvas #1a1a2e packed as r+g*256+b*65536
 // Design canvas is 740x480; sc maps design px -> window px so the active
 // tab is always visible at any window size (and crisp on HiDPI, since
 // gfx_w/gfx_h arrive pre-doubled when gfx_ext_retina kicks in).
-sc = min(gfx_w / 740, gfx_h / 480);
+// ⭐ The height is PER TAB. One shared 480-row canvas meant the sparsest tab
+// (Buttons, whose content ends at row 277) carried ~200 rows of dead canvas at
+// every window size — and scaling up only made the empty part bigger. Each tab
+// now declares the height it actually uses, so every one of them fills the
+// window the way the Starter does.
+DES_H = slider1 == 0 ? 384 : slider1 == 1 ? 296 : slider1 == 2 ? 392 :
+        slider1 == 3 ? 390 : slider1 == 4 ? 392 : 400;
+sc = min(gfx_w / 740, gfx_h / DES_H);
 sc < 0.35 ? sc = 0.35;
 
 // --- per-frame input globals required by the kbsg libs ---
@@ -154,14 +175,15 @@ gfx_setfont(1,"Arial",max(9,floor(14*sc)),'b'); gfx_set(0.85,0.20,0.11); gfx_x=s
 
 // Nav tab bar — buttons_kbsg btn_tab, the library's own tab widget
 bm = btnmem + 10*8;
-_nt = btn_tab_interact(bm, sc*190, sc*10, sc*104, sc*28, 5, sc*4, slider1);
+_nt = btn_tab_interact(bm, sc*150, sc*10, sc*93, sc*28, 6, sc*4, slider1);
 _nt != slider1 ? ( slider1 = _nt; slider_automate(slider1); );
-gfx_setfont(1,"Arial",max(9,floor(12*sc)),'b');
-btn_tab_draw(sc*190, sc*10, sc*104, sc*28, 0, slider1, "KNOBS", bm[0]);
-btn_tab_draw(sc*298, sc*10, sc*104, sc*28, 1, slider1, "BUTTONS", bm[0]);
-btn_tab_draw(sc*406, sc*10, sc*104, sc*28, 2, slider1, "SLIDERS", bm[0]);
-btn_tab_draw(sc*514, sc*10, sc*104, sc*28, 3, slider1, "METERS", bm[0]);
-btn_tab_draw(sc*622, sc*10, sc*104, sc*28, 4, slider1, "PADS/KEYS", bm[0]);
+gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b');
+btn_tab_draw(sc*150, sc*10, sc*93, sc*28, 0, slider1, "KNOBS", bm[0]);
+btn_tab_draw(sc*247, sc*10, sc*93, sc*28, 1, slider1, "BUTTONS", bm[0]);
+btn_tab_draw(sc*344, sc*10, sc*93, sc*28, 2, slider1, "SLIDERS", bm[0]);
+btn_tab_draw(sc*441, sc*10, sc*93, sc*28, 3, slider1, "METERS", bm[0]);
+btn_tab_draw(sc*538, sc*10, sc*93, sc*28, 4, slider1, "PADS/KEYS", bm[0]);
+btn_tab_draw(sc*635, sc*10, sc*93, sc*28, 5, slider1, "CURVE", bm[0]);
 
 // ═══════════════════════ TAB 0 · KNOBS ═══════════════════════
 slider1 == 0 ? (
@@ -616,6 +638,57 @@ gfx_setfont(1,"Arial",max(9,floor(18*sc)),'b'); gfx_set(0.91,0.91,0.94); gfx_x=s
 gfx_setfont(1,"Arial",max(9,floor(11*sc)),0); gfx_set(0.66,0.68,0.74); gfx_x=sc*14; gfx_y=sc*362; gfx_drawstr("small caption label");
 
 ); // end PADS & KEYS tab
+
+// ═══════════════════════ TAB 5 · CURVE ═══════════════════════
+slider1 == 5 ? (
+  gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80);
+  gfx_x=sc*14; gfx_y=sc*56; gfx_drawstr("CURVE — rk_curve: drag a node, wheel for width, double-click to flatten");
+
+  _cx = sc*14; _cy = sc*76; _cw = sc*712; _ch = sc*286;
+
+  // Refill only when an input changes. Four bells over 256 points is ~2000
+  // transcendentals a fill, and doing that every frame is how the Drum Strip's
+  // graph once burned ~600k of them a second while nothing moved.
+  _h = cvd[0] + cvd[1]*7 + cvd[2]*31 + cvd[3]*127
+     + cvf[0]*0.001 + cvf[1]*0.003 + cvf[2]*0.007 + cvf[3]*0.013
+     + cvw[0]*11 + cvw[1]*53 + cvw[2]*211 + cvw[3]*907;
+  _h != cv_hash ? (
+    cv_hash = _h;
+    _i = 0;
+    loop(CV_PTS,
+      _f = rk_curve_x2f(_i, 0, CV_PTS - 1);
+      _sum = 0; _j = 0;
+      loop(4,
+        _d = log(_f / cvf[_j]) / 0.69314718 / max(cvw[_j], 0.05);
+        _sum += cvd[_j] * exp(-_d * _d);
+        _j += 1;
+      );
+      cvbuf[_i] = _sum; _i += 1;
+    );
+  );
+
+  _i = 0;
+  loop(16, cvspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
+
+  rk_curve_plate(_cx, _cy, _cw, _ch, 18);
+  rk_curve_analyser(_cx, _cy, _cw, _ch, cvspec, 16, 0, -60, 0.95,0.64,0.24);
+  rk_curve_trace(_cx, _cy, _cw, _ch, cvbuf, CV_PTS, 18, 1, 0.29,0.62,1.00);
+
+  _n = rk_curve_nodes(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4);
+  rk_curve_moved && _n >= 0 ? (
+    cvf[_n] = max(40, min(rk_curve_nf, 16000));
+    cvd[_n] = max(-15, min(rk_curve_ndb, 15));
+  );
+  rk_curve_nwheel != 0 && _n >= 0 ?
+    cvw[_n] = max(0.2, min(cvw[_n] * (1 - rk_curve_nwheel * 0.12), 3));
+  rk_curve_dblclk && _n >= 0 ? cvd[_n] = 0;
+  rk_curve_nodes_draw(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4,
+                      rk_curve_hov, 0.29,0.62,1.00);
+
+  gfx_setfont(1,"Arial",max(8,floor(10*sc))); gfx_set(0.55,0.58,0.64);
+  gfx_x=sc*14; gfx_y=sc*370;
+  gfx_drawstr("The widget draws an array and writes nothing back — the caller owns the values. Analyser: the meters' sixteen bands, same axis.");
+);
 
 // ── Analog VU face picker: click the coil cover for a sheet of all twenty faces
 // as live miniatures; click one to pick it, anywhere else to close. LAST in

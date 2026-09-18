@@ -59,9 +59,11 @@ desc: ReaKit response-curve widget
 //   rk_curve_trace(x, y, w, h, buf, n, dr, fill, r, g, b)
 //        the curve. `fill` 1 shades to the midline.
 //   rk_curve_nodes(mem, x, y, w, h, dr, fbuf, dbuf, n)
-//        the whole gesture: hover, grab, delta drag, double-click. Publishes
-//        rk_curve_ni / rk_curve_nf / rk_curve_ndb / rk_curve_moved /
-//        rk_curve_dblclk / rk_curve_hov. WRITES NOTHING BACK — the caller
+//        the whole gesture: hover, grab, delta drag, wheel, double-click.
+//        Publishes rk_curve_ni / rk_curve_nf / rk_curve_ndb / rk_curve_moved /
+//        rk_curve_dblclk / rk_curve_hov / rk_curve_nwheel (wheel ticks over the
+//        hovered node, consumed here so one tick is not eaten twice — that is
+//        the library convention). WRITES NOTHING BACK — the caller
 //        clamps and calls slider_automate, which is the one thing that made
 //        every surveyed implementation unusable as a widget.
 //   rk_curve_nodes_draw(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, r, g, b)
@@ -283,7 +285,7 @@ local(i, nx, ny, d, best, bi, rad) (
 function rk_curve_nodes(mem, x, y, w, h, dr, fbuf, dbuf, n)
 local(i, hov, mods, dx, dy, sens, now) (
   rk_curve_ni = -1; rk_curve_moved = 0; rk_curve_dblclk = 0;
-  rk_curve_nf = 0;  rk_curve_ndb = 0;
+  rk_curve_nf = 0;  rk_curve_ndb = 0;  rk_curve_nwheel = 0;
 
   hov = mem[0] >= 0 ? mem[0] : rk_curve_nodes_hit(x, y, w, h, dr, fbuf, dbuf, n);
   rk_curve_hov = hov;
@@ -293,6 +295,14 @@ local(i, hov, mods, dx, dy, sens, now) (
     i == hov ? ( mem[8 + i] = min(mem[8 + i] + dt * hv_speed, 1); )
              : ( mem[8 + i] = max(mem[8 + i] - dt * hv_speed, 0); );
     i += 1;
+  );
+
+  // Wheel over a node. Whoever consumes frame_wheel zeroes it, so a single
+  // tick is not also read by whatever is drawn next.
+  hov >= 0 && frame_wheel != 0 ? (
+    rk_curve_nwheel = frame_wheel;
+    rk_curve_ni = hov;
+    frame_wheel = 0;
   );
 
   mods = (CTRL ? 1 : 0) + (SHIFT ? 2 : 0);

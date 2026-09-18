@@ -1,0 +1,182 @@
+desc: ReaKit dropdown / popup menu widget
+// ══════════════════════════════════════════════════════════════════════
+// rk_popup.jsfx-inc — a dropdown that draws itself, instead of handing the
+// list to gfx_showmenu and losing every pixel of control over it.
+//
+// Written clean-room for ReaKit. Swing's rk_swing_popup.jsfx-inc solves the
+// same problem in 664 lines, but most of that is Swing: two card styles, a
+// palette-code syntax, toggle rows, glyph layout and a caller-ID registry so
+// thirty-five sites can share one popup. None of it can leave. What CAN leave
+// is the handful of things that make a self-drawn menu behave, and every one
+// of them is a bug you only find by shipping:
+//
+//   - THE CLICK THAT OPENED IT. The same press that opens a menu is still held
+//     on the next frame, and the menu has just appeared under the cursor — so
+//     it instantly picks whatever landed beneath. A latch swallows that first
+//     edge.
+//   - THE UI BEHIND IT. A menu that floats over live widgets lets you drag a
+//     knob through it. rk_popup_gate() takes the mouse away from everything
+//     else while the menu is open, keeping the real values for the menu.
+//   - FALLING OFF THE WINDOW. Opened near an edge, a menu drawn at the click
+//     point hangs outside it. It clamps.
+//   - GETTING OUT. Click-outside and ESC both cancel, and a cancel has to be
+//     distinguishable from a pick.
+//
+// gfx_showmenu is still the right answer for a long list, and this does not
+// try to replace it. It is for the short, styled dropdowns a plugin face
+// wants, where a native menu looks like it belongs to another program.
+//
+// REQUIREMENTS (host plugin must provide, per frame, before calling):
+//   - mx, my       — mouse position
+//   - lmb_down     — left-button PRESS edge (not the held state)
+//   - LMB          — left-button HELD state
+//   - dt, hv_speed — frame delta + hover ramp speed (as the other kbsg libs)
+//   - frame_wheel  — wheel ticks, if you want wheel-over-item
+//
+// MEMORY: one caller-owned block of 16 words. [0] open, [1..2] position,
+// [3] just-opened latch, [4] item count, [5] result, [6] hover row,
+// [7..11] the input state the gate preserved, [12] wheel out, [13] width,
+// [14] hover ramp.
+//
+// PUBLIC API:
+//   rk_popup_open(mem, x, y, w)    arm it at a point, with a width
+//   rk_popup_close(mem)            dismiss, no result
+//   rk_popup_active(mem)           1 while it is up
+//   rk_popup_gate(mem)             call EARLY in @gfx, right after the input
+//                                  globals are set. While the menu is open it
+//                                  zeroes them, so nothing behind reacts, and
+//                                  keeps the real values for rk_popup_run.
+//   rk_popup_run(mem, items, item_h, ch, r, g, b)
+//                                  call LAST in @gfx, so the menu is over
+//                                  everything. `items` is a |-separated string
+//                                  and a '#' prefix makes a row a disabled
+//                                  header, both as gfx_showmenu does it. `ch`
+//                                  is this frame's gfx_getchar() for ESC, or 0.
+//                                  Returns a 1-BASED row, matching
+//                                  gfx_showmenu, or -1 cancelled, or 0 while
+//                                  it is still open.
+//   rk_popup_hover(mem)            hovered row, 0-based, or -1
+//   rk_popup_wheel(mem)            -1 / 0 / +1, wheel over a row this frame
+// ══════════════════════════════════════════════════════════════════════
+
+@init
+
+RKPP_MEM  = 16;
+RKPP_BAR  = 124;    // '|'
+RKPP_HASH = 35;     // '#'
+RKPP_ESC  = 27;
+
+function rk_popup_active(mem) ( mem[0]; );
+
+function rk_popup_open(mem, x, y, w) (
+  mem[0] = 1; mem[1] = x; mem[2] = y;
+  mem[3] = 1;          // swallow the press that opened it
+  mem[5] = 0; mem[6] = -1; mem[12] = 0; mem[13] = w; mem[14] = 0;
+);
+
+function rk_popup_close(mem) ( mem[0] = 0; mem[3] = 0; );
+
+// How many rows a |-separated string holds.
+function rk_popup_count(items) local(i, n, len) (
+  len = strlen(items);
+  len < 1 ? 0 : (
+    n = 1; i = 0;
+    while(i < len) ( str_getchar(items, i) == RKPP_BAR ? n += 1; i += 1; );
+    n;
+  );
+);
+
+// Row `idx` (0-based) into #rkpp_s. Returns 1 if the row is a '#' header.
+function rk_popup_row(items, idx) local(i, k, st, len, c, hdr) (
+  len = strlen(items); k = 0; st = 0; i = 0; hdr = 0;
+  while(i <= len) (
+    c = i < len ? str_getchar(items, i) : RKPP_BAR;
+    c == RKPP_BAR ? (
+      k == idx ? ( strcpy_substr(#rkpp_s, items, st, i - st); i = len + 1; )
+               : ( k += 1; st = i + 1; );
+    );
+    i += 1;
+  );
+  strlen(#rkpp_s) > 0 && str_getchar(#rkpp_s, 0) == RKPP_HASH ? (
+    strcpy_substr(#rkpp_s, #rkpp_s, 1, strlen(#rkpp_s) - 1);
+    hdr = 1;
+  );
+  hdr;
+);
+
+// ⭐ THE GATE. Everything drawn after this sees no mouse while the menu is up,
+// which is what stops a click landing on a knob underneath. The real values go
+// into the block for rk_popup_run to read back.
+function rk_popup_gate(mem) (
+  mem[0] ? (
+    mem[7] = mx; mem[8] = my; mem[9] = lmb_down; mem[10] = LMB;
+    mem[11] = frame_wheel;
+    mx = -10000; my = -10000; lmb_down = 0; LMB = 0; frame_wheel = 0;
+  );
+);
+
+function rk_popup_hover(mem) ( mem[6]; );
+function rk_popup_wheel(mem) ( mem[12]; );
+
+function rk_popup_run(mem, items, item_h, ch, r, g, b)
+local(n, i, x, y, w, h, rmx, rmy, edge, hov, ry, hdr, inside, res, tw, th, pad) (
+  res = 0;
+  mem[0] ? (
+    n = rk_popup_count(items);
+    n < 1 ? ( rk_popup_close(mem); res = -1; ) : (
+      pad = max(2, item_h * 0.12);
+      w = mem[13]; h = n * item_h + pad * 2;
+      x = mem[1]; y = mem[2];
+
+      // Clamp, so a menu opened near an edge is not half outside the window.
+      x + w > gfx_w ? x = gfx_w - w - 4;
+      y + h > gfx_h ? y = gfx_h - h - 4;
+      x < 4 ? x = 4;
+      y < 4 ? y = 4;
+
+      rmx = mem[7]; rmy = mem[8];
+      // The press that opened the menu is still down this frame. Swallow it.
+      edge = mem[9] && !mem[3];
+      mem[3] = 0;
+
+      // card
+      gfx_set(0, 0, 0, 0.35);
+      gfx_rect(x + 2, y + 2, w, h);
+      gfx_set(0.098, 0.106, 0.129, 0.98);
+      gfx_rect(x, y, w, h);
+      gfx_set(r, g, b, 0.55);
+      gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
+      gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
+
+      gfx_setfont(1, "Arial", max(8, floor(item_h * 0.58)));
+      mem[6] = -1; mem[12] = 0;
+      i = 0;
+      while(i < n) (
+        ry  = y + pad + i * item_h;
+        hdr = rk_popup_row(items, i);
+        inside = rmx >= x && rmx < x + w && rmy >= ry && rmy < ry + item_h;
+        !hdr && inside ? (
+          mem[6] = i;
+          gfx_set(r, g, b, 0.22);
+          gfx_rect(x + 1, ry, w - 2, item_h);
+        );
+        gfx_measurestr(#rkpp_s, tw, th);
+        hdr ? gfx_set(r, g, b, 0.95) : gfx_set(0.84, 0.855, 0.886, inside ? 1 : 0.82);
+        gfx_x = x + pad * 2; gfx_y = ry + (item_h - th) * 0.5;
+        gfx_drawstr(#rkpp_s);
+        !hdr && inside && edge ? res = i + 1;   // 1-based, like gfx_showmenu
+        i += 1;
+      );
+
+      // wheel over a row — the caller decides what that means
+      mem[11] != 0 && mem[6] >= 0 ? mem[12] = mem[11] > 0 ? 1 : -1;
+
+      // a click anywhere else, or ESC, cancels
+      !(rmx >= x && rmx < x + w && rmy >= y && rmy < y + h) && edge ? res = -1;
+      ch == RKPP_ESC ? res = -1;
+
+      res != 0 ? ( mem[5] = res; rk_popup_close(mem); );
+    );
+  );
+  res;
+);

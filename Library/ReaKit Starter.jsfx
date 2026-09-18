@@ -27,9 +27,10 @@ options:gfx_hz=60 no_meter
 //  of @init are ordinary local functions and they are meant to be copied and
 //  changed rather than imported.
 //
-//  One control is hand-rolled and marked GAP, because the library has no widget
-//  for it yet: the dropdown. The EQ curve used to be a second gap and is now a
-//  real rk_curve call, with draggable nodes and the meter's spectrum behind it.
+//  It has no GAPs left. It shipped with three hand-rolled controls the library
+//  had no widget for — an XY pad, an ADSR display and a dropdown. The strip
+//  redesign retired the first two, rk_curve replaced the EQ display and
+//  rk_popup the dropdown. Everything on this panel is a library call now.
 //
 //  Part of ReaKit, MIT licensed — see ReaKit/README.md for the guide.
 //
@@ -80,6 +81,7 @@ import sliders_kbsg.jsfx-inc
 import meters_kbsg.jsfx-inc
 import rk_vu.jsfx-inc
 import rk_curve.jsfx-inc
+import rk_popup.jsfx-inc
 
 @init
 
@@ -150,6 +152,7 @@ eqf    = freemem; freemem += 4;           // node frequencies
 eqd    = freemem; freemem += 4;           // node gains
 eqw    = freemem; freemem += 4;           // bell widths, in octaves
 eqnm   = freemem; freemem += 8 + 4;       // node drag state: 8 + one per node
+ppmem  = freemem; freemem += RKPP_MEM;    // the face dropdown's popup
 eqnm[0] = -1;                             // nothing grabbed
 eq_hash = -1;                             // forces the first fill
 
@@ -414,14 +417,13 @@ local(i, j, f, d, sum) (
   );
 );
 
-// ═══ GAP 2 — DROPDOWN ═══════════════════════════════════════════════════════
-// ReaKit has segmented bars and radio groups, which are right for three options
-// and useless for twenty. There is no dropdown, so this leans on JSFX's own
-// gfx_showmenu — which is genuinely the right answer for a long list, and is
-// why the widget may never need to exist.
-function ui_dropdown(x, y, w, h, cur, label, menu) local(hit, res) (
+// ── Dropdown field ══════════════════════════════════════════════════════════
+// The box you click. The LIST is rk_popup, which draws itself rather than
+// handing the job to gfx_showmenu — so the menu looks like the rest of the
+// plugin instead of like the operating system. This was GAP 3, then GAP 2, and
+// is now a call.
+function ui_dropfield(pmem, x, y, w, h, label) local(hit) (
   hit = mx >= x && mx < x + w && my >= y && my < y + h;
-  ui_dd_val = cur;
 
   gfx_set(0, 0, 0, 0.30);
   ui_rrect(x, y, w, h, px(3));
@@ -437,12 +439,7 @@ function ui_dropdown(x, y, w, h, cur, label, menu) local(hit, res) (
                x + w - px(5),  y + h * 0.42,
                x + w - px(9),  y + h * 0.66);
 
-  hit && lmb_down ? (
-    gfx_x = x; gfx_y = y + h;
-    res = gfx_showmenu(menu);
-    res > 0 ? ui_dd_val = res - 1;
-  );
-  ui_dd_val;
+  hit && lmb_down && !rk_popup_active(pmem) ? rk_popup_open(pmem, x, y + h, w);
 );
 
 @slider
@@ -520,6 +517,14 @@ frame_wheel = mouse_wheel / 120; mouse_wheel = 0;
 
 strcpy(#tip, "");
 
+// Drain the key queue once a frame — rk_popup wants it for ESC.
+_ch = gfx_getchar();
+
+// ⭐ While the menu is open this takes the mouse away from everything drawn
+// after it, so a click cannot land on a knob underneath. The real values are
+// preserved for rk_popup_run at the very end of the frame.
+rk_popup_gate(ppmem);
+
 // One parameter, and every widget below is re-skinned. This is the call.
 ui_apply_accent(ui_accent);
 knob_style = max(1, min(floor(ui_knob_sty + 0.5), 20));
@@ -583,8 +588,7 @@ ui_tip(_kx, hy, px(80), hh, "Knob style — 20 looks, identical feel");
 // FACE — the VU's twenty faces, through the dropdown gap.
 _fx = hx + px(246);
 rk_vu_theme_name(max(0, min(floor(ui_face + 0.5), 19)), #s);
-_nv = ui_dropdown(_fx, hy, px(108), hh, ui_face, #s, #face_menu);
-_nv != ui_face ? ( ui_face = _nv; slider_automate(ui_face); );
+ui_dropfield(ppmem, _fx, hy, px(108), hh, #s);
 ui_tip(_fx, hy, px(108), hh, "VU face — 20 of them");
 
 ui_sep_h(px(14), px(44), W - px(28));
@@ -799,5 +803,8 @@ ui_section(px(26) + disp_w, disp_y, disp_w, disp_h, "SCOPE");
 mtr_wave_draw(px(36) + disp_w, disp_y + px(30), disp_w - px(20), disp_h - px(42), 0);
 ui_tip(px(26) + disp_w, disp_y, disp_w, disp_h, "Waveform — meters_kbsg");
 
-// Tooltips last, over everything.
+// Tooltips, then the menu. The menu is genuinely last: it is over everything.
 ui_tip_flush();
+
+_pk = rk_popup_run(ppmem, #face_menu, px(18), _ch, ac_r, ac_g, ac_b);
+_pk > 0 ? ( ui_face = _pk - 1; slider_automate(ui_face); );

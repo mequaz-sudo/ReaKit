@@ -163,6 +163,14 @@ DES_H = slider1 == 0 ? 384 : slider1 == 1 ? 296 : slider1 == 2 ? 392 :
 sc = min(gfx_w / 740, gfx_h / DES_H);
 sc < 0.35 ? sc = 0.35;
 
+// The title and the tab bar belong to the PLUGIN, not to whichever tab is
+// showing, so they scale off a fixed reference height instead of the active
+// tab's. Scaling them per tab made the bar change size as you switched tabs on
+// a short window. 400 is the tallest tab, so sc_ui is never larger than sc and
+// the bar always sits inside the content width.
+sc_ui = min(gfx_w / 740, gfx_h / 400);
+sc_ui < 0.35 ? sc_ui = 0.35;
+
 // --- per-frame input globals required by the kbsg libs ---
 mx = mouse_x; my = mouse_y;
 LMB = mouse_cap & 1; lmb_down = LMB && !_pLMB; _pLMB = LMB;
@@ -171,19 +179,19 @@ dt = time_precise() - _lt; _lt = time_precise(); hv_speed = 11; tau = 2*$pi;
 frame_wheel = mouse_wheel / 120; mouse_wheel = 0;
 
 // REAKIT ELEMENTS (title)
-gfx_setfont(1,"Arial",max(9,floor(14*sc)),'b'); gfx_set(0.85,0.20,0.11); gfx_x=sc*14; gfx_y=sc*18; gfx_drawstr("REAKIT ELEMENTS");
+gfx_setfont(1,"Arial",max(9,floor(14*sc_ui)),'b'); gfx_set(0.85,0.20,0.11); gfx_x=sc_ui*14; gfx_y=sc_ui*18; gfx_drawstr("REAKIT ELEMENTS");
 
 // Nav tab bar — buttons_kbsg btn_tab, the library's own tab widget
 bm = btnmem + 10*8;
-_nt = btn_tab_interact(bm, sc*150, sc*10, sc*93, sc*28, 6, sc*4, slider1);
+_nt = btn_tab_interact(bm, sc_ui*150, sc_ui*10, sc_ui*93, sc_ui*28, 6, sc_ui*4, slider1);
 _nt != slider1 ? ( slider1 = _nt; slider_automate(slider1); );
-gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b');
-btn_tab_draw(sc*150, sc*10, sc*93, sc*28, 0, slider1, "KNOBS", bm[0]);
-btn_tab_draw(sc*247, sc*10, sc*93, sc*28, 1, slider1, "BUTTONS", bm[0]);
-btn_tab_draw(sc*344, sc*10, sc*93, sc*28, 2, slider1, "SLIDERS", bm[0]);
-btn_tab_draw(sc*441, sc*10, sc*93, sc*28, 3, slider1, "METERS", bm[0]);
-btn_tab_draw(sc*538, sc*10, sc*93, sc*28, 4, slider1, "PADS/KEYS", bm[0]);
-btn_tab_draw(sc*635, sc*10, sc*93, sc*28, 5, slider1, "CURVE", bm[0]);
+gfx_setfont(1,"Arial",max(9,floor(11*sc_ui)),'b');
+btn_tab_draw(sc_ui*150, sc_ui*10, sc_ui*93, sc_ui*28, 0, slider1, "KNOBS", bm[0]);
+btn_tab_draw(sc_ui*247, sc_ui*10, sc_ui*93, sc_ui*28, 1, slider1, "BUTTONS", bm[0]);
+btn_tab_draw(sc_ui*344, sc_ui*10, sc_ui*93, sc_ui*28, 2, slider1, "SLIDERS", bm[0]);
+btn_tab_draw(sc_ui*441, sc_ui*10, sc_ui*93, sc_ui*28, 3, slider1, "METERS", bm[0]);
+btn_tab_draw(sc_ui*538, sc_ui*10, sc_ui*93, sc_ui*28, 4, slider1, "PADS/KEYS", bm[0]);
+btn_tab_draw(sc_ui*635, sc_ui*10, sc_ui*93, sc_ui*28, 5, slider1, "CURVE", bm[0]);
 
 // ═══════════════════════ TAB 0 · KNOBS ═══════════════════════
 slider1 == 0 ? (

@@ -361,6 +361,14 @@ local(i, n, t, fx, sum, d, yy, py, cy_, amp) (
   gfx_set(0, 0, 0, 0.32);
   gfx_rect(x, y, w, h);
   cy_ = y + h * 0.5;
+
+  // A grid, so a flat EQ reads as a display showing nothing rather than as an
+  // empty box. Four decade-ish verticals and the +/-9 dB guides.
+  gfx_set(ln_r, ln_g, ln_b, 0.35);
+  i = 1;
+  loop(3, gfx_rect(x + w * i * 0.25, y, 1, h); i += 1; );
+  gfx_rect(x, y + h * 0.25, w, 1);
+  gfx_rect(x, y + h * 0.75, w, 1);
   gfx_set(ln_r, ln_g, ln_b, 0.8);
   gfx_rect(x, cy_, w, 1);
 
@@ -632,11 +640,13 @@ _nv != c_rel ? ( c_rel = _nv; slider_automate(c_rel); );
 // The GR meter reads a figure the compressor section actually computes — it is
 // just never applied to the audio.
 meter_set_gr(gr_db);
-mtr_gr_draw(c3 + px(10), row_y + px(104), w3 - px(20), px(26), gr_db);
+// ⚠️ mtr_gr_draw paints its own dB figure just past the right end of the bar,
+// so the bar cannot run the full panel width — give it the room or the number
+// lands in the next column.
+mtr_gr_draw(c3 + px(10), row_y + px(104), w3 - px(58), px(26), gr_db);
 ui_font(8, 0);
-gfx_set(tx_r, tx_g, tx_b, 0.55);
-sprintf(#s, "GR %.1f dB", gr_db);
-ui_text_r(c3 + w3 - px(12), row_y + px(136), #s);
+gfx_set(tx_r, tx_g, tx_b, 0.45);
+ui_text(c3 + px(10), row_y + px(136), "GAIN REDUCTION");
 
 mtr_led_bar_draw(c3 + px(62), row_y + px(152), px(80), px(120),
                  ui_db(mtr_peak_l), ui_db(mtr_peak_r), -48, 6);
@@ -664,10 +674,13 @@ _nv != ch_mode ? ( ch_mode = _nv; slider_automate(ch_mode); );
 
 mtr_clip_interact(c4 + px(30), row_y + px(158), px(7));
 mtr_clip_draw(c4 + px(30), row_y + px(158), px(7), mtr_clip_l, mtr_clip_r);
+// ⚠️ mtr_clip_draw takes the CENTRE of the LEFT led. The right one sits at
+// x + 3*led_r, and a lit led throws a halo out to 2*led_r beyond that — so the
+// pair occupies x-r .. x+5r, and a label has to start past all of it.
 ui_font(8, 0);
 gfx_set(tx_r, tx_g, tx_b, 0.55);
-ui_text(c4 + px(52), row_y + px(154), "CLIP");
-ui_tip(c4 + px(24), row_y + px(150), px(60), px(22), "Clip LEDs — click to reset");
+ui_text(c4 + px(72), row_y + px(154), "CLIP");
+ui_tip(c4 + px(20), row_y + px(148), px(90), px(28), "Clip LEDs — click to reset");
 
 mtr_phase_draw(c4 + px(8), row_y + px(184), w4 - px(16), px(28), mtr_phase);
 mtr_gonio_draw(c4 + w4 * 0.5, row_y + px(258), px(44));

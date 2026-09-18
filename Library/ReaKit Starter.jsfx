@@ -214,6 +214,15 @@ a2_r = 0.945; a2_g = 0.639; a2_b = 0.239;   // secondary accent
 
 function px(v) ( sc * v; );
 
+// ⭐ Vertical placement INSIDE the strip row. The columns stretch with the
+// window now, but their contents were still at fixed pixel offsets, so a tall
+// window gave a tall panel with its widgets huddled at the top. These take a
+// design offset out of the 330-row strip and return the stretched equivalent.
+// Widget SIZES stay on px() -- a knob should not become a dinner plate because
+// the window got taller, but a fader should get longer.
+function st_y(v) ( row_y + row_h * v * 0.0030303; );
+function st_h(v) ( row_h * v * 0.0030303; );
+
 function ui_font(size, bold) (
   gfx_setfont(1, "Arial", max(8, floor(size * sc + 0.5)), bold ? 'b' : 0);
 );
@@ -602,22 +611,22 @@ c5 = c4 + w4 + px(10);
 cy = ui_section(c1, row_y, w1, row_h, "INPUT");
 
 sprintf(#s, "%+.1f dB", in_trim);
-_nv = ui_fader(m_trim, c1 + w1 * 0.5 - px(20), cy + px(22), px(40), px(140),
+_nv = ui_fader(m_trim, c1 + w1 * 0.5 - px(20), st_y(48), px(40), st_h(140),
                in_trim, -24, 24, 0, "TRIM", #s);
 abs(_nv - in_trim) > 0.0001 ? ( in_trim = _nv; slider_automate(in_trim); );
 
-_nv = ui_toggle(m_phase, c1 + px(10), row_y + px(210), w1 - px(20), px(22),
+_nv = ui_toggle(m_phase, c1 + px(10), st_y(210), w1 - px(20), px(22),
                 in_phase, "PHASE");
 _nv != in_phase ? ( in_phase = _nv; slider_automate(in_phase); );
 
 sprintf(#s, "%.0f Hz", in_hpf);
-_nv = ui_knob(m_hpf, c1 + w1 * 0.5, row_y + px(278), px(17),
+_nv = ui_knob(m_hpf, c1 + w1 * 0.5, st_y(278), px(17),
               in_hpf, 20, 400, 20, 0, 0, "HPF", #s);
 _nv != in_hpf ? ( in_hpf = _nv; slider_automate(in_hpf); );
 
 // ── EQ ──────────────────────────────────────────────────────────────────────
 cy = ui_section(c2, row_y, w2, row_h, "EQ");
-ky = row_y + px(64); kr = px(17);
+ky = st_y(64); kr = px(17);
 
 sprintf(#s, "%+.1f", eq_lo);
 _nv = ui_knob(m_eqlo, c2 + w2 * 0.145, ky, kr, eq_lo, -15, 15, 0, 0, 1, "LOW", #s);
@@ -639,8 +648,8 @@ _nv != eq_hi ? ( eq_hi = _nv; slider_automate(eq_hi); );
 // ⚠️ ONE rect for all five calls. Insetting the trace by a pixel while the
 // plate kept the full rect put the 500 Hz gridline and the 500 Hz node a pixel
 // apart — the exact drift the shared mapping exists to prevent.
-_cx = c2 + px(10); _cy = row_y + px(100);
-_cw = w2 - px(20); _ch = px(168);
+_cx = c2 + px(10); _cy = st_y(100);
+_cw = w2 - px(20); _ch = st_h(168);
 
 eqf[0] = eq_f1; eqf[1] = eq_f2; eqf[2] = eq_f3; eqf[3] = eq_f4;
 eqd[0] = eq_lo; eqd[1] = eq_lmf; eqd[2] = eq_hmf; eqd[3] = eq_hi;
@@ -690,7 +699,7 @@ rk_curve_nodes_draw(eqnm, _cx, _cy, _cw, _ch, 18, eqf, eqd, 4,
                     rk_curve_hov, ac_r, ac_g, ac_b);
 ui_tip(_cx, _cy, _cw, _ch, "EQ curve — rk_curve. Drag a node, wheel for width, double-click to flatten");
 
-_nv = ui_toggle(m_eqon, c2 + px(10), row_y + px(280), w2 - px(20), px(24),
+_nv = ui_toggle(m_eqon, c2 + px(10), st_y(280), w2 - px(20), px(24),
                 eq_on, "EQ IN");
 _nv != eq_on ? ( eq_on = _nv; slider_automate(eq_on); );
 
@@ -719,15 +728,15 @@ meter_set_gr(gr_db);
 // ⚠️ mtr_gr_draw paints its own dB figure just past the right end of the bar,
 // so the bar cannot run the full panel width — give it the room or the number
 // lands in the next column.
-mtr_gr_draw(c3 + px(10), row_y + px(104), w3 - px(58), px(26), gr_db);
+mtr_gr_draw(c3 + px(10), st_y(104), w3 - px(58), px(26), gr_db);
 ui_font(8, 0);
 gfx_set(tx_r, tx_g, tx_b, 0.45);
-ui_text(c3 + px(10), row_y + px(136), "GAIN REDUCTION");
+ui_text(c3 + px(10), st_y(136), "GAIN REDUCTION");
 
-mtr_led_bar_draw(c3 + px(62), row_y + px(152), px(80), px(120),
+mtr_led_bar_draw(c3 + px(62), st_y(152), px(80), st_h(120),
                  ui_db(mtr_peak_l), ui_db(mtr_peak_r), -48, 6);
 
-_nv = ui_toggle(m_con, c3 + px(10), row_y + px(280), w3 - px(20), px(24),
+_nv = ui_toggle(m_con, c3 + px(10), st_y(280), w3 - px(20), px(24),
                 c_on, "COMP IN");
 _nv != c_on ? ( c_on = _nv; slider_automate(c_on); );
 
@@ -735,47 +744,47 @@ _nv != c_on ? ( c_on = _nv; slider_automate(c_on); );
 cy = ui_section(c4, row_y, w4, row_h, "CHARACTER");
 
 sprintf(#s, "%.0f %%", ch_drive);
-_nv = ui_knob(m_drive, c4 + w4 * 0.27, row_y + px(68), px(18),
+_nv = ui_knob(m_drive, c4 + w4 * 0.27, st_y(68), px(18),
               ch_drive, 0, 100, 25, 0, 0, "DRIVE", #s);
 _nv != ch_drive ? ( ch_drive = _nv; slider_automate(ch_drive); );
 
 sprintf(#s, "%.0f %%", ch_blend);
-_nv = ui_knob(m_blend, c4 + w4 * 0.73, row_y + px(68), px(18),
+_nv = ui_knob(m_blend, c4 + w4 * 0.73, st_y(68), px(18),
               ch_blend, 0, 100, 100, 0, 0, "BLEND", #s);
 _nv != ch_blend ? ( ch_blend = _nv; slider_automate(ch_blend); );
 
-_nv = ui_segment3(m_mode, c4 + px(8), row_y + px(118), w4 - px(16), px(24),
+_nv = ui_segment3(m_mode, c4 + px(8), st_y(118), w4 - px(16), px(24),
                   ch_mode, "CLEAN", "TUBE", "TAPE");
 _nv != ch_mode ? ( ch_mode = _nv; slider_automate(ch_mode); );
 
-mtr_clip_interact(c4 + w4 * 0.21, row_y + px(158), px(7));
-mtr_clip_draw(c4 + w4 * 0.21, row_y + px(158), px(7), mtr_clip_l, mtr_clip_r);
+mtr_clip_interact(c4 + w4 * 0.21, st_y(158), px(7));
+mtr_clip_draw(c4 + w4 * 0.21, st_y(158), px(7), mtr_clip_l, mtr_clip_r);
 // ⚠️ mtr_clip_draw takes the CENTRE of the LEFT led. The right one sits at
 // x + 3*led_r, and a lit led throws a halo out to 2*led_r beyond that — so the
 // pair occupies x-r .. x+5r, and a label has to start past all of it.
 ui_font(8, 0);
 gfx_set(tx_r, tx_g, tx_b, 0.55);
-ui_text(c4 + w4 * 0.49, row_y + px(154), "CLIP");
-ui_tip(c4 + px(20), row_y + px(148), px(90), px(28), "Clip LEDs — click to reset");
+ui_text(c4 + w4 * 0.49, st_y(154), "CLIP");
+ui_tip(c4 + px(20), st_y(148), px(90), px(28), "Clip LEDs — click to reset");
 
-mtr_phase_draw(c4 + px(8), row_y + px(184), w4 - px(16), px(28), mtr_phase);
-mtr_gonio_draw(c4 + w4 * 0.5, row_y + px(258), px(44));
-ui_tip(c4 + px(8), row_y + px(214), w4 - px(16), px(100), "Goniometer — meters_kbsg");
+mtr_phase_draw(c4 + px(8), st_y(184), w4 - px(16), px(28), mtr_phase);
+mtr_gonio_draw(c4 + w4 * 0.5, st_y(258), px(44));
+ui_tip(c4 + px(8), st_y(214), w4 - px(16), px(100), "Goniometer — meters_kbsg");
 
 // ── OUTPUT ──────────────────────────────────────────────────────────────────
 cy = ui_section(c5, row_y, w5, row_h, "OUTPUT");
 
-vu.rk_vu_draw(c5 + px(8), row_y + px(30), w5 - px(16), row_h * 0.29,
+vu.rk_vu_draw(c5 + px(8), st_y(30), w5 - px(16), st_h(96),
               0, max(0, min(floor(ui_face + 0.5), 19)), "");
-ui_tip(c5 + px(8), row_y + px(30), w5 - px(16), px(96),
+ui_tip(c5 + px(8), st_y(30), w5 - px(16), st_h(96),
        "Analog VU — rk_vu, 20 faces, click the coil cover");
 
 sprintf(#s, "%+.1f dB", out_db);
-_nv = ui_fader(m_out, c5 + w5 * 0.22 - px(22), row_y + px(160), px(44), px(140),
+_nv = ui_fader(m_out, c5 + w5 * 0.22 - px(22), st_y(160), px(44), st_h(140),
                out_db, -24, 12, 1, "OUT", #s);
 abs(_nv - out_db) > 0.0001 ? ( out_db = _nv; slider_automate(out_db); out_lin = 10 ^ (out_db / 20); );
 
-mtr_led_bar_draw(c5 + w5 * 0.60, row_y + px(160), w5 * 0.34, px(140),
+mtr_led_bar_draw(c5 + w5 * 0.60, st_y(160), w5 * 0.34, st_h(140),
                  ui_db(mtr_peak_l), ui_db(mtr_peak_r), -48, 6);
 
 // ═══ DISPLAYS ═══════════════════════════════════════════════════════════════

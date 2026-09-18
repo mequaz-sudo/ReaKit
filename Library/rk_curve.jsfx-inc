@@ -1,0 +1,357 @@
+desc: ReaKit response-curve widget
+// ══════════════════════════════════════════════════════════════════════
+// rk_curve.jsfx-inc — a response curve in a plain rectangle: plate, log
+// frequency grid, dB grid, an analyser underlay, the trace, and draggable
+// nodes on top of it.
+//
+// Written clean-room for ReaKit. This has been written at least eight times
+// inside plugins in this codebase and none of those was reusable: 4BandEQ's
+// draw_curve is welded to eight filter objects and an image-slot cache,
+// Compressor's and Gate's are inline in @gfx on linear dB axes, Saturation's
+// is square and third-party licensed, Swing's per-pad EQ reads a dozen pad
+// globals, and the Drum Strip's carries its own column cache. Externally the
+// same story: ReEQ, RCModEQ and the Saike plugins each own a good curve that
+// cannot leave its plugin. This one takes a rect and an array.
+//
+// ⭐ IT EVALUATES NOTHING. The caller fills an array with dB values and this
+// draws it. No filter model, no FFT, no band abstraction — which is what lets
+// the same widget serve an EQ response, a filter sweep, a compressor knee and
+// a waveshaper transfer curve. It is also where the cost lives: filling that
+// array per pixel per frame is how the Drum Strip once spent ~600k
+// transcendentals a second while nothing moved. Fill it when something
+// changes, not when something is drawn.
+//
+// ⭐ ONE X MAPPING, TWO Y MAPPINGS. The trace, the grid, the nodes and the
+// analyser all call rk_curve_f2x, so they cannot drift apart — ReEQ keeps two
+// parallel copies of its mapping and has a real (if harmless) typo where it
+// assigns its right margin to its left. Y is deliberately NOT shared: a
+// response is symmetric about the midline, an analyser runs absolute from a
+// ceiling down to a floor.
+//
+// REQUIREMENTS (host plugin must provide, per frame, before calling):
+//   - mx, my       — mouse position
+//   - lmb_down     — left-button PRESS edge (not the held state)
+//   - LMB          — left-button HELD state
+//   - CTRL, SHIFT  — modifier state (fine drag)
+//   - dt, hv_speed — frame delta + hover ramp speed (as the other kbsg libs)
+//
+// MEMORY: the drawing calls claim NONE. rk_curve_nodes needs one caller-owned
+// block of (8 + n) words for n nodes: [0] dragging index or -1, [1..2] the
+// latched mouse origin, [3..4] the latched value origin, [5] the modifier
+// state the latch was taken under, [6] last click time, [7] last click index,
+// [8..8+n-1] per-node hover ramps.
+//
+// PUBLIC API:
+//   rk_curve_init(fmin, fmax)
+//        once, in @init. Precomputes the log denominator — 4BandEQ recomputes
+//        log(20) and log(22000) inside its mapping on every pixel of every
+//        frame. Defaults to 20..22000 if never called.
+//   rk_curve_f2x(f, x, w) / rk_curve_x2f(px, x, w)      Hz <-> pixel
+//   rk_curve_d2y(db, y, h, dr) / rk_curve_y2d(py, y, h, dr)
+//        response dB <-> pixel, symmetric about the midline, full scale ±dr
+//   rk_curve_a2y(db, y, h, ceil_db, floor_db)           analyser dB -> pixel
+//   rk_curve_mag2db(m)         linear magnitude -> dB, floored at -140
+//   rk_curve_plate(x, y, w, h, dr)
+//        plate, frequency grid + labels, dB grid + labels, border. Sets a
+//        small font for the labels and does not restore it.
+//   rk_curve_analyser(x, y, w, h, buf, n, ceil_db, floor_db, r, g, b)
+//        the underlay. Call BEFORE the trace.
+//   rk_curve_trace(x, y, w, h, buf, n, dr, fill, r, g, b)
+//        the curve. `fill` 1 shades to the midline.
+//   rk_curve_nodes(mem, x, y, w, h, dr, fbuf, dbuf, n)
+//        the whole gesture: hover, grab, delta drag, double-click. Publishes
+//        rk_curve_ni / rk_curve_nf / rk_curve_ndb / rk_curve_moved /
+//        rk_curve_dblclk / rk_curve_hov. WRITES NOTHING BACK — the caller
+//        clamps and calls slider_automate, which is the one thing that made
+//        every surveyed implementation unusable as a widget.
+//   rk_curve_nodes_draw(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, r, g, b)
+//
+// `buf` holds `n` dB values spread evenly across the rect in X. Because X is
+// log frequency, evenly spaced in X IS log spaced in Hz, so an analyser and a
+// trace of different lengths still line up. ~512 is a good `n` for a trace.
+// ══════════════════════════════════════════════════════════════════════
+
+@init
+
+// ── Mapping ───────────────────────────────────────────────────────────
+
+function rk_curve_init(fmin, fmax) (
+  RKCV_FMIN = max(fmin, 1);
+  RKCV_FMAX = max(fmax, RKCV_FMIN * 2);
+  rkcv_lmin = log(RKCV_FMIN);
+  rkcv_flog = log(RKCV_FMAX) - rkcv_lmin;     // precomputed once, not per pixel
+);
+
+rk_curve_init(20, 22000);
+
+function rk_curve_f2x(f, x, w) (
+  x + w * (log(max(f, RKCV_FMIN)) - rkcv_lmin) / rkcv_flog;
+);
+
+function rk_curve_x2f(px, x, w) (
+  exp(rkcv_lmin + (px - x) / max(w, 1) * rkcv_flog);
+);
+
+// Response: symmetric about the midline, ±dr full scale.
+function rk_curve_d2y(db, y, h, dr) (
+  y + h * 0.5 - db / max(dr, 0.0001) * h * 0.5;
+);
+
+function rk_curve_y2d(py, y, h, dr) (
+  (y + h * 0.5 - py) / max(h * 0.5, 1) * dr;
+);
+
+// Analyser: absolute, ceiling at the top, floor at the bottom.
+function rk_curve_a2y(db, y, h, ceil_db, floor_db) local(t) (
+  t = (db - ceil_db) / min(floor_db - ceil_db, -0.0001);
+  y + h * min(max(t, 0), 1);
+);
+
+function rk_curve_mag2db(m) (
+  m < 0.0000001 ? -140 : 8.685889638065035 * log(m);
+);
+
+// ── Plate and grid ────────────────────────────────────────────────────
+
+// The nine-stop ladder every EQ in the corpus converges on.
+function rk_curve_grid_f(i) (
+  i == 0 ? 20   : i == 1 ? 50   : i == 2 ? 100  : i == 3 ? 200 :
+  i == 4 ? 500  : i == 5 ? 1000 : i == 6 ? 2000 : i == 7 ? 5000 : 10000;
+);
+
+function rk_curve_plate(x, y, w, h, dr)
+local(i, f, gx_, gy_, tw, th, last_x, db) (
+  gfx_set(0.043, 0.047, 0.067, 1);
+  gfx_rect(x, y, w, h);
+
+  gfx_setfont(1, "Arial", max(8, floor(h * 0.075)));
+
+  // Frequency grid. Labels sit INSIDE the rect: outside they get clipped by
+  // whatever the caller has drawn around the graph.
+  last_x = -1000;
+  i = 0;
+  loop(9,
+    f = rk_curve_grid_f(i);
+    f > RKCV_FMIN && f < RKCV_FMAX ? (
+      gx_ = rk_curve_f2x(f, x, w);
+      gfx_set(0.18, 0.20, 0.25, 0.40);
+      gfx_rect(gx_, y, 1, h);
+      f >= 1000 ? sprintf(#rkcv_s, "%dk", f / 1000) : sprintf(#rkcv_s, "%d", f);
+      gfx_measurestr(#rkcv_s, tw, th);
+      // Suppress a label that would touch the previous one.
+      gx_ - tw * 0.5 > last_x + 4 ? (
+        gfx_set(0.42, 0.45, 0.52, 0.95);
+        gfx_x = gx_ - tw * 0.5; gfx_y = y + h - th - 2;
+        gfx_drawstr(#rkcv_s);
+        last_x = gx_ + tw * 0.5;
+      );
+    );
+    i += 1;
+  );
+
+  // dB grid: five lines at i*(dr/2), 0 dB brighter than the rest.
+  i = -2;
+  loop(5,
+    db = i * dr * 0.5;
+    gy_ = rk_curve_d2y(db, y, h, dr);
+    gfx_set(0.18, 0.20, 0.25, i == 0 ? 0.70 : 0.35);
+    gfx_rect(x, gy_, w, 1);
+    // Label only the extremes and zero; the quarter lines stay unlabelled so a
+    // short graph does not turn into a column of numbers.
+    abs(i) == 2 || i == 0 ? (
+      sprintf(#rkcv_s, "%+d", db);
+      gfx_measurestr(#rkcv_s, tw, th);
+      gfx_set(0.42, 0.45, 0.52, 0.85);
+      gfx_x = x + 3;
+      gfx_y = i == 2 ? gy_ + 2 : gy_ - th - 1;   // top line labels below itself
+      gfx_drawstr(#rkcv_s);
+    );
+    i += 1;
+  );
+
+  gfx_set(0.20, 0.22, 0.27, 1);
+  gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
+  gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
+);
+
+// ── Analyser underlay ─────────────────────────────────────────────────
+// Filled to the bottom, quads guarded on an integer column change so many
+// bands landing in one pixel do not each emit a degenerate triangle.
+
+function rk_curve_analyser(x, y, w, h, buf, n, ceil_db, floor_db, r, g, b)
+local(i, x0, x1, y0, bot) (
+  n < 2 ? 0 : (
+    bot = y + h - 1;
+    gfx_set(r, g, b, 0.22);
+    i = 0;
+    loop(n - 1,
+      x0 = x + i * w / (n - 1);
+      x1 = x + (i + 1) * w / (n - 1);
+      floor(x1) > floor(x0) ? (
+        y0 = rk_curve_a2y(buf[i], y, h, ceil_db, floor_db);
+        y0 < bot ? gfx_triangle(x0, y0, x1, y0, x1, bot, x0, bot);
+      );
+      i += 1;
+    );
+    // Capping line, so the top edge of the fill reads as a line rather than a
+    // stair. Cheap antialiasing.
+    gfx_set(r, g, b, 0.50);
+    i = 0;
+    loop(n - 1,
+      x0 = x + i * w / (n - 1);
+      x1 = x + (i + 1) * w / (n - 1);
+      gfx_line(x0, rk_curve_a2y(buf[i], y, h, ceil_db, floor_db),
+               x1, rk_curve_a2y(buf[i + 1], y, h, ceil_db, floor_db));
+      i += 1;
+    );
+  );
+);
+
+// ── The trace ─────────────────────────────────────────────────────────
+
+function rk_curve_trace(x, y, w, h, buf, n, dr, fill, r, g, b)
+local(i, x0, x1, y0, y1, cy_, top, bot) (
+  n < 2 ? 0 : (
+    top = y + 1; bot = y + h - 2; cy_ = y + h * 0.5;
+
+    fill ? (
+      gfx_set(r, g, b, 0.14);
+      i = 0;
+      loop(n - 1,
+        x0 = x + i * w / (n - 1);
+        x1 = x + (i + 1) * w / (n - 1);
+        floor(x1) > floor(x0) ? (
+          y0 = min(max(rk_curve_d2y(buf[i], y, h, dr), top), bot);
+          gfx_triangle(x0, cy_, x0, y0, x1, y0, x1, cy_);
+        );
+        i += 1;
+      );
+    );
+
+    // Shadow pass then the line itself: one pixel down and dark, so the trace
+    // reads against the grid without needing a thicker stroke.
+    gfx_set(0, 0, 0, 0.45);
+    i = 0;
+    loop(n - 1,
+      x0 = x + i * w / (n - 1);
+      x1 = x + (i + 1) * w / (n - 1);
+      y0 = min(max(rk_curve_d2y(buf[i],     y, h, dr), top), bot);
+      y1 = min(max(rk_curve_d2y(buf[i + 1], y, h, dr), top), bot);
+      gfx_line(x0, y0 + 1, x1, y1 + 1);
+      i += 1;
+    );
+    gfx_set(r, g, b, 1);
+    i = 0;
+    loop(n - 1,
+      x0 = x + i * w / (n - 1);
+      x1 = x + (i + 1) * w / (n - 1);
+      y0 = min(max(rk_curve_d2y(buf[i],     y, h, dr), top), bot);
+      y1 = min(max(rk_curve_d2y(buf[i + 1], y, h, dr), top), bot);
+      gfx_line(x0, y0, x1, y1);
+      i += 1;
+    );
+  );
+);
+
+// ── Nodes ─────────────────────────────────────────────────────────────
+
+function rk_curve_node_r(w) ( max(5, min(w * 0.020, 11)); );
+
+// Nearest node within reach, or -1. Scanning all of them and taking the
+// nearest is the difference between this and 4BandEQ's first-come-wins, which
+// grabs the wrong node the moment two overlap.
+function rk_curve_nodes_hit(x, y, w, h, dr, fbuf, dbuf, n)
+local(i, nx, ny, d, best, bi, rad) (
+  rad = rk_curve_node_r(w) * 2.4;
+  best = rad * rad; bi = -1;
+  i = 0;
+  loop(n,
+    nx = rk_curve_f2x(fbuf[i], x, w);
+    ny = rk_curve_d2y(dbuf[i], y, h, dr);
+    d = (mx - nx) * (mx - nx) + (my - ny) * (my - ny);
+    d < best ? ( best = d; bi = i; );
+    i += 1;
+  );
+  bi;
+);
+
+function rk_curve_nodes(mem, x, y, w, h, dr, fbuf, dbuf, n)
+local(i, hov, mods, dx, dy, sens, now) (
+  rk_curve_ni = -1; rk_curve_moved = 0; rk_curve_dblclk = 0;
+  rk_curve_nf = 0;  rk_curve_ndb = 0;
+
+  hov = mem[0] >= 0 ? mem[0] : rk_curve_nodes_hit(x, y, w, h, dr, fbuf, dbuf, n);
+  rk_curve_hov = hov;
+
+  i = 0;
+  loop(n,
+    i == hov ? ( mem[8 + i] = min(mem[8 + i] + dt * hv_speed, 1); )
+             : ( mem[8 + i] = max(mem[8 + i] - dt * hv_speed, 0); );
+    i += 1;
+  );
+
+  mods = (CTRL ? 1 : 0) + (SHIFT ? 2 : 0);
+
+  // Grab. Latch the mouse AND the value it started from, so the drag is a
+  // delta: grabbing an off-centre node must not teleport it under the cursor.
+  hov >= 0 && lmb_down && mem[0] < 0 ? (
+    now = time_precise();
+    now - mem[6] < 0.25 && mem[7] == hov ? (
+      rk_curve_dblclk = 1; rk_curve_ni = hov;
+      mem[6] = 0;                      // consume it, so it is not seen twice
+    ) : (
+      mem[6] = now; mem[7] = hov;
+      mem[0] = hov; mem[1] = mx; mem[2] = my;
+      mem[3] = fbuf[hov]; mem[4] = dbuf[hov]; mem[5] = mods;
+    );
+  );
+
+  !LMB ? mem[0] = -1;
+
+  mem[0] >= 0 ? (
+    i = mem[0];
+    // Re-latch whenever the modifiers change, or the node jumps by the
+    // difference in sensitivity at the instant the key goes down.
+    mods != mem[5] ? (
+      mem[1] = mx; mem[2] = my;
+      mem[3] = fbuf[i]; mem[4] = dbuf[i]; mem[5] = mods;
+    );
+    sens = CTRL ? 0.10 : SHIFT ? 0.35 : 1;
+    dx = (mx - mem[1]) * sens;
+    dy = (my - mem[2]) * sens;
+    rk_curve_ni  = i;
+    rk_curve_nf  = rk_curve_x2f(rk_curve_f2x(mem[3], x, w) + dx, x, w);
+    rk_curve_ndb = rk_curve_y2d(rk_curve_d2y(mem[4], y, h, dr) + dy, y, h, dr);
+    rk_curve_moved = (dx != 0 || dy != 0);
+  );
+  rk_curve_ni;
+);
+
+function rk_curve_nodes_draw(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, r, g, b)
+local(i, nx, ny, rad, ht, held) (
+  rad = rk_curve_node_r(w);
+  held = mem[0];
+  i = 0;
+  loop(n,
+    nx = rk_curve_f2x(fbuf[i], x, w);
+    ny = rk_curve_d2y(dbuf[i], y, h, dr);
+    ht = mem[8 + i];
+    // hover halo
+    ht > 0.01 ? (
+      gfx_set(r, g, b, 0.16 * ht);
+      gfx_circle(nx, ny, rad * 1.9, 1, 1);
+    );
+    // body, dark core, ring, centre dot
+    gfx_set(r, g, b, i == sel || i == held ? 1 : 0.78);
+    gfx_circle(nx, ny, rad, 1, 1);
+    gfx_set(0.04, 0.04, 0.06, 0.85);
+    gfx_circle(nx, ny, rad * 0.55, 1, 1);
+    gfx_set(1, 1, 1, i == sel || i == held ? 0.95 : 0.55);
+    gfx_circle(nx, ny, rad, 0, 1);
+    i == sel || i == held ? (
+      gfx_set(1, 1, 1, 0.9);
+      gfx_circle(nx, ny, max(1, rad * 0.18), 1, 1);
+    );
+    i += 1;
+  );
+);

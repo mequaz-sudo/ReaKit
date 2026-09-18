@@ -26,8 +26,9 @@ desc:ReaKit Starter — GUI skeleton (channel strip)
 //  of @init are ordinary local functions and they are meant to be copied and
 //  changed rather than imported.
 //
-//  Two controls are hand-rolled and marked GAP, because the library has no
-//  widget for them yet. See the header of each.
+//  One control is hand-rolled and marked GAP, because the library has no widget
+//  for it yet: the dropdown. The EQ curve used to be a second gap and is now a
+//  real rk_curve call, with draggable nodes and the meter's spectrum behind it.
 //
 //  Part of ReaKit, MIT licensed — see ReaKit/README.md for the guide.
 //
@@ -58,6 +59,12 @@ slider18:ui_accent=0<0,7,1>-Accent
 slider19:ui_face=0<0,19,1>-VU Face
 slider20:ui_knob_sty=1<1,20,1>-Knob Style
 slider21:ui_demo=1<0,1,1>-Demo Signal
+// The EQ band centres. They exist because the curve has draggable nodes: a
+// node you can only pull up and down is a poor advert for one.
+slider22:eq_f1=80<40,16000,1>-EQ Low (Hz)
+slider23:eq_f2=400<40,16000,1>-EQ Lo-Mid (Hz)
+slider24:eq_f3=2000<40,16000,1>-EQ Hi-Mid (Hz)
+slider25:eq_f4=8000<40,16000,1>-EQ High (Hz)
 
 // One library set, one place. These five are the whole shipping widget API.
 import knobs_kbsg.jsfx-inc
@@ -65,6 +72,7 @@ import buttons_kbsg.jsfx-inc
 import sliders_kbsg.jsfx-inc
 import meters_kbsg.jsfx-inc
 import rk_vu.jsfx-inc
+import rk_curve.jsfx-inc
 
 @init
 
@@ -120,6 +128,22 @@ mtr_en_spectrum = 1;
 // 0 VU = a -18 dBFS sine: the hardware calibration, and what a stock ZenoMOD on
 // the next track reads, so the two agree.
 vu.rk_vu_init(-18);
+
+// ── The EQ curve ────────────────────────────────────────────────────────────
+// The graph runs 40 Hz to 16 kHz because that is exactly the span of the
+// meter's sixteen spectrum bands. Both axes are log, so the bands land evenly
+// across the rect and the analyser lines up with the curve BY CONSTRUCTION
+// rather than by a fudge factor.
+rk_curve_init(40, 16000);
+
+EQ_PTS = 256;
+eqbuf  = freemem; freemem += EQ_PTS;      // the response, one dB value per point
+eqspec = freemem; freemem += 16;          // the analyser, in dB
+eqf    = freemem; freemem += 4;           // node frequencies
+eqd    = freemem; freemem += 4;           // node gains
+eqnm   = freemem; freemem += 8 + 4;       // node drag state: 8 + one per node
+eqnm[0] = -1;                             // nothing grabbed
+eq_hash = -1;                             // forces the first fill
 
 // ── The accent table ────────────────────────────────────────────────────────
 // Eight looks, six numbers each: accent RGB then secondary RGB. A table rather
@@ -348,47 +372,26 @@ function ui_segment3(mem, x, y, w, h, cur, l0, l1, l2) local(nv, sw, gap) (
   nv;
 );
 
-// ═══ GAP 1 — EQ CURVE DISPLAY ═══════════════════════════════════════════════
-// ReaKit has twelve meters and no response curve. A strip wants one: four gain
-// knobs are four numbers until you can see the shape they make. Written out
-// here against plain gfx_*, on the same palette as everything around it — which
-// is the point of the gap, not a complaint about it.
+// ── The EQ response, which the CALLER owns ══════════════════════════════════
+// rk_curve draws an array; filling it is this file's job, and this is the
+// shape of that job. Four bells summed in log-frequency: for a band at fc with
+// gain g, a point at f contributes g * exp(-(octaves/bw)^2).
 //
-// Four fixed bands, each a bell in log-frequency. Cheap and readable; a real EQ
-// would evaluate its own transfer function here instead.
-function ui_eq_curve(x, y, w, h, g0, g1, g2, g3)
-local(i, n, t, fx, sum, d, yy, py, cy_, amp) (
-  gfx_set(0, 0, 0, 0.32);
-  gfx_rect(x, y, w, h);
-  cy_ = y + h * 0.5;
-
-  // A grid, so a flat EQ reads as a display showing nothing rather than as an
-  // empty box. Four decade-ish verticals and the +/-9 dB guides.
-  gfx_set(ln_r, ln_g, ln_b, 0.35);
-  i = 1;
-  loop(3, gfx_rect(x + w * i * 0.25, y, 1, h); i += 1; );
-  gfx_rect(x, y + h * 0.25, w, 1);
-  gfx_rect(x, y + h * 0.75, w, 1);
-  gfx_set(ln_r, ln_g, ln_b, 0.8);
-  gfx_rect(x, cy_, w, 1);
-
-  n = max(8, floor(w));
-  amp = h * 0.5 / 18;          // 18 dB fills half the box
+// ⭐ It refills only when something changed. Four bands over 256 points is
+// ~2000 transcendentals a fill, and doing that every frame is exactly how the
+// Drum Strip's graph once burned ~600k of them a second while nothing moved.
+function eq_fill(buf, n, g0, g1, g2, g3, f0, f1, f2, f3)
+local(i, f, d, sum, bw) (
+  bw = 1.1;                               // bell width, in octaves
   i = 0;
   loop(n,
-    t = i / (n - 1);           // 0..1 across the log sweep
+    f = rk_curve_x2f(i, 0, n - 1);        // a unit rect: point index IS the x
     sum = 0;
-    d = (t - 0.06) / 0.20; sum += g0 * exp(-d * d);
-    d = (t - 0.34) / 0.20; sum += g1 * exp(-d * d);
-    d = (t - 0.62) / 0.20; sum += g2 * exp(-d * d);
-    d = (t - 0.92) / 0.20; sum += g3 * exp(-d * d);
-    yy = cy_ - max(-18, min(sum, 18)) * amp;
-    fx = x + t * w;
-    i > 0 ? (
-      gfx_set(ac_r, ac_g, ac_b, 0.95);
-      gfx_line(fx - w / (n - 1), py, fx, yy);
-    );
-    py = yy;
+    d = log(f / f0) / 0.69314718 / bw; sum += g0 * exp(-d * d);
+    d = log(f / f1) / 0.69314718 / bw; sum += g1 * exp(-d * d);
+    d = log(f / f2) / 0.69314718 / bw; sum += g2 * exp(-d * d);
+    d = log(f / f3) / 0.69314718 / bw; sum += g3 * exp(-d * d);
+    buf[i] = sum;
     i += 1;
   );
 );
@@ -608,11 +611,52 @@ sprintf(#s, "%+.1f", eq_hi);
 _nv = ui_knob(m_eqhi, c2 + w2 * 0.855, ky, kr, eq_hi, -15, 15, 0, 0, 1, "HIGH", #s);
 _nv != eq_hi ? ( eq_hi = _nv; slider_automate(eq_hi); );
 
-ui_eq_curve(c2 + px(10), row_y + px(100), w2 - px(20), px(168),
-            eq_lo, eq_lmf, eq_hmf, eq_hi);
-ui_font(8, 0);
-gfx_set(tx_r, tx_g, tx_b, 0.45);
-ui_text(c2 + px(16), row_y + px(104), "GAP — no curve widget in the library");
+// ── The curve ───────────────────────────────────────────────────────────────
+_cx = c2 + px(10); _cy = row_y + px(100);
+_cw = w2 - px(20); _ch = px(168);
+
+eqf[0] = eq_f1; eqf[1] = eq_f2; eqf[2] = eq_f3; eqf[3] = eq_f4;
+eqd[0] = eq_lo; eqd[1] = eq_lmf; eqd[2] = eq_hmf; eqd[3] = eq_hi;
+
+// Refill only on a change. The hash is every input the fill reads.
+_h = eq_lo + eq_lmf * 7 + eq_hmf * 31 + eq_hi * 127
+   + eq_f1 * 0.001 + eq_f2 * 0.003 + eq_f3 * 0.007 + eq_f4 * 0.013;
+_h != eq_hash ? (
+  eq_hash = _h;
+  eq_fill(eqbuf, EQ_PTS, eq_lo, eq_lmf, eq_hmf, eq_hi, eq_f1, eq_f2, eq_f3, eq_f4);
+);
+
+// The meter's sixteen bands, in dB, on the same span as the graph.
+_i = 0;
+loop(16, eqspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
+
+rk_curve_plate(_cx, _cy, _cw, _ch, 18);
+rk_curve_analyser(_cx + 1, _cy + 1, _cw - 2, _ch - 2, eqspec, 16, 0, -60,
+                  a2_r, a2_g, a2_b);
+rk_curve_trace(_cx + 1, _cy + 1, _cw - 2, _ch - 2, eqbuf, EQ_PTS, 18, 1,
+               ac_r, ac_g, ac_b);
+
+// Nodes. rk_curve hands back where the grabbed node WANTS to be; clamping and
+// automation stay here, which is the whole reason it is reusable.
+_n = rk_curve_nodes(eqnm, _cx + 1, _cy + 1, _cw - 2, _ch - 2, 18, eqf, eqd, 4);
+rk_curve_moved && _n >= 0 ? (
+  _nf = max(40, min(rk_curve_nf, 16000));
+  _nd = max(-15, min(rk_curve_ndb, 15));
+  _n == 0 ? ( eq_f1 = _nf; slider_automate(eq_f1); eq_lo  = _nd; slider_automate(eq_lo);  ) :
+  _n == 1 ? ( eq_f2 = _nf; slider_automate(eq_f2); eq_lmf = _nd; slider_automate(eq_lmf); ) :
+  _n == 2 ? ( eq_f3 = _nf; slider_automate(eq_f3); eq_hmf = _nd; slider_automate(eq_hmf); ) :
+            ( eq_f4 = _nf; slider_automate(eq_f4); eq_hi  = _nd; slider_automate(eq_hi);  );
+);
+// Double-click a node to flatten that band.
+rk_curve_dblclk && _n >= 0 ? (
+  _n == 0 ? ( eq_lo  = 0; slider_automate(eq_lo);  ) :
+  _n == 1 ? ( eq_lmf = 0; slider_automate(eq_lmf); ) :
+  _n == 2 ? ( eq_hmf = 0; slider_automate(eq_hmf); ) :
+            ( eq_hi  = 0; slider_automate(eq_hi);  );
+);
+rk_curve_nodes_draw(eqnm, _cx + 1, _cy + 1, _cw - 2, _ch - 2, 18, eqf, eqd, 4,
+                    rk_curve_hov, ac_r, ac_g, ac_b);
+ui_tip(_cx, _cy, _cw, _ch, "EQ curve — rk_curve. Drag a node, double-click to flatten");
 
 _nv = ui_toggle(m_eqon, c2 + px(10), row_y + px(280), w2 - px(20), px(24),
                 eq_on, "EQ IN");

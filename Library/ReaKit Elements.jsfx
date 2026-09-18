@@ -1,7 +1,7 @@
 desc:ReaKit Elements
 // @description ReaKit - UI widget library for JSFX (knobs, faders, buttons, meters, VU, pads, piano)
 // @author Quaz (EON Studios)
-// @version 1.3.0
+// @version 1.3.1
 // @changelog
 //   New: ReaKit Starter - a working GUI skeleton to copy from. Installing this
 //   package now also drops a second JSFX alongside this showcase. Where

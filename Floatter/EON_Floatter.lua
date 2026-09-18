@@ -1,5 +1,5 @@
 -- @description EON Floatter
--- @version 1.0.0
+-- @version 1.0.1
 -- @author EON Studios
 -- @about
 --   Opens every EON plugin's floating window at the size EON designed for it,

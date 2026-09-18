@@ -547,6 +547,8 @@ W.rev       = 0       -- bumps when the set of windows or a source changes
 W.next_poll = 0
 W.scale_session = nil -- the scale read off a fresh window this session
 W.open_n    = 0
+W.ADOPT_WINDOW = 2.0  -- seconds after an apply in which a mismatch is the host,
+                      -- not the user. Past it, a mismatch is somebody dragging.
 
 local function round(v) return math.floor(v + 0.5) end
 
@@ -673,9 +675,14 @@ function W.first_sight(e)
 end
 
 -- A window we sized that no longer measures what we set: somebody dragged it,
--- and the global dial then leaves it alone. The first mismatch after an apply
--- is where the window actually landed (a size the screen or REAPER would not
--- allow): adopted, not blamed on anyone.
+-- and the global dial then leaves it alone. A mismatch in the first moments
+-- after an apply is where the window actually landed (a size the screen or
+-- REAPER would not allow): adopted, not blamed on anyone.
+--
+-- That adoption has to be over quickly. It used to be open-ended -- the first
+-- mismatch at any later time was adopted -- so a resize done between two polls
+-- read as a host constraint, the entry stayed "eon", and the next turn of the
+-- global dial resized the window the user had just set by hand.
 function W.detect_manual(e, now)
   if not e.applied or not e.canvas or (now - (e.applied_t or 0)) < 0.5 then return end
   local rc = L.rect(e.canvas)
@@ -684,12 +691,15 @@ function W.detect_manual(e, now)
     return
   end
   if math.abs(rc.w - e.applied.w) > 1 or math.abs(rc.h - e.applied.h) > 1 then
-    if not e.adopted then
+    if not e.adopted and (now - (e.applied_t or 0)) < W.ADOPT_WINDOW then
       e.applied, e.adopted = { w = rc.w, h = rc.h }, true
     else
       e.src, e.applied = "manual", nil
       W.rev = W.rev + 1
     end
+  else
+    e.adopted = true      -- it measures exactly what we asked for, so there is
+                          -- nothing left for the host to have adjusted
   end
 end
 

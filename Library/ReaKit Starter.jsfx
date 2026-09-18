@@ -1,5 +1,5 @@
 desc:ReaKit Starter — GUI skeleton (channel strip)
-options:no_meter
+options:gfx_hz=60 no_meter
 // @author Quaz (EON Studios)
 // @about
 //  A working ReaKit interface you can copy. A channel strip, because a strip is

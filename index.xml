@@ -136,6 +136,27 @@ New: rk_vu, the analog VU, rewritten clean-room.
         <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/0e96e8ea792069c187250883d842e8a3a58a6f1b/Library/rk_ui_slider.jsfx-inc</source>
         <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/0e96e8ea792069c187250883d842e8a3a58a6f1b/Library/rk_ui_meter.jsfx-inc</source>
       </version>
+  <version name="1.3.1" author="Quaz (EON Studios)" time="2026-09-18T16:20:02Z">
+        <changelog><![CDATA[Fixes from an outside source audit:
+- The range slider's high thumb no longer runs away from the mouse. sld_range_interact anchored the drag on the same memory slot it publishes the high value to, so every frame added the whole displacement again and a held mouse walked the value instead of holding it. The anchor has its own slot now; the low thumb was never affected.
+- The spectrum meter has something to show. Nothing in the library ever called meter_fft_feed, so its sixteen bins were written only by their own decay and drew sixteen bars pinned at zero. meter_spectrum_update() fills them from the waveform ring the library already keeps - sixteen log-spaced bands, one call per frame in @gfx, nothing added to @sample. Call it before mtr_spectrum_draw; it does nothing unless mtr_en_spectrum is set. The Elements showcase now calls it, so its spectrum is live.
+- Every version in this index is pinned to the commit that carries its files. Older versions used to resolve to whatever main held today, which meant 1.0.0 through 1.2.1 asked for the VU includes that 1.3.0 removed and could not be installed at all. They install again.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/ReaKit%20Elements.jsfx</source>
+        <source main="true" file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/ReaKit%20Starter.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_vu.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_ui_meter.jsfx-inc</source>
+      </version>
     </reapack>
   </category>
   <category name="Floatter">
@@ -156,6 +177,10 @@ Needs js_ReaScriptAPI (ReaTeam Extensions). The panel needs ReaImGui; without it
 - Panel: to-scale shape cards, live resize handle with dimension lines, W/H steppers, the 75-150% dial, Apply EON sizes to this project, Show all EON plugins.
 - Replaces the EON_FloatSize_Capture / EON_FloatSize_Watch pair from the Swing beta: the first run retires them and keeps every capture. If you had run the old Watch by hand, REAPER may show one "Can't load file" message at the next launch; it is gone after that.]]></changelog>
         <source main="main" file="EON_Floatter.lua">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/0e96e8ea792069c187250883d842e8a3a58a6f1b/Floatter/EON_Floatter.lua</source>
+      </version>
+      <version name="1.0.1" author="Quaz (EON Studios)" time="2026-09-18T16:20:02Z">
+        <changelog><![CDATA[Floatter no longer resizes a window you sized yourself. A window that stopped measuring what Floatter set was read as the host adjusting it, with no time limit on that reading - so a resize done by hand between two polls was adopted as Floatter's own size, and the next turn of the global dial moved it back. Adoption is now confined to the moment just after Floatter applies a size, and a window that measures exactly what was asked for closes it outright.]]></changelog>
+        <source main="main" file="EON_Floatter.lua">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Floatter/EON_Floatter.lua</source>
       </version>
     </reapack>
   </category>

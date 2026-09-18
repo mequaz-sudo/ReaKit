@@ -185,19 +185,21 @@ local(i, f, gx_, gy_, tw, th, last_x, db) (
 // bands landing in one pixel do not each emit a degenerate triangle.
 
 function rk_curve_analyser(x, y, w, h, buf, n, ceil_db, floor_db, r, g, b)
-local(i, x0, x1, y0, bot) (
+local(i, x0, x1, y0, y1, bot, t, j, fr) (
   n < 2 ? 0 : (
     bot = y + h - 1;
-    // Trapezoids, not flat-topped blocks: the fill and its cap have to be the
-    // same shape or the analyser reads as spikes floating over stairs.
+    // One vertical line per pixel, for the same reason the trace fill uses
+    // them: adjacent quads share an edge REAPER's polygon fill does not paint,
+    // and those hairline gaps read as stripes.
     gfx_set(r, g, b, 0.13);
     i = 0;
-    loop(n - 1,
-      x0 = x + i * w / (n - 1);
-      x1 = x + (i + 1) * w / (n - 1);
-      y0 = rk_curve_a2y(buf[i],     y, h, ceil_db, floor_db);
-      y1 = rk_curve_a2y(buf[i + 1], y, h, ceil_db, floor_db);
-      y0 < bot || y1 < bot ? gfx_triangle(x0, y0, x1, y1, x1, bot, x0, bot);
+    loop(floor(w),
+      t  = i / max(w - 1, 1) * (n - 1);
+      j  = floor(t);
+      fr = t - j;
+      j >= n - 1 ? ( j = n - 2; fr = 1; );
+      y0 = rk_curve_a2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, ceil_db, floor_db);
+      y0 < bot ? gfx_rect(x + i, y0, 1, bot - y0);
       i += 1;
     );
     // Capping line along the same edge. Cheap antialiasing, and it keeps a

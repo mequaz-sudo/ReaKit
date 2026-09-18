@@ -771,7 +771,10 @@ function sld_range_interact(mem, x, y, w, h, cur_lo, cur_hi)
     mem[1] = 1;
     mem[2] = mx;
     mem[3] = cur_lo;
-    mem[8] = cur_hi;
+    // mem[9], not mem[8]: mem[8] is the PUBLISHED high value and gets
+    // rewritten every frame, so anchoring the drag on it made each frame
+    // add the whole displacement again. The anchor needs its own slot.
+    mem[9] = cur_hi;
   );
 
   mem[1] && LMB ? (
@@ -782,7 +785,7 @@ function sld_range_interact(mem, x, y, w, h, cur_lo, cur_hi)
       new_lo = min(raw, cur_hi - 0.01);
       new_hi = cur_hi;
     ) : (
-      raw = _sld_clamp(mem[8] + dx / sens, 0, 1);
+      raw = _sld_clamp(mem[9] + dx / sens, 0, 1);
       new_hi = max(raw, cur_lo + 0.01);
       new_lo = cur_lo;
     );

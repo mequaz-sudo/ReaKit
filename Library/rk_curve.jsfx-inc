@@ -141,9 +141,12 @@ local(i, f, gx_, gy_, tw, th, last_x, db) (
       // Suppress a label that would touch the previous one.
       gx_ - tw * 0.5 > last_x + 4 ? (
         gfx_set(0.42, 0.45, 0.52, 0.95);
-        gfx_x = gx_ - tw * 0.5; gfx_y = y + h - th - 2;
+        // Keep it inside the plate: a stop close to either end would otherwise
+        // hang half its label off the edge.
+        gfx_x = min(max(gx_ - tw * 0.5, x + 2), x + w - tw - 2);
+        gfx_y = y + h - th - 2;
         gfx_drawstr(#rkcv_s);
-        last_x = gx_ + tw * 0.5;
+        last_x = gfx_x + tw;
       );
     );
     i += 1;
@@ -156,9 +159,10 @@ local(i, f, gx_, gy_, tw, th, last_x, db) (
     gy_ = rk_curve_d2y(db, y, h, dr);
     gfx_set(0.18, 0.20, 0.25, i == 0 ? 0.70 : 0.35);
     gfx_rect(x, gy_, w, 1);
-    // Label only the extremes and zero; the quarter lines stay unlabelled so a
-    // short graph does not turn into a column of numbers.
-    abs(i) == 2 || i == 0 ? (
+    // Top and midline only. The bottom line shares the rect's floor with the
+    // frequency labels, and -dr printed there lands straight on top of them --
+    // the scale is symmetric, so +dr and 0 already say what the bottom is.
+    i == 2 || i == 0 ? (
       sprintf(#rkcv_s, "%+d", db);
       gfx_measurestr(#rkcv_s, tw, th);
       gfx_set(0.42, 0.45, 0.52, 0.85);
@@ -182,25 +186,26 @@ function rk_curve_analyser(x, y, w, h, buf, n, ceil_db, floor_db, r, g, b)
 local(i, x0, x1, y0, bot) (
   n < 2 ? 0 : (
     bot = y + h - 1;
-    gfx_set(r, g, b, 0.22);
+    // Trapezoids, not flat-topped blocks: the fill and its cap have to be the
+    // same shape or the analyser reads as spikes floating over stairs.
+    gfx_set(r, g, b, 0.13);
     i = 0;
     loop(n - 1,
       x0 = x + i * w / (n - 1);
       x1 = x + (i + 1) * w / (n - 1);
-      floor(x1) > floor(x0) ? (
-        y0 = rk_curve_a2y(buf[i], y, h, ceil_db, floor_db);
-        y0 < bot ? gfx_triangle(x0, y0, x1, y0, x1, bot, x0, bot);
-      );
+      y0 = rk_curve_a2y(buf[i],     y, h, ceil_db, floor_db);
+      y1 = rk_curve_a2y(buf[i + 1], y, h, ceil_db, floor_db);
+      y0 < bot || y1 < bot ? gfx_triangle(x0, y0, x1, y1, x1, bot, x0, bot);
       i += 1;
     );
-    // Capping line, so the top edge of the fill reads as a line rather than a
-    // stair. Cheap antialiasing.
-    gfx_set(r, g, b, 0.50);
+    // Capping line along the same edge. Cheap antialiasing, and it keeps a
+    // quiet band visible when the fill underneath it is one pixel tall.
+    gfx_set(r, g, b, 0.32);
     i = 0;
     loop(n - 1,
       x0 = x + i * w / (n - 1);
       x1 = x + (i + 1) * w / (n - 1);
-      gfx_line(x0, rk_curve_a2y(buf[i], y, h, ceil_db, floor_db),
+      gfx_line(x0, rk_curve_a2y(buf[i],     y, h, ceil_db, floor_db),
                x1, rk_curve_a2y(buf[i + 1], y, h, ceil_db, floor_db));
       i += 1;
     );

@@ -749,14 +749,31 @@ local(norm, bar_w, num_h, bar_y, bar_h, tw, th)
 // REQUIRED HOST GLOBALS: mx, my, LMB, lmb_down, dt, hv_speed
 //   (must be set each frame by the host @gfx before calling these)
 
+// ⚠️ mtr_thr_hover is set by mtr_threshold_interact. The interact has always
+// kept a hover ramp in mem[0] and the draw had no argument to receive it, so
+// the ramp was computed every frame and thrown away — the one draggable control
+// in this library was the one that never acknowledged the mouse. Passing it
+// through a global rather than a new argument keeps the signature intact for
+// everything already calling this.
 function mtr_threshold_draw(x, y, w, h, threshold_db, db_min, db_max)
-local(norm, ty, i)
+local(norm, ty, i, ht)
 (
   norm = mtr_db_to_norm(threshold_db, db_min, db_max);
   ty = y + h * (1 - norm);
-  gfx_set(1.0, 0.8, 0.2, 0.8);
-  i = x; loop(w / 6, gfx_line(i, ty, min(i + 3, x + w), ty); i += 6; );
-  gfx_set(1.0, 0.8, 0.2, 1); gfx_setfont(1, "Arial", 9);
+  ht = mtr_thr_hover;
+  // hover widens the dashes into a solid line and lifts a faint glow behind it
+  ht > 0.01 ? (
+    gfx_set(1.0, 0.8, 0.2, 0.12 * ht);
+    gfx_rect(x, ty - max(1, h * 0.03), w, max(2, h * 0.06));
+  );
+  gfx_set(1.0, 0.8, 0.2, 0.8 + 0.2 * ht);
+  i = x;
+  loop(w / 6,
+    gfx_line(i, ty, min(i + 3 + ht * 3, x + w), ty);
+    i += 6;
+  );
+  gfx_set(1.0, 0.8, 0.2, 1);
+  gfx_setfont(1, "Arial", max(8, floor(h * 0.14)));   // was a fixed 9px
   sprintf(#thr_v, "%.1f dB", threshold_db);
   gfx_x = x + w + 3; gfx_y = ty - 5; gfx_drawstr(#thr_v);
 );
@@ -769,6 +786,7 @@ local(norm, ty, hover, new_thr, drag_norm)
   hover = (mx >= x && mx <= x + w && my >= ty - 6 && my <= ty + 6);
   hover ? ( mem[0] = min(mem[0] + dt * hv_speed, 1); )
         : ( mem[0] = max(mem[0] - dt * hv_speed, 0); );
+  mtr_thr_hover = mem[0];        // handed to mtr_threshold_draw
   new_thr = cur_thr;
   lmb_down && hover && !mem[1] ? ( mem[1] = 1; );
   mem[1] && LMB ? (

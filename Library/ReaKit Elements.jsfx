@@ -534,6 +534,7 @@ vu_0.rk_vu_draw(sc*14, sc*80, sc*250, sc*150, 0, _vu_face, "VU");
 
 // LEDBar (meter)
 mtr_update_db();   // meters_kbsg: linear→dB once per frame
+meter_spectrum_update();   // fills the spectrum bins; nothing else feeds them
 mtr_led_bar_draw(sc*290, sc*80, sc*40, sc*84, mtr_peak_l, mtr_peak_r, -60, 0);   // meters_kbsg led_bar
 
 // PkRMS (meter)

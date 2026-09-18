@@ -334,6 +334,42 @@ function meter_fft_feed(band, energy) (
   );
 );
 
+// The spectrum bins decay but nothing ever fills them: meter_fft_feed has no
+// caller anywhere in the library, so a consumer that calls meter_process_sample
+// and mtr_spectrum_draw gets sixteen bars pinned at zero while the waveform and
+// level meters beside them move. This fills them from the waveform ring the
+// library is already keeping - 16 log-spaced Goertzel bands over the 512-sample
+// L buffer, roughly 40 Hz to 16 kHz. Call it once per frame in @gfx, before
+// mtr_spectrum_draw. The transcendentals are safe here: this is @gfx work and
+// never runs in @sample.
+function meter_spectrum_update()
+local(band, i, f_hz, w_, cw, s0, s1, s2, samp, mag)
+(
+  mtr_en_spectrum ? (
+    band = 0;
+    loop(16,
+      // 40 Hz .. 16 kHz over 16 bands = 40 * 2^(band * 8.644/15)
+      f_hz = 40 * pow(2, band * 0.5763);
+      f_hz < srate * 0.5 ? (
+        w_ = 2 * $pi * f_hz / srate;
+        cw = 2 * cos(w_);
+        s1 = 0; s2 = 0;
+        i = 0;
+        loop(512,
+          samp = mtr_base[256 + ((mtr_wave_pos + i) & 511)];
+          s0 = samp + cw * s1 - s2;
+          s2 = s1; s1 = s0;
+          i += 1;
+        );
+        // Goertzel magnitude over N samples peaks at N/2 for a unit sine.
+        mag = sqrt(max(s1 * s1 + s2 * s2 - cw * s1 * s2, 0)) / 256;
+        meter_fft_feed(band, min(mag, 1));
+      );
+      band += 1;
+    );
+  );
+);
+
 function meter_set_gr(gr_db) ( mtr_gr_db = gr_db; );
 
 

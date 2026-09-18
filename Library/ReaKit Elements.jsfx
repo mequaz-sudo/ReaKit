@@ -105,6 +105,48 @@ import rk_piano.jsfx-inc
 import rk_curve.jsfx-inc
 
 @init
+
+// ═══ CHROME ═════════════════════════════════════════════════════════════════
+// Panels and a cell grid, so a tab is a layout instead of a list of authored
+// coordinates. Everything here takes a rect, so every tab fills the window.
+// ⚠️ EEL2 resolves names at PARSE time: these must precede the @gfx that calls
+// them.
+function el_rrect(x, y, w, h, r) local(d) (
+  d = min(r, min(w, h) * 0.5);
+  gfx_rect(x + d, y, w - d * 2, h);
+  gfx_rect(x, y + d, w, h - d * 2);
+  gfx_circle(x + d,         y + d,         d, 1, 1);
+  gfx_circle(x + w - d - 1, y + d,         d, 1, 1);
+  gfx_circle(x + d,         y + h - d - 1, d, 1, 1);
+  gfx_circle(x + w - d - 1, y + h - d - 1, d, 1, 1);
+);
+
+// Panel + title + rule. Returns the y where content starts.
+function el_section(x, y, w, h, title) (
+  gfx_set(0.133, 0.141, 0.165, 1);
+  el_rrect(x, y, w, h, sc * 4);
+  gfx_set(0.239, 0.251, 0.290, 1);
+  gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
+  gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
+  gfx_setfont(1, "Arial", max(9, floor(10 * sc)), 'b');
+  gfx_set(0.72, 0.74, 0.80, 0.85);
+  gfx_x = x + sc * 10; gfx_y = y + sc * 7; gfx_drawstr(title);
+  gfx_set(0.239, 0.251, 0.290, 1);
+  gfx_rect(x + sc * 10, y + sc * 22, w - sc * 20, 1);
+  y + sc * 28;
+);
+
+// Cell `i` of a cols x rows grid over a rect. Publishes el_cx/el_cy as the cell
+// CENTRE and el_cw/el_ch as its size, so a widget just asks for the cell it
+// lives in and never knows the window size.
+function el_grid(i, cols, rows, x, y, w, h) local(cx_, cy_) (
+  el_cw = w / max(cols, 1);
+  el_ch = h / max(rows, 1);
+  cx_ = i - floor(i / cols) * cols;
+  cy_ = floor(i / cols);
+  el_cx = x + (cx_ + 0.5) * el_cw;
+  el_cy = y + (cy_ + 0.5) * el_ch;
+);
 gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below follows
 freemem = 0;      // rk_vu claims no memory
 KS = 16;
@@ -210,142 +252,166 @@ btn_tab_draw(sc_ui*635, sc_ui*10, sc_ui*93, sc_ui*28, 5, slider1, "CURVE", bm[0]
 
 // ═══════════════════════ TAB 0 · KNOBS ═══════════════════════
 slider1 == 0 ? (
-
-// KNOBS — all 19 styles (select one · scroll to change) (label)
-gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80); gfx_x=ox+sc*14; gfx_y=sc*56; gfx_drawstr("KNOBS — all 19 styles (select one · scroll to change)");
+  _px = ox + sc*12; _pw = 740*sc - sc*24;
+  _py = sc*46;      _ph = DES_H*sc - _py - sc*12;
+  _cy0 = el_section(_px, _py, _pw, _ph, "KNOBS — all 19 styles, one interaction model");
+  // The grid owns the space; the knobs only know which cell they are in.
+  kg_x = _px + sc*8; kg_y = _cy0 + sc*4;
+  kg_w = _pw - sc*16; kg_h = _ph - (_cy0 - _py) - sc*10;
+  el_grid(0, 10, 2, kg_x, kg_y, kg_w, kg_h);
+  el_kr = min(el_cw, el_ch) * 0.30;
 
 // SSL (knob / ssl)
+el_grid(0, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 0*KS;
-_v = rk_knob_interact(1, m, ox+sc*50, sc*160, sc*32, slider3, 0, 100, 60, 0);
+_v = rk_knob_interact(1, m, el_cx, el_cy, el_kr, slider3, 0, 100, 60, 0);
 _v != slider3 ? ( slider3 = _v; slider_automate(slider3); );
-rk_knob_draw(1, ox+sc*50, sc*160, sc*32, slider3, 0, 100, 0, m[0], 0.29,0.62,1.00, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("SSL",_tw,_th); gfx_x=ox+sc*50-_tw/2; gfx_y=sc*196; gfx_drawstr("SSL");
+rk_knob_draw(1, el_cx, el_cy, el_kr, slider3, 0, 100, 0, m[0], 0.29,0.62,1.00, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("SSL",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("SSL");
 
 // Vari-Mu (knob / varimu)
+el_grid(1, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 1*KS;
-_v = rk_knob_interact(2, m, ox+sc*121, sc*160, sc*32, slider4, -24, 24, 6, 0);
+_v = rk_knob_interact(2, m, el_cx, el_cy, el_kr, slider4, -24, 24, 6, 0);
 _v != slider4 ? ( slider4 = _v; slider_automate(slider4); );
-rk_knob_draw(2, ox+sc*121, sc*160, sc*32, slider4, -24, 24, 1, m[0], 0.29,0.87,0.50, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Vari-Mu",_tw,_th); gfx_x=ox+sc*121-_tw/2; gfx_y=sc*196; gfx_drawstr("Vari-Mu");
+rk_knob_draw(2, el_cx, el_cy, el_kr, slider4, -24, 24, 1, m[0], 0.29,0.87,0.50, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Vari-Mu",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Vari-Mu");
 
 // API (knob / api)
+el_grid(2, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 2*KS;
-_v = rk_knob_interact(3, m, ox+sc*192, sc*160, sc*32, slider5, 0, 100, 70, 0);
+_v = rk_knob_interact(3, m, el_cx, el_cy, el_kr, slider5, 0, 100, 70, 0);
 _v != slider5 ? ( slider5 = _v; slider_automate(slider5); );
-rk_knob_draw(3, ox+sc*192, sc*160, sc*32, slider5, 0, 100, 0, m[0], 0.98,0.80,0.08, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("API",_tw,_th); gfx_x=ox+sc*192-_tw/2; gfx_y=sc*196; gfx_drawstr("API");
+rk_knob_draw(3, el_cx, el_cy, el_kr, slider5, 0, 100, 0, m[0], 0.98,0.80,0.08, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("API",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("API");
 
 // WS (knob / ws)
+el_grid(3, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 3*KS;
-_v = rk_knob_interact(4, m, ox+sc*263, sc*160, sc*32, slider6, 0, 100, 55, 0);
+_v = rk_knob_interact(4, m, el_cx, el_cy, el_kr, slider6, 0, 100, 55, 0);
 _v != slider6 ? ( slider6 = _v; slider_automate(slider6); );
-rk_knob_draw(4, ox+sc*263, sc*160, sc*32, slider6, 0, 100, 0, m[0], 0.98,0.45,0.09, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("WS",_tw,_th); gfx_x=ox+sc*263-_tw/2; gfx_y=sc*196; gfx_drawstr("WS");
+rk_knob_draw(4, el_cx, el_cy, el_kr, slider6, 0, 100, 0, m[0], 0.98,0.45,0.09, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("WS",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("WS");
 
 // Neve (knob / neve)
+el_grid(4, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 4*KS;
-_v = rk_knob_interact(5, m, ox+sc*334, sc*160, sc*32, slider7, 0, 100, 40, 0);
+_v = rk_knob_interact(5, m, el_cx, el_cy, el_kr, slider7, 0, 100, 40, 0);
 _v != slider7 ? ( slider7 = _v; slider_automate(slider7); );
-rk_knob_draw(5, ox+sc*334, sc*160, sc*32, slider7, 0, 100, 0, m[0], 0.81,0.23,0.19, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Neve",_tw,_th); gfx_x=ox+sc*334-_tw/2; gfx_y=sc*196; gfx_drawstr("Neve");
+rk_knob_draw(5, el_cx, el_cy, el_kr, slider7, 0, 100, 0, m[0], 0.81,0.23,0.19, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Neve",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Neve");
 
 // Joanny (knob / witti)
+el_grid(5, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 5*KS;
-_v = rk_knob_interact(6, m, ox+sc*405, sc*160, sc*32, slider8, 0, 100, 65, 0);
+_v = rk_knob_interact(6, m, el_cx, el_cy, el_kr, slider8, 0, 100, 65, 0);
 _v != slider8 ? ( slider8 = _v; slider_automate(slider8); );
-rk_knob_draw(6, ox+sc*405, sc*160, sc*32, slider8, 0, 100, 0, m[0], 0.64,0.46,1.00, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Joanny",_tw,_th); gfx_x=ox+sc*405-_tw/2; gfx_y=sc*196; gfx_drawstr("Joanny");
+rk_knob_draw(6, el_cx, el_cy, el_kr, slider8, 0, 100, 0, m[0], 0.64,0.46,1.00, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Joanny",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Joanny");
 
 // MPC (knob / mpc)
+el_grid(6, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 6*KS;
-_v = rk_knob_interact(7, m, ox+sc*476, sc*160, sc*32, slider9, 0, 100, 50, 0);
+_v = rk_knob_interact(7, m, el_cx, el_cy, el_kr, slider9, 0, 100, 50, 0);
 _v != slider9 ? ( slider9 = _v; slider_automate(slider9); );
-rk_knob_draw(7, ox+sc*476, sc*160, sc*32, slider9, 0, 100, 0, m[0], 0.17,0.73,1.00, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("MPC",_tw,_th); gfx_x=ox+sc*476-_tw/2; gfx_y=sc*196; gfx_drawstr("MPC");
+rk_knob_draw(7, el_cx, el_cy, el_kr, slider9, 0, 100, 0, m[0], 0.17,0.73,1.00, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("MPC",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("MPC");
 
 // Jog (knob / jog)
+el_grid(7, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 7*KS;
-_v = rk_knob_interact(8, m, ox+sc*547, sc*160, sc*32, slider10, 0, 100, 35, 0);
+_v = rk_knob_interact(8, m, el_cx, el_cy, el_kr, slider10, 0, 100, 35, 0);
 _v != slider10 ? ( slider10 = _v; slider_automate(slider10); );
-rk_knob_draw(8, ox+sc*547, sc*160, sc*32, slider10, 0, 100, 0, m[0], 0.86,0.72,0.42, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Jog",_tw,_th); gfx_x=ox+sc*547-_tw/2; gfx_y=sc*196; gfx_drawstr("Jog");
+rk_knob_draw(8, el_cx, el_cy, el_kr, slider10, 0, 100, 0, m[0], 0.86,0.72,0.42, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Jog",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Jog");
 
 // Spice (knob / sp)
+el_grid(8, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 8*KS;
-_v = rk_knob_interact(10, m, ox+sc*618, sc*160, sc*32, slider11, 0, 100, 80, 0);
+_v = rk_knob_interact(10, m, el_cx, el_cy, el_kr, slider11, 0, 100, 80, 0);
 _v != slider11 ? ( slider11 = _v; slider_automate(slider11); );
-rk_knob_draw(10, ox+sc*618, sc*160, sc*32, slider11, 0, 100, 0, m[0], 0.89,0.29,0.29, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Spice",_tw,_th); gfx_x=ox+sc*618-_tw/2; gfx_y=sc*196; gfx_drawstr("Spice");
+rk_knob_draw(10, el_cx, el_cy, el_kr, slider11, 0, 100, 0, m[0], 0.89,0.29,0.29, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Spice",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Spice");
 
 // Encoder (knob / encoder)
+el_grid(9, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 9*KS;
-_v = rk_knob_interact(11, m, ox+sc*689, sc*160, sc*32, slider12, 0, 100, 50, 0);
+_v = rk_knob_interact(11, m, el_cx, el_cy, el_kr, slider12, 0, 100, 50, 0);
 _v != slider12 ? ( slider12 = _v; slider_automate(slider12); );
-rk_knob_draw(11, ox+sc*689, sc*160, sc*32, slider12, 0, 100, 0, m[0], 0.29,0.62,1.00, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Encoder",_tw,_th); gfx_x=ox+sc*689-_tw/2; gfx_y=sc*196; gfx_drawstr("Encoder");
+rk_knob_draw(11, el_cx, el_cy, el_kr, slider12, 0, 100, 0, m[0], 0.29,0.62,1.00, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Encoder",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Encoder");
 
 // Pultec (knob / pultec)
+el_grid(10, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 10*KS;
-_v = rk_knob_interact(12, m, ox+sc*85, sc*320, sc*32, slider13, 0, 100, 40, 0);
+_v = rk_knob_interact(12, m, el_cx, el_cy, el_kr, slider13, 0, 100, 40, 0);
 _v != slider13 ? ( slider13 = _v; slider_automate(slider13); );
-rk_knob_draw(12, ox+sc*85, sc*320, sc*32, slider13, 0, 100, 0, m[0], 0.86,0.72,0.42, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Pultec",_tw,_th); gfx_x=ox+sc*85-_tw/2; gfx_y=sc*356; gfx_drawstr("Pultec");
+rk_knob_draw(12, el_cx, el_cy, el_kr, slider13, 0, 100, 0, m[0], 0.86,0.72,0.42, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Pultec",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Pultec");
 
 // Ableton (knob / ableton)
+el_grid(11, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 11*KS;
-_v = rk_knob_interact(13, m, ox+sc*156, sc*320, sc*32, slider14, 0, 100, 65, 0);
+_v = rk_knob_interact(13, m, el_cx, el_cy, el_kr, slider14, 0, 100, 65, 0);
 _v != slider14 ? ( slider14 = _v; slider_automate(slider14); );
-rk_knob_draw(13, ox+sc*156, sc*320, sc*32, slider14, 0, 100, 0, m[0], 0.29,0.87,0.50, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Ableton",_tw,_th); gfx_x=ox+sc*156-_tw/2; gfx_y=sc*356; gfx_drawstr("Ableton");
+rk_knob_draw(13, el_cx, el_cy, el_kr, slider14, 0, 100, 0, m[0], 0.29,0.87,0.50, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Ableton",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Ableton");
 
 // FL (knob / fl)
+el_grid(12, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 12*KS;
-_v = rk_knob_interact(14, m, ox+sc*227, sc*320, sc*32, slider15, 0, 100, 55, 0);
+_v = rk_knob_interact(14, m, el_cx, el_cy, el_kr, slider15, 0, 100, 55, 0);
 _v != slider15 ? ( slider15 = _v; slider_automate(slider15); );
-rk_knob_draw(14, ox+sc*227, sc*320, sc*32, slider15, 0, 100, 0, m[0], 0.98,0.80,0.08, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("FL",_tw,_th); gfx_x=ox+sc*227-_tw/2; gfx_y=sc*356; gfx_drawstr("FL");
+rk_knob_draw(14, el_cx, el_cy, el_kr, slider15, 0, 100, 0, m[0], 0.98,0.80,0.08, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("FL",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("FL");
 
 // ProTools (knob / pt)
+el_grid(13, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 13*KS;
-_v = rk_knob_interact(15, m, ox+sc*298, sc*320, sc*32, slider16, 0, 100, 45, 0);
+_v = rk_knob_interact(15, m, el_cx, el_cy, el_kr, slider16, 0, 100, 45, 0);
 _v != slider16 ? ( slider16 = _v; slider_automate(slider16); );
-rk_knob_draw(15, ox+sc*298, sc*320, sc*32, slider16, 0, 100, 0, m[0], 0.29,0.62,1.00, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("ProTools",_tw,_th); gfx_x=ox+sc*298-_tw/2; gfx_y=sc*356; gfx_drawstr("ProTools");
+rk_knob_draw(15, el_cx, el_cy, el_kr, slider16, 0, 100, 0, m[0], 0.29,0.62,1.00, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("ProTools",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("ProTools");
 
 // FabFilter (knob / fabfilter)
+el_grid(14, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 14*KS;
-_v = rk_knob_interact(16, m, ox+sc*369, sc*320, sc*32, slider17, 0, 100, 60, 0);
+_v = rk_knob_interact(16, m, el_cx, el_cy, el_kr, slider17, 0, 100, 60, 0);
 _v != slider17 ? ( slider17 = _v; slider_automate(slider17); );
-rk_knob_draw(16, ox+sc*369, sc*320, sc*32, slider17, 0, 100, 0, m[0], 0.29,0.87,0.50, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("FabFilter",_tw,_th); gfx_x=ox+sc*369-_tw/2; gfx_y=sc*356; gfx_drawstr("FabFilter");
+rk_knob_draw(16, el_cx, el_cy, el_kr, slider17, 0, 100, 0, m[0], 0.29,0.87,0.50, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("FabFilter",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("FabFilter");
 
 // Serum (knob / serum)
+el_grid(15, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 15*KS;
-_v = rk_knob_interact(17, m, ox+sc*440, sc*320, sc*32, slider18, 0, 100, 75, 0);
+_v = rk_knob_interact(17, m, el_cx, el_cy, el_kr, slider18, 0, 100, 75, 0);
 _v != slider18 ? ( slider18 = _v; slider_automate(slider18); );
-rk_knob_draw(17, ox+sc*440, sc*320, sc*32, slider18, 0, 100, 0, m[0], 0.64,0.46,1.00, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Serum",_tw,_th); gfx_x=ox+sc*440-_tw/2; gfx_y=sc*356; gfx_drawstr("Serum");
+rk_knob_draw(17, el_cx, el_cy, el_kr, slider18, 0, 100, 0, m[0], 0.64,0.46,1.00, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Serum",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Serum");
 
 // Roland (knob / roland)
+el_grid(16, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 16*KS;
-_v = rk_knob_interact(18, m, ox+sc*511, sc*320, sc*32, slider19, 0, 100, 35, 0);
+_v = rk_knob_interact(18, m, el_cx, el_cy, el_kr, slider19, 0, 100, 35, 0);
 _v != slider19 ? ( slider19 = _v; slider_automate(slider19); );
-rk_knob_draw(18, ox+sc*511, sc*320, sc*32, slider19, 0, 100, 0, m[0], 0.98,0.45,0.09, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Roland",_tw,_th); gfx_x=ox+sc*511-_tw/2; gfx_y=sc*356; gfx_drawstr("Roland");
+rk_knob_draw(18, el_cx, el_cy, el_kr, slider19, 0, 100, 0, m[0], 0.98,0.45,0.09, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("Roland",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("Roland");
 
 // PultecCr (knob / pultec_cream)
+el_grid(17, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 17*KS;
-_v = rk_knob_interact(19, m, ox+sc*582, sc*320, sc*32, slider20, 0, 100, 55, 0);
+_v = rk_knob_interact(19, m, el_cx, el_cy, el_kr, slider20, 0, 100, 55, 0);
 _v != slider20 ? ( slider20 = _v; slider_automate(slider20); );
-rk_knob_draw(19, ox+sc*582, sc*320, sc*32, slider20, 0, 100, 0, m[0], 0.86,0.72,0.42, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("PultecCr",_tw,_th); gfx_x=ox+sc*582-_tw/2; gfx_y=sc*356; gfx_drawstr("PultecCr");
+rk_knob_draw(19, el_cx, el_cy, el_kr, slider20, 0, 100, 0, m[0], 0.86,0.72,0.42, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("PultecCr",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("PultecCr");
 
 // NeveAlt (knob / neve_alt)
+el_grid(18, 10, 2, kg_x, kg_y, kg_w, kg_h);
 m = km + 18*KS;
-_v = rk_knob_interact(20, m, ox+sc*653, sc*320, sc*32, slider21, 0, 100, 62, 0);
+_v = rk_knob_interact(20, m, el_cx, el_cy, el_kr, slider21, 0, 100, 62, 0);
 _v != slider21 ? ( slider21 = _v; slider_automate(slider21); );
-rk_knob_draw(20, ox+sc*653, sc*320, sc*32, slider21, 0, 100, 0, m[0], 0.81,0.23,0.19, 0, 0.10,0.10,0.18);
-gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("NeveAlt",_tw,_th); gfx_x=ox+sc*653-_tw/2; gfx_y=sc*356; gfx_drawstr("NeveAlt");
+rk_knob_draw(20, el_cx, el_cy, el_kr, slider21, 0, 100, 0, m[0], 0.81,0.23,0.19, 0, 0.10,0.10,0.18);
+gfx_setfont(1,"Arial",max(9,floor(11*sc))); gfx_set(0.80,0.82,0.86,1); gfx_measurestr("NeveAlt",_tw,_th); gfx_x=el_cx-_tw/2; gfx_y=el_cy+el_kr+sc*6; gfx_drawstr("NeveAlt");
 
 ); // end KNOBS tab
 

@@ -1,0 +1,170 @@
+desc: ReaKit ADSR envelope editor
+// ══════════════════════════════════════════════════════════════════════
+// rk_adsr.jsfx-inc — an attack/decay/sustain/release envelope you drag by its
+// corners.
+//
+// Written clean-room for ReaKit. Swing has one inside its pad overlay, but
+// that copy reads and writes the pad model directly, shares a global drag
+// arbiter with every other control in the plugin, and carries a sample-reverse
+// special case that only means anything to a sampler. What travels is the two
+// decisions underneath it, both of which are the difference between an
+// envelope you can use and one you cannot:
+//
+//   ⭐ EACH SEGMENT OWNS A FIXED SLICE OF THE WIDTH. Attack gets 20%, decay
+//     35%, the sustain hold 10%, release 35% — and a node's position depends
+//     only on its own parameter plus the ones before it. Let the segments
+//     share the width proportionally instead and lengthening the attack drags
+//     every other node sideways under the cursor, which feels broken even
+//     though the numbers are right.
+//
+//   ⭐ TIME IS LOGARITHMIC, IN BOTH DIRECTIONS. Drawn linearly, 1-50 ms — the
+//     range that matters most on percussive material — collapses into about
+//     one pixel, so the decay node sits underneath the attack node and cannot
+//     be grabbed at all. And dragged linearly, every pixel adds a fixed number
+//     of milliseconds, so the bottom of the range is unreachable. Both the
+//     drawing and the drag are log, so a pixel scales the value instead of
+//     adding to it: full resolution at the short end, fast sweeps at the long
+//     end. Sustain stays linear — it is a level, not a time.
+//
+// It writes nothing back. Like rk_curve, it reports where the dragged node
+// wants to be and the caller clamps and automates, which is what lets one
+// widget serve an amp envelope, a filter envelope and a pitch envelope in the
+// same plugin.
+//
+// REQUIREMENTS (host plugin must provide, per frame, before calling):
+//   - mx, my       — mouse position
+//   - lmb_down     — left-button PRESS edge
+//   - LMB          — left-button HELD state
+//   - dt, hv_speed — frame delta + hover ramp speed
+//
+// MEMORY: one caller-owned block of 12 words. [0] node being dragged or -1,
+// [1..2] the latched mouse origin, [3..4] the latched values, [5..8] per-node
+// hover ramps.
+//
+// PUBLIC API:
+//   rk_adsr_run(mem, x, y, w, h, a, d, s, r, amax, dmax, rmax, cr, cg, cb)
+//        draws it and handles the drag. Times in ms, sustain 0..1, and the
+//        three maxima are the ranges your parameters actually allow.
+//        Publishes rk_adsr_a / _d / _s / _r — the values the drag is asking
+//        for — plus rk_adsr_moved and rk_adsr_node. Returns the dragged node,
+//        or -1.
+//   Nodes: 0 attack peak, 1 decay end, 2 sustain end, 3 release end.
+// ══════════════════════════════════════════════════════════════════════
+
+@init
+
+RKAD_MEM = 12;
+
+function rk_adsr_zone_px(v, vmax, zone) (
+  v <= 1 ? 0 : min(zone, log(v) / log(max(vmax, 2)) * zone);
+);
+
+function rk_adsr_node_r(w) ( max(4, min(w * 0.016, 9)); );
+
+function rk_adsr_run(mem, x, y, w, h, a, d, s, r, amax, dmax, rmax, cr, cg, cb)
+local(mg, az, dz, sz, rz, apx, dpx, rpx, n0x, n0y, n1x, n1y, n2x, n2y,
+      n3x, n3y, n4x, n4y, i, nx, ny, rad, best, bi, dd, j, fx, fy, t, base,
+      dpxm, dpym) (
+  rk_adsr_a = a; rk_adsr_d = d; rk_adsr_s = s; rk_adsr_r = r;
+  rk_adsr_moved = 0;
+
+  mg = max(3, h * 0.08);
+  base = y + h - mg;                 // the floor the envelope starts and ends on
+  rad  = rk_adsr_node_r(w);
+
+  // Fixed slices. A node moves only when ITS parameter moves.
+  az = w * 0.20; dz = w * 0.35; sz = w * 0.10; rz = w * 0.35;
+  apx = rk_adsr_zone_px(a, amax, az);
+  dpx = rk_adsr_zone_px(d, dmax, dz);
+  rpx = rk_adsr_zone_px(r, rmax, rz);
+
+  n0x = x;                 n0y = base;
+  n1x = n0x + apx;         n1y = y + mg;
+  n2x = n1x + dpx;         n2y = y + mg + (h - mg * 2) * (1 - s);
+  n3x = n2x + sz;          n3y = n2y;
+  n4x = n3x + rpx;         n4y = base;
+
+  gfx_set(0.043, 0.047, 0.067, 1);
+  gfx_rect(x, y, w, h);
+
+  // Fill, one column per pixel — quads share edges the polygon fill does not
+  // paint, and the seams read as stripes.
+  gfx_set(cr, cg, cb, 0.16);
+  i = 0;
+  loop(floor(n4x - n0x),
+    fx = n0x + i;
+    fx < n1x ? ( t = (fx - n0x) / max(1, apx); fy = n0y + (n1y - n0y) * t; ) :
+    fx < n2x ? ( t = (fx - n1x) / max(1, dpx); fy = n1y + (n2y - n1y) * t; ) :
+    fx < n3x ? ( fy = n2y; ) :
+               ( t = (fx - n3x) / max(1, rpx); fy = n3y + (n4y - n3y) * t; );
+    gfx_rect(fx, fy, 1, base - fy);
+    i += 1;
+  );
+
+  gfx_set(cr, cg, cb, 1);
+  gfx_line(n0x, n0y, n1x, n1y);
+  gfx_line(n1x, n1y, n2x, n2y);
+  gfx_line(n2x, n2y, n3x, n3y);
+  gfx_line(n3x, n3y, n4x, n4y);
+
+  // Nearest node within reach, so overlapping handles pick the closer one.
+  best = rad * 2.6; best = best * best; bi = -1;
+  i = 0;
+  loop(4,
+    nx = i == 0 ? n1x : i == 1 ? n2x : i == 2 ? n3x : n4x;
+    ny = i == 0 ? n1y : i == 1 ? n2y : i == 2 ? n3y : n4y;
+    dd = (mx - nx) * (mx - nx) + (my - ny) * (my - ny);
+    dd < best ? ( best = dd; bi = i; );
+    i += 1;
+  );
+
+  mem[0] < 0 && bi >= 0 && lmb_down ? (
+    mem[0] = bi; mem[1] = mx; mem[2] = my;
+    mem[3] = bi == 0 ? a : bi == 1 ? d : bi == 2 ? s : r;
+    mem[4] = s;
+  );
+  !LMB ? mem[0] = -1;
+
+  i = 0;
+  loop(4,
+    i == (mem[0] >= 0 ? mem[0] : bi) ? mem[5 + i] = min(mem[5 + i] + dt * hv_speed, 1)
+                                     : mem[5 + i] = max(mem[5 + i] - dt * hv_speed, 0);
+    i += 1;
+  );
+
+  // Drag. Delta from a latched origin, and each node divides by ITS OWN zone
+  // width, so the four are completely independent of one another.
+  mem[0] >= 0 ? (
+    dpxm = mx - mem[1];
+    dpym = my - mem[2];
+    mem[0] == 0 ? rk_adsr_a = max(1, min(amax, max(1, mem[3]) * exp(dpxm / max(1, az) * log(max(amax, 2))))) :
+    mem[0] == 1 ? rk_adsr_d = max(1, min(dmax, max(1, mem[3]) * exp(dpxm / max(1, dz) * log(max(dmax, 2))))) :
+    mem[0] == 2 ? rk_adsr_s = max(0, min(1, mem[3] - dpym / max(1, h - mg * 2))) :
+                  rk_adsr_r = max(1, min(rmax, max(1, mem[3]) * exp(dpxm / max(1, rz) * log(max(rmax, 2)))));
+    rk_adsr_moved = (dpxm != 0 || dpym != 0);
+  );
+
+  i = 0;
+  loop(4,
+    nx = i == 0 ? n1x : i == 1 ? n2x : i == 2 ? n3x : n4x;
+    ny = i == 0 ? n1y : i == 1 ? n2y : i == 2 ? n3y : n4y;
+    mem[5 + i] > 0.01 ? (
+      gfx_set(cr, cg, cb, 0.16 * mem[5 + i]);
+      gfx_circle(nx, ny, rad * 1.9, 1, 1);
+    );
+    gfx_set(cr, cg, cb, i == mem[0] ? 1 : 0.80);
+    gfx_circle(nx, ny, rad, 1, 1);
+    gfx_set(0.04, 0.04, 0.06, 0.85);
+    gfx_circle(nx, ny, rad * 0.5, 1, 1);
+    gfx_set(1, 1, 1, i == mem[0] ? 0.95 : 0.5);
+    gfx_circle(nx, ny, rad, 0, 1);
+    i += 1;
+  );
+
+  gfx_set(0.20, 0.22, 0.27, 1);
+  gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
+  gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
+
+  rk_adsr_node = mem[0];
+  mem[0];
+);

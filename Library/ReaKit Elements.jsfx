@@ -44,6 +44,7 @@ options:gfx_hz=60 no_meter
 //   [nomain] rk_icons.jsfx-inc
 //   [nomain] rk_ink.jsfx-inc
 //   [nomain] rk_tooltip.jsfx-inc
+//   [nomain] rk_textfield.jsfx-inc
 tags: effect
 
 // Requires the EON ReaKit *_kbsg.jsfx-inc libs on the JSFX import path
@@ -107,6 +108,10 @@ import meters_kbsg.jsfx-inc
 import rk_padgrid.jsfx-inc
 import rk_piano.jsfx-inc
 import rk_curve.jsfx-inc
+import rk_icons.jsfx-inc
+import rk_ink.jsfx-inc
+import rk_tooltip.jsfx-inc
+import rk_textfield.jsfx-inc
 
 @init
 gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below follows
@@ -142,6 +147,8 @@ cvnm   = freemem; freemem += 8 + 4;  cvnm[0] = -1;
 cv_hash = -1;
 thrmem = freemem; freemem += 8;   // threshold line: hover ramp + drag latch
 thr_db = -18;                     // the draggable threshold, in dB
+tfmem = freemem; freemem += RKTF_MEM;   // the text field
+strcpy(#el_text, "type here");
 
 @slider
 
@@ -165,7 +172,7 @@ gfx_clear = 0x2e1a1a;   // canvas #1a1a2e packed as r+g*256+b*65536
 // every window size — and scaling up only made the empty part bigger. Each tab
 // now declares the height it actually uses, so every one of them fills the
 // window the way the Starter does.
-DES_H = slider1 == 0 ? 384 : slider1 == 1 ? 296 : slider1 == 2 ? 392 :
+DES_H = slider1 == 0 ? 384 : slider1 == 1 ? 384 : slider1 == 2 ? 392 :
         slider1 == 3 ? 390 : slider1 == 4 ? 392 : 400;
 sc = min(gfx_w / 740, gfx_h / DES_H);
 sc < 0.35 ? sc = 0.35;
@@ -424,6 +431,39 @@ btn_tab_draw(ox+sc*399, sc*233, sc*57, sc*26, 1, slider31, "EQ", bm[0]);
 btn_tab_draw(ox+sc*458, sc*233, sc*57, sc*26, 2, slider31, "Mod", bm[0]);
 
 ); // end BUTTONS tab
+
+// ── the widgets that came out of Swing, on the tab with room for them ──
+slider1 == 1 ? (
+  gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80);
+  gfx_x=ox+sc*14; gfx_y=sc*292; gfx_drawstr("TEXT · ICONS · TOOLTIP");
+
+  // rk_textfield — click it and type. Enter commits, ESC puts it back.
+  rk_text_run(tfmem, #el_text, ox+sc*14, sc*312, sc*160, sc*24, 24,
+              0.29, 0.62, 1.00);
+  rk_tooltip_check(901, "rk_textfield — click to edit, Enter commits, ESC restores");
+
+  // rk_icons — 46 of them, drawn in code, inked against what is behind
+  _ix = 0;
+  loop(10,
+    gfx_set(0.16, 0.17, 0.21, 1);
+    gfx_rect(ox+sc*(190 + _ix*30), sc*312, sc*26, sc*24);
+    rk_icon_draw(_ix, ox+sc*(190 + _ix*30) + sc*13, sc*324, sc*18, 0.18);
+    _ix += 1;
+  );
+  mx >= ox+sc*190 && mx < ox+sc*490 && my >= sc*312 && my < sc*336 ?
+    rk_tooltip_check(902, "rk_icons — 46 instrument icons, two levels of detail");
+
+  // rk_ink — the same label on a light chip and a dark one
+  gfx_set(0.88, 0.88, 0.90, 1); gfx_rect(ox+sc*500, sc*312, sc*90, sc*24);
+  rk_ink_for(0.88, 0.88, 0.90);
+  gfx_setfont(1,"Arial",max(8,floor(10*sc)));
+  gfx_x = ox+sc*508; gfx_y = sc*318; gfx_drawstr("readable");
+  gfx_set(0.10, 0.10, 0.13, 1); gfx_rect(ox+sc*596, sc*312, sc*90, sc*24);
+  rk_ink_for(0.10, 0.10, 0.13);
+  gfx_x = ox+sc*604; gfx_y = sc*318; gfx_drawstr("readable");
+  mx >= ox+sc*500 && mx < ox+sc*686 && my >= sc*312 && my < sc*336 ?
+    rk_tooltip_check(903, "rk_ink — one call, readable on either background");
+);
 
 // ═══════════════════════ TAB 2 · SLIDERS ═══════════════════════
 slider1 == 2 ? (
@@ -718,6 +758,8 @@ slider1 == 5 ? (
   gfx_x=ox+sc*14; gfx_y=sc*370;
   gfx_drawstr("The widget draws an array and writes nothing back — the caller owns the values. Analyser: the meters' sixteen bands, same axis.");
 );
+
+rk_tooltip_draw(sc);
 
 // ── Analog VU face picker: click the coil cover for a sheet of all twenty faces
 // as live miniatures; click one to pick it, anywhere else to close. LAST in

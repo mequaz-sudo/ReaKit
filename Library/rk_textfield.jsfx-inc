@@ -1,0 +1,197 @@
+desc: ReaKit text input field
+// ══════════════════════════════════════════════════════════════════════
+// rk_textfield.jsfx-inc — a single-line text box you can actually type in.
+//
+// Written clean-room for ReaKit. Nothing in the library took typed text, and
+// the evidence that it should is in Swing: FOUR separate hand-rolled editors
+// live there — the pad rename, the browser filter, the FX search box and the
+// macro rename — each with its own caret, its own key switch and its own
+// scrolling. Four copies of a thing is what a missing widget looks like.
+//
+// What makes this harder than it sounds, and what the four copies each had to
+// learn the hard way:
+//
+//   - THE CARET IS A STRING INDEX, NOT A PIXEL. Every edit is a substring
+//     splice around it, so the caret has to survive the splice.
+//   - MORE THAN ONE KEY ARRIVES PER FRAME. gfx_getchar returns one at a time
+//     and typing outruns the frame rate, so a field that reads a single key
+//     per frame drops characters. This drains the queue.
+//   - THE TEXT SCROLLS, THE BOX DOES NOT. Past the right edge the view has to
+//     follow the caret, and the drawing has to stop at the box — JSFX has no
+//     clip rectangle, so the visible substring is worked out and only that is
+//     drawn. Nothing bleeds out the sides.
+//   - MEASURING NEEDS THE RIGHT FONT. gfx_setfont is global state and
+//     gfx_measurestr fails silently against a stale font, putting the caret in
+//     the wrong place. The measuring helper sets the font itself, every time.
+//   - IT HAS TO OWN ITS RECT. While a field is open it takes the keyboard, and
+//     a click inside places the caret rather than falling through to whatever
+//     is underneath.
+//
+// ONE FIELD AT A TIME. The undo snapshot for cancel is module state, so only
+// one field can be open at once — which is what focus means anyway.
+//
+// REQUIREMENTS (host plugin must provide, per frame, before calling):
+//   - mx, my       — mouse position
+//   - lmb_down     — left-button PRESS edge
+//   - dt, hv_speed — frame delta + hover ramp speed
+//
+// MEMORY: one caller-owned block of 8 words. [0] open, [1] caret, [2] scroll,
+// [3] blink origin, [4] char cap, [5] hover ramp.
+//
+// PUBLIC API:
+//   rk_text_run(mem, buf, x, y, w, h, maxlen, r, g, b)
+//        the whole widget. Draws the box and, when open, edits `buf` in place.
+//        Click it to start. Returns 1 on commit (Enter or a click away),
+//        -1 on cancel (ESC, with `buf` restored), 0 otherwise.
+//   rk_text_active(mem)        1 while it has the keyboard
+//   rk_text_open(mem, buf)     start editing without a click
+//   rk_text_cancel(mem, buf)   abandon, restoring the text
+// ══════════════════════════════════════════════════════════════════════
+
+@init
+
+RKTF_MEM = 8;
+
+function rk_text_active(mem) ( mem[0]; );
+
+function rk_text_open(mem, buf) (
+  mem[0] = 1;
+  mem[1] = strlen(buf);     // caret at the end, as every editor does
+  mem[2] = 0;
+  mem[3] = time_precise();
+  strcpy(#rktf_orig, buf);  // for ESC
+);
+
+function rk_text_cancel(mem, buf) (
+  mem[0] ? ( strcpy(buf, #rktf_orig); mem[0] = 0; );
+);
+
+// Pixel width of buf[a..b). ⚠️ Sets the font itself: gfx_setfont is global and
+// gfx_measurestr against a stale font fails quietly, which puts the caret
+// somewhere other than where the glyphs are.
+function rk_text_w(buf, a, b, fsz) local(tw, th) (
+  b <= a ? 0 : (
+    gfx_setfont(1, "Arial", fsz);
+    strcpy_substr(#rktf_sub, buf, a, b - a);
+    gfx_measurestr(#rktf_sub, tw, th);
+    tw;
+  );
+);
+
+function rk_text_ins(mem, buf, c, maxlen) local(len) (
+  len = strlen(buf);
+  len < maxlen ? (
+    mem[1] > len ? mem[1] = len;
+    strcpy_substr(#rktf_tmp, buf, 0, mem[1]);
+    sprintf(#rktf_chr, "%c", c);
+    strcat(#rktf_tmp, #rktf_chr);
+    strcpy_substr(#rktf_tail, buf, mem[1], len - mem[1]);
+    strcat(#rktf_tmp, #rktf_tail);
+    strcpy(buf, #rktf_tmp);
+    mem[1] += 1;
+  );
+);
+
+function rk_text_del(buf, pos) local(len) (
+  len = strlen(buf);
+  pos >= 0 && pos < len ? (
+    strcpy_substr(#rktf_tmp, buf, 0, pos);
+    strcpy_substr(#rktf_tail, buf, pos + 1, len - pos - 1);
+    strcat(#rktf_tmp, #rktf_tail);
+    strcpy(buf, #rktf_tmp);
+  );
+);
+
+// Nearest glyph boundary to a pixel x. Walks the string measuring prefixes and
+// takes the boundary the click is closest to, so clicking the left half of a
+// character puts the caret before it.
+function rk_text_caret_at(buf, px_, x0, fsz) local(i, n, wprev, wcur) (
+  n = strlen(buf); i = 0; wprev = 0;
+  while(i < n) (
+    wcur = rk_text_w(buf, 0, i + 1, fsz);
+    px_ < x0 + (wprev + wcur) * 0.5 ? ( n = i; ) : ( wprev = wcur; i += 1; );
+  );
+  i;
+);
+
+function rk_text_run(mem, buf, x, y, w, h, maxlen, r, g, b)
+local(res, hov, fsz, pad, c, drained, cx_, i0, i1, wid, avail, off, blink, n) (
+  res = 0;
+  fsz = max(8, floor(h * 0.55));
+  pad = max(3, floor(h * 0.18));
+  avail = w - pad * 2;
+  hov = mx >= x && mx < x + w && my >= y && my < y + h;
+
+  mem[5] = hov || mem[0] ? min(mem[5] + dt * hv_speed, 1)
+                         : max(mem[5] - dt * hv_speed, 0);
+
+  // ── open / caret placement ────────────────────────────────────────────
+  lmb_down ? (
+    hov ? (
+      !mem[0] ? rk_text_open(mem, buf);
+      mem[1] = rk_text_caret_at(buf, mx + mem[2], x + pad, fsz);
+      mem[3] = time_precise();
+    ) : ( mem[0] ? ( mem[0] = 0; res = 1; ); );   // click away commits
+  );
+
+  // ── keys ──────────────────────────────────────────────────────────────
+  // Drained in a loop: typing outruns the frame rate, and one key per frame
+  // silently eats characters.
+  mem[0] ? (
+    drained = 0;
+    c = gfx_getchar();
+    while(c > 0 && drained < 64) (
+      c == 13 ? ( mem[0] = 0; res = 1; ) :
+      c == 27 ? ( strcpy(buf, #rktf_orig); mem[0] = 0; res = -1; ) :
+      c == 8  ? ( mem[1] > 0 ? ( rk_text_del(buf, mem[1] - 1); mem[1] -= 1; ); ) :
+      c == 'left' ? ( mem[1] > 0 ? mem[1] -= 1; ) :
+      c == 'rght' ? ( mem[1] < strlen(buf) ? mem[1] += 1; ) :
+      c == 'home' ? ( mem[1] = 0; ) :
+      c == 'end'  ? ( mem[1] = strlen(buf); ) :
+      c == 'del'  ? rk_text_del(buf, mem[1]) :
+      (c >= 32 && c <= 126) ? rk_text_ins(mem, buf, c, maxlen);
+      mem[3] = time_precise();
+      drained += 1;
+      c = mem[0] ? gfx_getchar() : 0;
+    );
+  );
+
+  // ── the view follows the caret ─────────────────────────────────────────
+  cx_ = rk_text_w(buf, 0, mem[1], fsz);
+  cx_ - mem[2] > avail ? mem[2] = cx_ - avail;
+  cx_ - mem[2] < 0     ? mem[2] = cx_;
+  mem[2] < 0 ? mem[2] = 0;
+
+  // ── draw ───────────────────────────────────────────────────────────────
+  gfx_set(0, 0, 0, 0.30);
+  gfx_rect(x, y, w, h);
+  gfx_set(r, g, b, mem[0] ? 0.95 : 0.30 + mem[5] * 0.35);
+  gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
+  gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
+
+  // Only the visible run is drawn. JSFX has no clip rect, so a long string
+  // drawn whole would run out through the border and across its neighbours.
+  n = strlen(buf);
+  i0 = 0;
+  while(i0 < n && rk_text_w(buf, 0, i0, fsz) < mem[2]) ( i0 += 1; );
+  i1 = i0;
+  while(i1 < n && rk_text_w(buf, i0, i1 + 1, fsz) <= avail) ( i1 += 1; );
+  off = x + pad - (rk_text_w(buf, 0, i0, fsz) - mem[2]);
+
+  i1 > i0 ? (
+    strcpy_substr(#rktf_sub, buf, i0, i1 - i0);
+    gfx_setfont(1, "Arial", fsz);
+    gfx_set(0.84, 0.855, 0.886, 1);
+    gfx_x = off; gfx_y = y + (h - fsz) * 0.5;
+    gfx_drawstr(#rktf_sub);
+  );
+
+  mem[0] ? (
+    blink = (time_precise() - mem[3]) * 2;
+    blink - floor(blink) < 0.6 ? (
+      gfx_set(r, g, b, 1);
+      gfx_rect(x + pad + cx_ - mem[2], y + pad, max(1, floor(h * 0.06)), h - pad * 2);
+    );
+  );
+  res;
+);

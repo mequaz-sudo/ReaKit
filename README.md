@@ -1,11 +1,11 @@
 # ReaKit
 
 A free UI / widget library for REAPER JSFX. Every knob, fader, button, meter,
-VU needle, drum pad and piano key is drawn procedurally in code, so your plugin
-UI is crisp at any size and re-themable with one call.
+VU needle, EQ curve, drum pad and piano key is drawn procedurally in code, so
+your plugin UI is crisp at any size and re-themable with one call.
 
 The ReaKit Elements showcase (installable below) organizes every widget into
-five category tabs:
+six category tabs:
 
 ![ReaKit Elements — Knobs tab](screenshots/tab_knobs.png)
 
@@ -32,13 +32,40 @@ cover to pick one of its 20 faces).*
 
 *Everything above is drawn by the library itself.*
 
-**19 knob styles** (SSL, Neve x2, API, Pultec x2, Ableton, Pro Tools, FabFilter,
-Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader types**
-(incl. an SSL / Neve / Pro Tools / MPC console pack) · **10 button styles** ·
-**12 meter styles with the DSP included** (peak/RMS, GR, phase, goniometer,
-waveform, spectrum, LUFS) · **analog VU** (rk_vu) that meets the VU spec —
-300 ms to 99%, 1.2% overshoot — with 20 faces, a GR face and a face picker · **drum pad grid** (any size, MPC pad order) · **piano keyboard**
+**20 knob styles** (SSL, SSL-G, Neve x2, API, Pultec x2, Ableton, Pro Tools,
+FabFilter, Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader
+types** (incl. an SSL / Neve / Pro Tools / MPC console pack) · **10 button
+styles** · **12 meter styles with the DSP included** (peak/RMS, GR, phase,
+goniometer, waveform, spectrum, LUFS) · **analog VU** (rk_vu) that meets the VU
+spec — 300 ms to 99%, 1.2% overshoot — with 20 faces, a GR face and a face
+picker · **drum pad grid** (any size, MPC pad order) · **piano keyboard**
 (horizontal or vertical, any note range).
+
+Since 1.4.0, seven more:
+
+**Response curve** (rk_curve) — an EQ or filter curve with draggable nodes and a
+spectrum underlay. It evaluates nothing: you fill an array of dB values and it
+draws them, so the same widget serves an EQ, a filter sweep or a compressor
+knee. It writes nothing back either — it reports where a dragged node wants to
+be and you clamp and automate, which is what lets it leave the plugin it was
+written for.
+**Dropdown** (rk_popup) — a menu that draws itself instead of handing the list
+to `gfx_showmenu`, so it looks like your plugin rather than the operating
+system. Scrolls when the list outgrows the window, and understands the same
+`#` header, `!` tick and separator syntax the native menu does.
+**Text field** (rk_textfield) — a single-line editor with a caret, click-to-place,
+arrow keys and scrolling. It drains the key queue, because typing outruns the
+frame rate and one key per frame silently drops characters.
+**Envelope** (rk_adsr) — drag it by its corners. Each segment owns a fixed slice
+of the width, so moving one parameter never shifts the others, and time is
+logarithmic in both the drawing and the drag, so 1–50 ms is actually reachable.
+**Colour picker** (rk_colorpick) — swatches and a rainbow strip. It holds a hue
+and takes saturation and lightness from you, so the swatches match your panel
+rather than a palette that suits nobody.
+**Tooltips** (rk_tooltip) — keyed by zone, so moving between two controls
+restarts the delay instead of reading as one long hover.
+**Auto-contrast ink** (rk_ink) — pass the colour behind your text and it picks
+near-black or near-white, so a label never vanishes on a themed panel.
 
 Every knob style shares one interaction model: drag, ctrl = fine, mousewheel,
 double-click reset, detents, automation-safe writes.

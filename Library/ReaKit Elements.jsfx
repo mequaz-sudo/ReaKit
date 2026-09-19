@@ -226,6 +226,11 @@ btn_tab_draw(sc_ui*441, sc_ui*10, sc_ui*93, sc_ui*28, 3, slider1, "METERS", bm[0
 btn_tab_draw(sc_ui*538, sc_ui*10, sc_ui*93, sc_ui*28, 4, slider1, "PADS/KEYS", bm[0]);
 btn_tab_draw(sc_ui*635, sc_ui*10, sc_ui*93, sc_ui*28, 5, slider1, "CURVE", bm[0]);
 
+// The spectrum bins are fed here, not inside a tab, because TWO tabs read them
+// — Meters draws the bars and Curve uses them as the analyser behind the graph.
+// Fed from inside Meters, the Curve tab showed bins that had simply decayed.
+slider1 == 3 || slider1 == 5 ? meter_spectrum_update();
+
 // ═══════════════════════ TAB 0 · KNOBS ═══════════════════════
 slider1 == 0 ? (
 
@@ -447,7 +452,8 @@ slider1 == 1 ? (
   // rk_textfield — click it and type. Enter commits, ESC puts it back.
   rk_text_run(tfmem, #el_text, ox+sc*14, sc*312, sc*160, sc*24, 24,
               0.29, 0.62, 1.00);
-  rk_tooltip_check(901, "rk_textfield — click to edit, Enter commits, ESC restores");
+  mx >= ox+sc*14 && mx < ox+sc*174 && my >= sc*312 && my < sc*336 ?
+    rk_tooltip_check(901, "rk_textfield — click to edit, Enter commits, ESC restores");
 
   // rk_colorpick — swatches for speed, the strip for the one you wanted. The
   // widget writes nothing; el_hue is ours.
@@ -650,7 +656,6 @@ vu_0.rk_vu_draw(ox+sc*14, sc*80, sc*250, sc*150, 0, _vu_face, "VU");
 
 // LEDBar (meter)
 mtr_update_db();   // meters_kbsg: linear→dB once per frame
-meter_spectrum_update();   // fills the spectrum bins; nothing else feeds them
 mtr_led_bar_draw(ox+sc*290, sc*80, sc*40, sc*84, mtr_peak_l, mtr_peak_r, -60, 0);   // meters_kbsg led_bar
 
 // PkRMS (meter)
@@ -723,7 +728,7 @@ gfx_set(0.03,0.03,0.06,1); gfx_rect(ox+sc*260, sc*240, sc*300, sc*74);
 gfx_set(0.98,0.45,0.09,1); _wi=0;
 loop(300,
   _s = wf_0[(wfp_0 + floor(_wi*WF_LEN/300)) % WF_LEN];
-  _wi==0 ? ( gfx_x=ox+sc*260; gfx_y=sc*240+sc*74*0.5 - _s*(sc*74*0.5-2); ) : gfx_lineto(sc*(260+_wi), sc*240+sc*74*0.5 - _s*(sc*74*0.5-2), 1);
+  _wi==0 ? ( gfx_x=ox+sc*260; gfx_y=sc*240+sc*74*0.5 - _s*(sc*74*0.5-2); ) : gfx_lineto(ox+sc*(260+_wi), sc*240+sc*74*0.5 - _s*(sc*74*0.5-2), 1);
   _wi+=1;
 );
 
@@ -740,7 +745,7 @@ slider1 == 5 ? (
   gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80);
   gfx_x=ox+sc*14; gfx_y=sc*56; gfx_drawstr("CURVE — rk_curve: drag a node, wheel for width, double-click to flatten");
 
-  _cx = sc*14; _cy = sc*76; _cw = sc*712; _ch = sc*286;
+  _cx = ox+sc*14; _cy = sc*76; _cw = sc*712; _ch = sc*286;
 
   // Refill only when an input changes. Four bells over 256 points is ~2000
   // transcendentals a fill, and doing that every frame is how the Drum Strip's

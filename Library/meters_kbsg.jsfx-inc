@@ -339,19 +339,33 @@ function meter_fft_feed(band, energy) (
 // and mtr_spectrum_draw gets sixteen bars pinned at zero while the waveform and
 // level meters beside them move. This fills them from the waveform ring the
 // library is already keeping - 16 log-spaced Goertzel bands over the 512-sample
-// L buffer, roughly 40 Hz to 16 kHz. Call it once per frame in @gfx, before
-// mtr_spectrum_draw. The transcendentals are safe here: this is @gfx work and
+// L buffer, 40 Hz to just under the ring's own Nyquist. Call it once per frame
+// in @gfx, before mtr_spectrum_draw.
+//
+// ⚠️ The ring is decimated 4:1 with no anti-alias filter, so content above its
+// Nyquist folds down into the bands. That is a property of the waveform buffer
+// this borrows, not of the analysis — it is a display, and the alternative is a
+// second full-rate ring and a bigger memory block. The transcendentals are safe here: this is @gfx work and
 // never runs in @sample.
 function meter_spectrum_update()
-local(band, i, f_hz, w_, cw, s0, s1, s2, samp, mag)
+local(band, i, f_hz, w_, cw, s0, s1, s2, samp, mag, esr, kk)
 (
   mtr_en_spectrum ? (
+    // ⚠️⚠️ THE RING IS DECIMATED. meter_process_sample stores every FOURTH
+    // sample (mtr_wave_div >= 4), so this buffer runs at srate/4 and a Goertzel
+    // tuned with the full srate detects a quarter of the frequency it is
+    // labelled with. The first version of this function did exactly that and
+    // every band was out by 4x — a formula verified against a full-rate buffer
+    // that was never the buffer in use.
+    esr = srate * 0.25;
+    // Bands spread from 40 Hz to just under the EFFECTIVE Nyquist, so all
+    // sixteen carry something instead of the top three sitting above it.
+    kk = log(esr * 0.45 / 40) / log(2) / 15;
     band = 0;
     loop(16,
-      // 40 Hz .. 16 kHz over 16 bands = 40 * 2^(band * 8.644/15)
-      f_hz = 40 * pow(2, band * 0.5763);
-      f_hz < srate * 0.5 ? (
-        w_ = 2 * $pi * f_hz / srate;
+      f_hz = 40 * pow(2, band * kk);
+      f_hz < esr * 0.5 ? (
+        w_ = 2 * $pi * f_hz / esr;
         cw = 2 * cos(w_);
         s1 = 0; s2 = 0;
         i = 0;

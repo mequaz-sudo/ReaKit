@@ -45,6 +45,7 @@ options:gfx_hz=60 no_meter
 //   [nomain] rk_ink.jsfx-inc
 //   [nomain] rk_tooltip.jsfx-inc
 //   [nomain] rk_textfield.jsfx-inc
+//   [nomain] rk_colorpick.jsfx-inc
 tags: effect
 
 // Requires the EON ReaKit *_kbsg.jsfx-inc libs on the JSFX import path
@@ -112,6 +113,7 @@ import rk_icons.jsfx-inc
 import rk_ink.jsfx-inc
 import rk_tooltip.jsfx-inc
 import rk_textfield.jsfx-inc
+import rk_colorpick.jsfx-inc
 
 @init
 gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below follows
@@ -149,6 +151,8 @@ thrmem = freemem; freemem += 8;   // threshold line: hover ramp + drag latch
 thr_db = -18;                     // the draggable threshold, in dB
 tfmem = freemem; freemem += RKTF_MEM;   // the text field
 strcpy(#el_text, "type here");
+cpmem = freemem; freemem += RKCP_MEM;   // the colour picker
+el_hue = 0.58;                          // its value: -2 black, -1 white, 0..1 hue
 
 @slider
 
@@ -452,6 +456,15 @@ slider1 == 1 ? (
   );
   mx >= ox+sc*190 && mx < ox+sc*490 && my >= sc*312 && my < sc*336 ?
     rk_tooltip_check(902, "rk_icons — 46 instrument icons, two levels of detail");
+
+  // rk_colorpick — swatches for speed, the strip for the one you wanted. The
+  // widget writes nothing; el_hue is ours.
+  el_hue = rk_color_pick(cpmem, ox+sc*14, sc*348, sc*300, sc*18, el_hue, 0.75, 0.55);
+  rk_color_set(el_hue, 0.75, 0.55);
+  gfx_rect(ox+sc*322, sc*348, sc*40, sc*18);
+  gfx_set(0.25,0.26,0.30,0.8); gfx_rect(ox+sc*322, sc*348, sc*40, sc*18, 0);
+  mx >= ox+sc*14 && mx < ox+sc*362 && my >= sc*348 && my < sc*366 ?
+    rk_tooltip_check(904, "rk_colorpick — click a swatch, drag or wheel the strip");
 
   // rk_ink — the same label on a light chip and a dark one
   gfx_set(0.88, 0.88, 0.90, 1); gfx_rect(ox+sc*500, sc*312, sc*90, sc*24);

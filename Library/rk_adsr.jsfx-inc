@@ -127,8 +127,11 @@ local(mg, az, dz, sz, rz, apx, dpx, rpx, n0x, n0y, n1x, n1y, n2x, n2y,
 
   i = 0;
   loop(4,
-    i == (mem[0] >= 0 ? mem[0] : bi) ? mem[5 + i] = min(mem[5 + i] + dt * hv_speed, 1)
-                                     : mem[5 + i] = max(mem[5 + i] - dt * hv_speed, 0);
+    // Parenthesised on purpose: EEL2 binds assignment looser than ?:, so a bare
+    // `c ? a = x : b = y` is the one shape that can bind the wrong way round.
+    // Every other widget in this library writes it like this.
+    i == (mem[0] >= 0 ? mem[0] : bi) ? ( mem[5 + i] = min(mem[5 + i] + dt * hv_speed, 1); )
+                                     : ( mem[5 + i] = max(mem[5 + i] - dt * hv_speed, 0); );
     i += 1;
   );
 

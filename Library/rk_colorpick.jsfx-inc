@@ -25,7 +25,8 @@ desc: ReaKit colour picker
 //   - mx, my       — mouse position
 //   - lmb_down     — left-button PRESS edge
 //   - LMB          — left-button HELD state
-//   - frame_wheel  — wheel ticks, for the strip
+//   - frame_wheel  — wheel ticks, for the strip. Consumed when used, as
+//                    the rest of the library does, so one tick does one thing.
 //   - dt, hv_speed — frame delta + hover ramp speed
 //
 // MEMORY: one caller-owned block of 4 words. [0] dragging the strip,
@@ -142,6 +143,7 @@ local(i, hovr, out, mk) (
   hovr && frame_wheel != 0 ? (
     out = (out < 0 ? 0 : out) + frame_wheel * RKCP_STEP;
     out = out - floor(out);
+    frame_wheel = 0;   // consumed — otherwise this tick also turns a knob
   );
 
   // The marker only means something for a hue; black and white are not on it.

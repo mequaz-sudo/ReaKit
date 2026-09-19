@@ -157,6 +157,51 @@ New: rk_vu, the analog VU, rewritten clean-room.
         <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_ui_slider.jsfx-inc</source>
         <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Library/rk_ui_meter.jsfx-inc</source>
       </version>
+  <version name="1.4.0" author="Quaz (EON Studios)" time="2026-09-19T14:53:48Z">
+    <changelog><![CDATA[New: seven widgets, and the showcase gains a CURVE tab.
+- rk_curve - a response curve with draggable nodes and an analyser underlay. It evaluates nothing: you fill an array of dB values and it draws them, so one widget serves an EQ response, a filter sweep or a compressor knee. It writes nothing back either - it reports where a dragged node wants to be and you clamp and automate, which is what makes it reusable.
+- rk_popup - a dropdown that draws itself instead of handing the list to gfx_showmenu, so a menu looks like your plugin rather than the operating system. Scrolls when the list is taller than the window, ticks and separators and disabled headers as gfx_showmenu spells them, and it takes the mouse away from the UI behind it while it is open.
+- rk_textfield - a single-line text box. The library could not take a keystroke before this.
+- rk_adsr - an envelope you drag by its corners. Each segment owns a fixed slice of the width, so moving one parameter never shifts the others, and time is logarithmic in both the drawing and the drag, so 1-50 ms is actually reachable.
+- rk_colorpick - swatches and a rainbow strip, taking saturation and lightness from you so the swatches match your panel instead of a fixed palette.
+- rk_tooltip - hover tooltips, keyed by zone so moving between controls restarts the delay.
+- rk_ink - text colour chosen from the background behind it, so a label never vanishes on a themed panel.
+
+New knob style 21, a fluted silver SSL-G console knob. Knob styles are now 1-21.
+
+Fixed:
+- The spectrum meter had never been fed. Nothing in the library called meter_fft_feed, so its sixteen bars sat at zero while the meters beside them moved. meter_spectrum_update() fills them; call it once a frame before mtr_spectrum_draw.
+- That feed then read the waveform ring with the wrong sample rate. The ring keeps every fourth sample, so every band was detecting a quarter of the frequency it was labelled with. It uses the ring's real rate now, and the ring is low-passed before it is decimated - measured on that path, 9 kHz is down 40 dB and 15 kHz 49 dB, for about 1 dB of passband at 1 kHz.
+- The range slider's high thumb ran away from the mouse: it anchored the drag on the same slot it published to, so every frame added the whole displacement again.
+- mtr_threshold_draw ignored the hover ramp mtr_threshold_interact had always been computing, so the one draggable control in the meter library never acknowledged the mouse. Its label font was also a fixed 9 px at every window size.
+- @provides listed rk_ui_vu.jsfx-inc, which 1.3.0 deleted.
+
+ReaKit Starter is a channel strip now. The old grain/pitch/motion face had no faders and no VU because a granular layout has nowhere to put them; a strip has somewhere to put everything, so it exercises knobs, buttons, console faders, meters and the VU. It is alive on an empty project - three resonators feed the meters when the track is silent, marked DEMO and dropped the moment real audio arrives, and never on the output. ACCENT is a real parameter and every knob cap, fader fill and meter tint follows it in the same frame. It has no hand-rolled controls left: every widget on it is a library call.
+
+The Elements showcase gains a CURVE tab and fills the window at any shape - each tab declares the height it uses, so no tab carries dead canvas, and the page centres rather than piling its spare width on one side.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/ReaKit%20Elements.jsfx</source>
+        <source file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/ReaKit%20Starter.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_vu.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_curve.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_curve.jsfx-inc</source>
+        <source file="rk_popup.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_popup.jsfx-inc</source>
+        <source file="rk_ink.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_ink.jsfx-inc</source>
+        <source file="rk_tooltip.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_tooltip.jsfx-inc</source>
+        <source file="rk_textfield.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_textfield.jsfx-inc</source>
+        <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_colorpick.jsfx-inc</source>
+        <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_adsr.jsfx-inc</source>
+  </version>
     </reapack>
   </category>
   <category name="Floatter">

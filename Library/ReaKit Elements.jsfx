@@ -138,7 +138,7 @@ _vu_face = 0;           // face 0..19 (Cream); click the meter's coil cover to p
 // CURVE tab. The graph runs 40 Hz to 16 kHz because that is exactly the span of
 // the meter's sixteen spectrum bands, so the analyser lines up with the curve by
 // construction rather than by a fudge factor.
-rk_curve_init(40, 16000);
+rk_curve_init(20, 20000);
 CV_PTS = 256;
 cvbuf  = freemem; freemem += CV_PTS;
 cvspec = freemem; freemem += 16;
@@ -772,7 +772,8 @@ slider1 == 5 ? (
   loop(16, cvspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
 
   rk_curve_plate(_cx, _cy, _cw, _ch, 18);
-  rk_curve_analyser(_cx, _cy, _cw, _ch, cvspec, 16, 0, -60, 0.95,0.64,0.24);
+  rk_curve_analyser(_cx, _cy, _cw, _ch, cvspec, 16, mtr_spec_lo, mtr_spec_hi,
+                    0, -60, 0.95,0.64,0.24);
   rk_curve_trace(_cx, _cy, _cw, _ch, cvbuf, CV_PTS, 18, 1, 0.29,0.62,1.00);
 
   _n = rk_curve_nodes(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4);

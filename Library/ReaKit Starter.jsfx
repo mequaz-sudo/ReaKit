@@ -143,7 +143,7 @@ vu.rk_vu_init(-18);
 // meter's sixteen spectrum bands. Both axes are log, so the bands land evenly
 // across the rect and the analyser lines up with the curve BY CONSTRUCTION
 // rather than by a fudge factor.
-rk_curve_init(40, 16000);
+rk_curve_init(20, 20000);
 
 EQ_PTS = 256;
 eqbuf  = freemem; freemem += EQ_PTS;      // the response, one dB value per point
@@ -670,7 +670,8 @@ _i = 0;
 loop(16, eqspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
 
 rk_curve_plate(_cx, _cy, _cw, _ch, 18);
-rk_curve_analyser(_cx, _cy, _cw, _ch, eqspec, 16, 0, -60, a2_r, a2_g, a2_b);
+rk_curve_analyser(_cx, _cy, _cw, _ch, eqspec, 16, mtr_spec_lo, mtr_spec_hi,
+                  0, -60, a2_r, a2_g, a2_b);
 rk_curve_trace(_cx, _cy, _cw, _ch, eqbuf, EQ_PTS, 18, 1, ac_r, ac_g, ac_b);
 
 // Nodes. rk_curve hands back where the grabbed node WANTS to be; clamping and

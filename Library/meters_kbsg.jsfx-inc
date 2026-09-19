@@ -361,6 +361,10 @@ local(band, i, f_hz, w_, cw, s0, s1, s2, samp, mag, esr, kk)
     // Bands spread from 40 Hz to just under the EFFECTIVE Nyquist, so all
     // sixteen carry something instead of the top three sitting above it.
     kk = log(esr * 0.45 / 40) / log(2) / 15;
+    // Publish the span actually used. A consumer that draws these bands on its
+    // own axis cannot place them without it, and the span moves with srate.
+    mtr_spec_lo = 40;
+    mtr_spec_hi = 40 * pow(2, 15 * kk);
     band = 0;
     loop(16,
       f_hz = 40 * pow(2, band * kk);

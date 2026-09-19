@@ -54,8 +54,10 @@ desc: ReaKit response-curve widget
 //   rk_curve_plate(x, y, w, h, dr)
 //        plate, frequency grid + labels, dB grid + labels, border. Sets a
 //        small font for the labels and does not restore it.
-//   rk_curve_analyser(x, y, w, h, buf, n, ceil_db, floor_db, r, g, b)
-//        the underlay. Call BEFORE the trace.
+//   rk_curve_analyser(x, y, w, h, buf, n, f_lo, f_hi, ceil_db, floor_db, r, g, b)
+//        the underlay. Call BEFORE the trace. f_lo/f_hi are the band buffer's
+//        OWN frequency span — give it honestly and the bands land on the right
+//        part of the graph whatever range the graph itself is set to.
 //   rk_curve_trace(x, y, w, h, buf, n, dr, fill, r, g, b)
 //        the curve. `fill` 1 shades to the midline.
 //   rk_curve_nodes(mem, x, y, w, h, dr, fbuf, dbuf, n)
@@ -68,9 +70,13 @@ desc: ReaKit response-curve widget
 //        every surveyed implementation unusable as a widget.
 //   rk_curve_nodes_draw(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, r, g, b)
 //
-// `buf` holds `n` dB values spread evenly across the rect in X. Because X is
-// log frequency, evenly spaced in X IS log spaced in Hz, so an analyser and a
-// trace of different lengths still line up. ~512 is a good `n` for a trace.
+// The TRACE buffer holds `n` dB values spread evenly across the rect in X, and
+// because X is log frequency that is log spacing in Hz. ~512 is a good `n`.
+//
+// The ANALYSER buffer is different: it carries its own frequency span, because
+// a meter's bands are whatever the meter chose and need not match the graph.
+// Tell it that span and it places them correctly; assume they match and they
+// silently stop matching the day either side changes.
 // ══════════════════════════════════════════════════════════════════════
 
 @init
@@ -184,33 +190,46 @@ local(i, f, gx_, gy_, tw, th, last_x, db) (
 // Filled to the bottom, quads guarded on an integer column change so many
 // bands landing in one pixel do not each emit a degenerate triangle.
 
-function rk_curve_analyser(x, y, w, h, buf, n, ceil_db, floor_db, r, g, b)
-local(i, x0, x1, y0, y1, bot, t, j, fr) (
+function rk_curve_analyser(x, y, w, h, buf, n, f_lo, f_hi, ceil_db, floor_db, r, g, b)
+local(i, x0, x1, y0, y1, bot, t, j, fr, fx, lspan) (
   n < 2 ? 0 : (
     bot = y + h - 1;
-    // One vertical line per pixel, for the same reason the trace fill uses
-    // them: adjacent quads share an edge REAPER's polygon fill does not paint,
-    // and those hairline gaps read as stripes.
+    lspan = log(max(f_hi, f_lo * 2) / max(f_lo, 1));
+    // ⭐ Bands are placed BY FREQUENCY, not by spreading them evenly across the
+    // rect. The first version assumed the buffer spanned the whole graph, which
+    // was true only while the analyser and the graph happened to share a range
+    // — and the moment the meter's span changed with srate, every band moved.
+    // Each pixel asks what frequency it is and fetches the band for it, so the
+    // two align however either one is configured.
     gfx_set(r, g, b, 0.13);
     i = 0;
     loop(floor(w),
-      t  = i / max(w - 1, 1) * (n - 1);
-      j  = floor(t);
-      fr = t - j;
-      j >= n - 1 ? ( j = n - 2; fr = 1; );
-      y0 = rk_curve_a2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, ceil_db, floor_db);
-      y0 < bot ? gfx_rect(x + i, y0, 1, bot - y0);
+      fx = rk_curve_x2f(x + i, x, w);
+      fx >= f_lo && fx <= f_hi ? (
+        t  = log(fx / max(f_lo, 1)) / lspan * (n - 1);
+        j  = floor(t);
+        fr = t - j;
+        j < 0 ? ( j = 0; fr = 0; );
+        j >= n - 1 ? ( j = n - 2; fr = 1; );
+        y0 = rk_curve_a2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, ceil_db, floor_db);
+        y0 < bot ? gfx_rect(x + i, y0, 1, bot - y0);
+      );
       i += 1;
     );
-    // Capping line along the same edge. Cheap antialiasing, and it keeps a
-    // quiet band visible when the fill underneath it is one pixel tall.
+    // Capping line, same placement, so the edge and the fill agree.
     gfx_set(r, g, b, 0.32);
-    i = 0;
-    loop(n - 1,
-      x0 = x + i * w / (n - 1);
-      x1 = x + (i + 1) * w / (n - 1);
-      gfx_line(x0, rk_curve_a2y(buf[i],     y, h, ceil_db, floor_db),
-               x1, rk_curve_a2y(buf[i + 1], y, h, ceil_db, floor_db));
+    i = 1;
+    loop(floor(w) - 1,
+      fx = rk_curve_x2f(x + i, x, w);
+      fx >= f_lo && fx <= f_hi ? (
+        t  = log(fx / max(f_lo, 1)) / lspan * (n - 1);
+        j  = floor(t); fr = t - j;
+        j < 0 ? ( j = 0; fr = 0; );
+        j >= n - 1 ? ( j = n - 2; fr = 1; );
+        y0 = rk_curve_a2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, ceil_db, floor_db);
+        y1 = rk_curve_a2y(buf[j], y, h, ceil_db, floor_db);
+        gfx_rect(x + i, y0, 1, 1);
+      );
       i += 1;
     );
   );

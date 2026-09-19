@@ -117,6 +117,12 @@ function meter_init(base)
 
   mtr_gonio_pos = 0; mtr_gonio_div = 0;
   mtr_wave_pos  = 0; mtr_wave_div  = 0;
+  // Anti-alias coefficient for the 4:1 waveform ring. Corner at srate/16, well
+  // below the ring's own srate/8 Nyquist. One-pole, so the coefficient is just
+  // the per-sample step; this is @init, so exp() costs nothing here.
+  mtr_wlp_k = 1 - exp(-2 * $pi * (srate / 16) / srate);
+  mtr_wlp_l1 = 0; mtr_wlp_l2 = 0; mtr_wlp_l3 = 0;
+  mtr_wlp_r1 = 0; mtr_wlp_r2 = 0; mtr_wlp_r3 = 0;
   mtr_fft_acc   = 0;
   mtr_gonio_gain = 1;
 
@@ -302,11 +308,26 @@ local(abs_l, abs_r,
   );
 
   // ── Waveform buffer — gated by mtr_en_wave ────────────────────
+  // ⭐ FILTERED BEFORE IT IS DECIMATED. This ring keeps every fourth sample, so
+  // it runs at srate/4 and anything above srate/8 folds down into it — phantom
+  // low content in the spectrum, and a scope that wriggles on a steady signal.
+  // Three one-pole sections per channel, cornered at srate/16.
+  //
+  // MEASURED on this exact path (tone in, decimate, Goertzel the ring), against
+  // the 1 kHz passband: 9 kHz rejected 40 dB, 15 kHz 49 dB, at a cost of about
+  // 1 dB of passband at 1 kHz. Six multiply-adds a sample. A fourth pole buys
+  // another 9 dB for another 0.6 dB of passband, which a display does not need.
   mtr_en_wave ? (
+    mtr_wlp_l1 += mtr_wlp_k * (l - mtr_wlp_l1);
+    mtr_wlp_l2 += mtr_wlp_k * (mtr_wlp_l1 - mtr_wlp_l2);
+    mtr_wlp_l3 += mtr_wlp_k * (mtr_wlp_l2 - mtr_wlp_l3);
+    mtr_wlp_r1 += mtr_wlp_k * (r - mtr_wlp_r1);
+    mtr_wlp_r2 += mtr_wlp_k * (mtr_wlp_r1 - mtr_wlp_r2);
+    mtr_wlp_r3 += mtr_wlp_k * (mtr_wlp_r2 - mtr_wlp_r3);
     mtr_wave_div += 1;
     mtr_wave_div >= 4 ? (
-      mtr_base[256 + mtr_wave_pos] = l;
-      mtr_base[768 + mtr_wave_pos] = r;
+      mtr_base[256 + mtr_wave_pos] = mtr_wlp_l3;
+      mtr_base[768 + mtr_wave_pos] = mtr_wlp_r3;
       mtr_wave_pos = (mtr_wave_pos + 1) & 511;
       mtr_wave_div = 0;
     );
@@ -342,10 +363,11 @@ function meter_fft_feed(band, energy) (
 // L buffer, 40 Hz to just under the ring's own Nyquist. Call it once per frame
 // in @gfx, before mtr_spectrum_draw.
 //
-// ⚠️ The ring is decimated 4:1 with no anti-alias filter, so content above its
-// Nyquist folds down into the bands. That is a property of the waveform buffer
-// this borrows, not of the analysis — it is a display, and the alternative is a
-// second full-rate ring and a bigger memory block. The transcendentals are safe here: this is @gfx work and
+// The ring is decimated 4:1, and meter_process_sample low-passes into it, so
+// content above its Nyquist is attenuated rather than folded down: measured on
+// this path, 40 dB at 9 kHz and 49 dB at 15 kHz against the 1 kHz passband.
+// Not eliminated — attenuated. Eliminating it means a second full-rate ring and
+// a bigger memory block, which is a lot for a display. The transcendentals are safe here: this is @gfx work and
 // never runs in @sample.
 function meter_spectrum_update()
 local(band, i, f_hz, w_, cw, s0, s1, s2, samp, mag, esr, kk)

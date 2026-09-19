@@ -135,9 +135,11 @@ mtr_en_lufs = 1;   // enable (set after meter_init resets flags)
 vu_0.rk_vu_init(-18);   // analog VU: 300 ms movement, 0 VU = a -18 dBFS sine
 _vu_face = 0;           // face 0..19 (Cream); click the meter's coil cover to pick another
 
-// CURVE tab. The graph runs 40 Hz to 16 kHz because that is exactly the span of
-// the meter's sixteen spectrum bands, so the analyser lines up with the curve by
-// construction rather than by a fudge factor.
+// CURVE tab. The graph spans the audio band; it does NOT have to match the
+// meter's. rk_curve_analyser is handed the bands' own span and places them by
+// frequency, so the two agree however either one is configured — which is what
+// "by construction" is supposed to mean, and what matching two hand-written
+// numbers never was.
 rk_curve_init(20, 20000);
 CV_PTS = 256;
 cvbuf  = freemem; freemem += CV_PTS;

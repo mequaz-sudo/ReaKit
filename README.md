@@ -9,12 +9,16 @@ six category tabs:
 
 ![ReaKit Elements — Knobs tab](screenshots/tab_knobs.png)
 
-*KNOBS — all 19 styles, live on one page. Click one, scroll to change.*
+*KNOBS — all 19 styles on one page (a 20th, SSL-G, is style 21). Click one,
+scroll to change.*
 
 ![ReaKit Elements — Buttons tab](screenshots/tab_buttons.png)
 
-*BUTTONS — all 10 styles: toggles, pills, LEDs, steppers, list select,
-rocker, stomp, tab bar (the showcase's own tab bar is this widget).*
+*BUTTONS — all 10 styles: toggles, pills, LEDs, steppers, list select, rocker,
+stomp, tab bar (the showcase's own tab bar is this widget). Below them, the
+widgets added in 1.4.0: a text field you can type in, the colour picker, the
+ADSR editor, and three chips showing auto-contrast ink pick its own colour
+against the background you gave it.*
 
 ![ReaKit Elements — Sliders tab](screenshots/tab_sliders.png)
 
@@ -29,6 +33,12 @@ cover to pick one of its 20 faces).*
 ![ReaKit Elements — Pads & Keys tab](screenshots/tab_padskeys.png)
 
 *PADS & KEYS — the drum pad grid and piano keyboard widgets.*
+
+![ReaKit Elements — Curve tab](screenshots/tab_curve.png)
+
+*CURVE — rk_curve at full width: drag a node, wheel it for width, double-click
+to flatten. The bands behind it are the meter library's spectrum, placed by
+frequency so the two axes agree however either is configured.*
 
 *Everything above is drawn by the library itself.*
 

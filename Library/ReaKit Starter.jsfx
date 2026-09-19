@@ -59,7 +59,7 @@ slider17:out_db=0<-24,12,0.1>-Output (dB)
 // ── Look. Hidden parameters, so each instance remembers its own. ────────────
 slider18:ui_accent=0<0,7,1>-Accent
 slider19:ui_face=0<0,19,1>-VU Face
-slider20:ui_knob_sty=1<1,20,1>-Knob Style
+slider20:ui_knob_sty=1<1,21,1>-Knob Style
 slider21:ui_demo=1<0,1,1>-Demo Signal
 // The EQ band centres. They exist because the curve has draggable nodes: a
 // node you can only pull up and down is a poor advert for one.
@@ -527,7 +527,7 @@ rk_popup_gate(ppmem);
 
 // One parameter, and every widget below is re-skinned. This is the call.
 ui_apply_accent(ui_accent);
-knob_style = max(1, min(floor(ui_knob_sty + 0.5), 20));
+knob_style = max(1, min(floor(ui_knob_sty + 0.5), 21));
 
 // The meters' own per-frame work: dB conversion, and the spectrum bins, which
 // nothing fills unless you ask.
@@ -580,7 +580,7 @@ ui_tip(_ax, hy, px(80), hh, "Accent — one value, every widget follows");
 // KNOB — 20 console looks, one shared feel.
 _kx = hx + px(158);
 _d = btn_incdec_interact(m_sty, _kx, hy, px(80), hh);
-_d != 0 ? ( ui_knob_sty = max(1, min(ui_knob_sty + _d, 20)); slider_automate(ui_knob_sty); );
+_d != 0 ? ( ui_knob_sty = max(1, min(ui_knob_sty + _d, 21)); slider_automate(ui_knob_sty); );
 sprintf(#s, "KNOB %d", knob_style);
 btn_incdec_draw(_kx, hy, px(80), hh, #s, m_sty[0]);
 ui_tip(_kx, hy, px(80), hh, "Knob style — 20 looks, identical feel");

@@ -49,8 +49,9 @@ desc: ReaKit dropdown / popup menu widget
 //   rk_popup_run(mem, items, item_h, ch, r, g, b)
 //                                  call LAST in @gfx, so the menu is over
 //                                  everything. `items` is a |-separated string
-//                                  and a '#' prefix makes a row a disabled
-//                                  header, both as gfx_showmenu does it. `ch`
+//                                  and the gfx_showmenu prefixes work: '#'
+//                                  disables a row as a header, '!' ticks it,
+//                                  and an empty row is a separator. `ch`
 //                                  is this frame's gfx_getchar() for ESC, or 0.
 //                                  Returns a 1-BASED row, matching
 //                                  gfx_showmenu, or -1 cancelled, or 0 while
@@ -63,7 +64,8 @@ desc: ReaKit dropdown / popup menu widget
 
 RKPP_MEM  = 16;
 RKPP_BAR  = 124;    // '|'
-RKPP_HASH = 35;     // '#'
+RKPP_HASH = 35;     // '#'  disabled header
+RKPP_BANG = 33;     // '!'  checked
 RKPP_ESC  = 27;
 
 function rk_popup_active(mem) ( mem[0]; );
@@ -97,9 +99,13 @@ function rk_popup_row(items, idx) local(i, k, st, len, c, hdr) (
     );
     i += 1;
   );
-  strlen(#rkpp_s) > 0 && str_getchar(#rkpp_s, 0) == RKPP_HASH ? (
+  // Prefixes, as gfx_showmenu spells them: '#' disables a row, '!' ticks it.
+  // Either may come first, so strip in a loop rather than assuming an order.
+  rkpp_tick = 0;
+  while(strlen(#rkpp_s) > 0 &&
+        (str_getchar(#rkpp_s, 0) == RKPP_HASH || str_getchar(#rkpp_s, 0) == RKPP_BANG)) (
+    str_getchar(#rkpp_s, 0) == RKPP_HASH ? hdr = 1 : rkpp_tick = 1;
     strcpy_substr(#rkpp_s, #rkpp_s, 1, strlen(#rkpp_s) - 1);
-    hdr = 1;
   );
   hdr;
 );
@@ -155,16 +161,31 @@ local(n, i, x, y, w, h, rmx, rmy, edge, hov, ry, hdr, inside, res, tw, th, pad) 
         ry  = y + pad + i * item_h;
         hdr = rk_popup_row(items, i);
         inside = rmx >= x && rmx < x + w && rmy >= ry && rmy < ry + item_h;
-        !hdr && inside ? (
+        !hdr && inside && strlen(#rkpp_s) > 0 ? (
           mem[6] = i;
           gfx_set(r, g, b, 0.22);
           gfx_rect(x + 1, ry, w - 2, item_h);
         );
-        gfx_measurestr(#rkpp_s, tw, th);
-        hdr ? gfx_set(r, g, b, 0.95) : gfx_set(0.84, 0.855, 0.886, inside ? 1 : 0.82);
-        gfx_x = x + pad * 2; gfx_y = ry + (item_h - th) * 0.5;
-        gfx_drawstr(#rkpp_s);
-        !hdr && inside && edge ? res = i + 1;   // 1-based, like gfx_showmenu
+        strlen(#rkpp_s) < 1 ? (
+          // an empty row is a separator, and cannot be picked
+          gfx_set(r, g, b, 0.30);
+          gfx_rect(x + pad * 2, ry + item_h * 0.5, w - pad * 4, 1);
+        ) : (
+          gfx_measurestr(#rkpp_s, tw, th);
+          hdr ? gfx_set(r, g, b, 0.95) : gfx_set(0.84, 0.855, 0.886, inside ? 1 : 0.82);
+          gfx_x = x + pad * 4; gfx_y = ry + (item_h - th) * 0.5;
+          gfx_drawstr(#rkpp_s);
+          rkpp_tick ? (
+            // The tick sits in the gutter the labels are already indented past,
+            // so a checked row never pushes its own text sideways.
+            gfx_set(r, g, b, 1);
+            gfx_line(x + pad * 1.4, ry + item_h * 0.52,
+                     x + pad * 2.1, ry + item_h * 0.70);
+            gfx_line(x + pad * 2.1, ry + item_h * 0.70,
+                     x + pad * 3.2, ry + item_h * 0.32);
+          );
+          !hdr && inside && edge ? res = i + 1;   // 1-based, like gfx_showmenu
+        );
         i += 1;
       );
 

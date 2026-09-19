@@ -2109,6 +2109,113 @@ local(scale, voffset, val_rad, body_r, ht, i, n_passes, RAD130_,
 );
 
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5b. SSL G-SERIES (style 21) — fluted silver skirt, colour dome cap
+// ═══════════════════════════════════════════════════════════════════════════
+// The console-grade sibling of ssl_knob_draw, from the EON Weld redesign
+// (2026-08-24): light fluted skirt is the grip, a coloured dome cap rides on
+// it, the pointer is a painted bar on the cap plus a notch in the skirt.
+// radius = OUTER skirt edge, the same contract as every style. n_det > 1
+// draws the uniform detent-dot ring at 1.25r; ladder scales at arbitrary
+// (e.g. logarithmic) positions are the CALLER's job — Weld prints its own.
+// Below radius 14 the flutes and sheen drop out (they read as noise at
+// synthview sizes); the silhouette, cap and pointer survive any size.
+// ⚠ ssl_knob_draw is the suite-wide DEFAULT style and stays untouched —
+// adopting this look elsewhere is a per-plugin decision with an eyeball.
+function sslg_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
+                        cr, cg, cb, n_det)
+local(ht, cap_a, val_rad, capr, i, fa, fw, px, py, ox, oy,
+      det_step, active_det, da, dx, dy, lum, pr, pg, pb)
+(
+  ht = pow(hover_t, 2);
+  cap_a = lerp(0.86, 1.0, ht);
+  val_rad = ((value - vmin) / max(0.0000001, vmax - vmin) * 260 - 130) * $pi / 180;
+  capr = radius * 0.63;
+  px = sin(val_rad); py = -cos(val_rad);
+  ox = cos(val_rad); oy = sin(val_rad);
+
+  // fluted silver skirt: dark base ring, lit body, 16 flutes, hard rim
+  gfx_set(0.40, 0.41, 0.44, 1);
+  gfx_circle(cx, cy, radius, 1);
+  gfx_set(0.68, 0.69, 0.72, 1);
+  gfx_circle(cx - radius * 0.05, cy - radius * 0.06, radius * 0.93, 1);
+  radius >= 14 ? (
+    gfx_set(lerp(0.46, 0.54, ht), lerp(0.47, 0.55, ht), 0.50, 1);
+    i = 0;
+    loop(16,
+      fa = i * $pi / 8;
+      gfx_line(cx + sin(fa) * radius * 0.78, cy - cos(fa) * radius * 0.78,
+               cx + sin(fa) * radius * 0.96, cy - cos(fa) * radius * 0.96);
+      gfx_line(cx + sin(fa) * radius * 0.78 + 1, cy - cos(fa) * radius * 0.78,
+               cx + sin(fa) * radius * 0.96 + 1, cy - cos(fa) * radius * 0.96);
+      i += 1;
+    );
+  );
+  gfx_set(0.28, 0.29, 0.32, 1);
+  gfx_circle(cx, cy, radius, 0);
+
+  // skirt notch aligned with the pointer
+  gfx_set(0.96, 0.97, 0.98, 0.92);
+  gfx_line(cx + px * radius * 0.68, cy + py * radius * 0.68,
+           cx + px * radius * 0.95, cy + py * radius * 0.95);
+  gfx_line(cx + px * radius * 0.68 + ox, cy + py * radius * 0.68 + oy,
+           cx + px * radius * 0.95 + ox, cy + py * radius * 0.95 + oy);
+
+  // colour dome cap: fill, dark rim, top-left sheen
+  gfx_set(cr, cg, cb, cap_a);
+  gfx_circle(cx, cy, capr, 1);
+  gfx_set(cr * 0.45, cg * 0.45, cb * 0.45, 1);
+  gfx_circle(cx, cy, capr, 0);
+  radius >= 14 ? (
+    gfx_set(1, 1, 1, 0.15);
+    gfx_circle(cx - capr * 0.28, cy - capr * 0.32, capr * 0.50, 1);
+  );
+
+  // painted pointer bar on the cap — auto-contrast so a white cap reads
+  // (same Rec.601 rule as ssl_knob_draw)
+  lum = cr * 0.299 + cg * 0.587 + cb * 0.114;
+  lum > 0.6 ? ( pr = 0.14; pg = 0.14; pb = 0.16; )
+            : ( pr = 0.96; pg = 0.97; pb = 0.98; );
+  gfx_set(pr, pg, pb, 1);
+  fw = max(1, floor(radius * 0.055));
+  i = -fw;
+  while (i <= fw) (
+    gfx_line(cx + px * radius * 0.06 + ox * i, cy + py * radius * 0.06 + oy * i,
+             cx + px * capr * 0.94 + ox * i,  cy + py * capr * 0.94 + oy * i);
+    i += 1;
+  );
+
+  // uniform detent dots (same contract as ssl_knob_draw)
+  n_det > 1 ? (
+    det_step = (vmax - vmin) / max(1, n_det - 1);
+    active_det = floor((value - vmin) / det_step + 0.5);
+    i = 0;
+    loop(n_det,
+      da = (-130 + i * 260 / max(1, n_det - 1)) * $pi / 180;
+      dx = cx + sin(da) * radius * 1.25;
+      dy = cy - cos(da) * radius * 1.25;
+      i == active_det ? (
+        gfx_set(cr, cg, cb, 1);
+        gfx_circle(dx, dy, radius * 0.08, 1);
+      ) : (
+        gfx_set(0.72, 0.73, 0.76, lerp(0.6, 0.9, ht));
+        gfx_circle(dx, dy, radius * 0.05, 1);
+      );
+      i += 1;
+    );
+  );
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. PULTEC EQP-1A
+// ═══════════════════════════════════════════════════════════════════════════
+// Uses ws_knob_interact for interaction.
+
+// Draw: authentic EQP-1A — black bakelite, ridged side wall, silver-white pointer
+
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // THEME DISPATCHER  —  rk_knob_draw / rk_knob_interact
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2156,6 +2263,7 @@ local(vn) (
   style == 18 ? roland_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
   style == 19 ? pultec_cream_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
   style == 20 ? neve_alt_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb, n_det) :
+  style == 21 ? sslg_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, n_det) :
                 ssl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, n_det);
 );
 

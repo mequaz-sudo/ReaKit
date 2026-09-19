@@ -1,0 +1,59 @@
+desc: ReaKit auto-contrast ink
+// ══════════════════════════════════════════════════════════════════════
+// rk_ink.jsfx-inc — text and line colour that stays readable on any background.
+//
+// Ported from EON's own helper, unchanged but for the name prefix. It solves
+// the one problem every themeable plugin hits: a label hardcoded light
+// disappears the moment somebody picks a pale panel colour, and a label
+// hardcoded dark disappears on a black one.
+//
+// You pass the colour BEHIND the text. It picks near-black or near-white by
+// that colour's luminance and calls gfx_set for you.
+//
+// REQUIREMENTS: none. No host globals, no memory.
+//
+// PUBLIC API:
+//   rk_ink_for(r, g, b)             set the ink for this background
+//   rk_ink_dim(r, g, b, t)          the same, faded toward the background by t
+//   rk_ink_a(r, g, b, a)            the same, at alpha a
+//   rk_ink_label(str, x, y, a)      draw a string at the current ink
+// ══════════════════════════════════════════════════════════════════════
+
+@init
+
+function rk_ink_for(sr, sg, sb) (
+  (sr * 0.299 + sg * 0.587 + sb * 0.114) > 0.55 ? (
+    gfx_r = 0.12; gfx_g = 0.12; gfx_b = 0.14;   // dark ink on a light surface
+  ) : (
+    gfx_r = 0.93; gfx_g = 0.94; gfx_b = 0.96;   // light ink on a dark surface
+  );
+);
+
+// Dim/secondary: the readable ink pulled toward the surface so it reads as subdued
+// without dropping below legibility (a muted solid colour, no alpha needed).
+// t in 0..1 — ~0.45 is a clear "dim", higher = fainter.
+function rk_ink_dim(sr, sg, sb, t) (
+  rk_ink_for(sr, sg, sb);
+  gfx_r = gfx_r * (1 - t) + sr * t;
+  gfx_g = gfx_g * (1 - t) + sg * t;
+  gfx_b = gfx_b * (1 - t) + sb * t;
+);
+
+// Convenience: readable ink + alpha in one call (for sweeping label gfx_set sites).
+function rk_ink_a(sr, sg, sb, a) (
+  rk_ink_for(sr, sg, sb);
+  gfx_a = a;
+);
+
+// UNIFORM label ink: a 1px dark shadow under a fixed near-white ink, so a label
+// reads the SAME on every surface colour (light AND dark) without washing out.
+// Unlike rk_ink_for, this does NOT flip black/white per surface — use it where
+// a consistent colour across a multi-coloured grid matters more than picking the
+// per-cell optimum (e.g. Swing pad names over rainbow pads). `str` is a string
+// handle (#str); sets gfx_x/gfx_y and draws at the given top-left position.
+function rk_ink_label(str, x, y, a) (
+  gfx_set(0, 0, 0, a * 0.72);
+  gfx_x = x + 1; gfx_y = y + 1; gfx_drawstr(str);
+  gfx_set(0.96, 0.96, 0.97, a);
+  gfx_x = x;     gfx_y = y;     gfx_drawstr(str);
+);

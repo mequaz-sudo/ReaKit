@@ -1,0 +1,100 @@
+desc: ReaKit tooltip
+// ═══════════════════════════════════════════════════════════════════════
+// rk_tooltip.jsfx-inc — a hover tooltip that appears after a delay and draws
+// over everything.
+//
+// Ported from EON's own, which needed two globals renamed and nothing else.
+// The parts worth keeping are the ones that are not obvious:
+//
+//   - IT IS KEYED BY ZONE, not by rect. The caller gives each tooltipped
+//     control a unique id, and moving between two controls restarts the delay
+//     instead of reading as "still hovering". Reuse an id across two controls
+//     and the second one shows instantly.
+//   - IT DRAWS LAST. Collected during the frame, painted at the end, so a
+//     panel drawn after the control cannot cover its own tooltip.
+//   - IT CLEARS ITSELF. The draw call also does the per-frame reset, so
+//     leaving a control without entering another starts a fresh wait rather
+//     than resuming a stale timer.
+//
+// One thing changed in the port: the original copied the tooltip string on
+// every frame once the delay had elapsed. It latches once now, on the frame
+// the tooltip appears.
+//
+// REQUIREMENTS (host plugin must provide, per frame, before calling):
+//   - mx, my  — mouse position
+//
+// MEMORY: none.
+//
+// PUBLIC API:
+//   rk_tooltip_check(zone_id, text)   mark a control hovered. The caller does
+//                                     its own hit test; `text` is a literal or
+//                                     a #string.
+//   rk_tooltip_draw(scale)            ONCE, at the very end of @gfx. `scale`
+//                                     sizes the font, 1 for unscaled.
+//   rk_tooltip_delay(seconds)         how long the hover has to last. 0.5 by
+//                                     default.
+//   rk_tooltip_enable(on)             switch them off wholesale.
+// ═══════════════════════════════════════════════════════════════════════
+
+@init
+
+rktt_on    = 1;
+rktt_delay = 0.5;
+rktt_zone  = -1;
+rktt_now   = -1;
+rktt_t0    = 0;
+rktt_shown = 0;
+
+function rk_tooltip_enable(on) ( rktt_on = on; );
+function rk_tooltip_delay(seconds) ( rktt_delay = max(0, seconds); );
+
+function rk_tooltip_check(zone_id, text) (
+  rktt_on ? (
+    rktt_now = zone_id;
+    zone_id != rktt_zone ? (
+      rktt_zone  = zone_id;
+      rktt_t0    = time_precise();
+      rktt_shown = 0;
+    );
+    // Latch the text ONCE, on the frame the delay elapses. The original
+    // re-copied it every frame for as long as the mouse sat still.
+    !rktt_shown && time_precise() - rktt_t0 > rktt_delay ? (
+      strcpy(#rktt_text, text);
+      rktt_shown = 1;
+    );
+  );
+);
+
+function rk_tooltip_draw(scale)
+local(tw, th, pad, bw, bh, x, y) (
+  rktt_on && rktt_shown && strlen(#rktt_text) > 0 ? (
+    gfx_setfont(1, "Arial", max(9, floor(11 * scale)), 'b');
+    gfx_measurestr(#rktt_text, tw, th);
+    pad = max(4, floor(8 * scale));
+    bw = tw + pad * 2;
+    bh = th + pad * 2;
+
+    // Below-right of the cursor, flipped and clamped so it never leaves the
+    // window.
+    x = mx + 14 * scale;
+    y = my + 20 * scale;
+    x + bw > gfx_w ? x = mx - 14 * scale - bw;
+    y + bh > gfx_h ? y = my - 10 * scale - bh;
+    x < 2 ? x = 2;
+    y < 2 ? y = 2;
+
+    gfx_set(0.04, 0.04, 0.06, 0.95);
+    gfx_rect(x, y, bw, bh);
+    gfx_set(0.50, 0.55, 0.60, 1);
+    gfx_rect(x, y, bw, 2); gfx_rect(x, y + bh - 2, bw, 2);
+    gfx_rect(x, y, 2, bh); gfx_rect(x + bw - 2, y, 2, bh);
+    gfx_set(0.95, 0.95, 0.95, 1);
+    gfx_x = x + pad; gfx_y = y + pad;
+    gfx_drawstr(#rktt_text);
+  );
+
+  // Per-frame reset. No check() this frame means the mouse left every
+  // tooltipped control, so the next hover starts a fresh wait.
+  rktt_now == -1 ? ( rktt_zone = -1; rktt_shown = 0; strcpy(#rktt_text, ""); );
+  rktt_now = -1;
+);

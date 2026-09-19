@@ -41,6 +41,9 @@ options:gfx_hz=60 no_meter
 //   [nomain] rk_ui_meter.jsfx-inc
 //   [nomain] rk_curve.jsfx-inc
 //   [nomain] rk_popup.jsfx-inc
+//   [nomain] rk_icons.jsfx-inc
+//   [nomain] rk_ink.jsfx-inc
+//   [nomain] rk_tooltip.jsfx-inc
 tags: effect
 
 // Requires the EON ReaKit *_kbsg.jsfx-inc libs on the JSFX import path

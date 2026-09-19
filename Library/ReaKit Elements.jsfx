@@ -471,16 +471,25 @@ slider1 == 1 ? (
   mx >= ox+sc*14 && mx < ox+sc*362 && my >= sc*378 && my < sc*442 ?
     rk_tooltip_check(905, "rk_adsr — drag a corner. Time is log, so 1-50 ms is reachable");
 
-  // rk_ink — the same label on a light chip and a dark one
-  gfx_set(0.88, 0.88, 0.90, 1); gfx_rect(ox+sc*500, sc*312, sc*90, sc*24);
-  rk_ink_for(0.88, 0.88, 0.90);
-  gfx_setfont(1,"Arial",max(8,floor(10*sc)));
-  gfx_x = ox+sc*508; gfx_y = sc*318; gfx_drawstr("readable");
-  gfx_set(0.10, 0.10, 0.13, 1); gfx_rect(ox+sc*596, sc*312, sc*90, sc*24);
-  rk_ink_for(0.10, 0.10, 0.13);
-  gfx_x = ox+sc*604; gfx_y = sc*318; gfx_drawstr("readable");
-  mx >= ox+sc*500 && mx < ox+sc*686 && my >= sc*312 && my < sc*336 ?
-    rk_tooltip_check(903, "rk_ink — one call, readable on either background");
+  // rk_ink — the SAME call on three lightnesses of the colour you just picked.
+  // Drag the picker above and watch the label flip from dark to light on its
+  // own: that is the whole widget. A hardcoded label colour would vanish on
+  // one of these three.
+  _ii = 0;
+  loop(3,
+    el_hue <= -1.5 ? ( _cr = 0.20; _cg = 0.20; _cb = 0.22; ) :
+    el_hue <  0    ? ( _cr = 0.82; _cg = 0.82; _cb = 0.85; ) :
+    ( rk_color_hsl(el_hue, 0.75, 0.22 + _ii * 0.30);
+      _cr = rk_color_r; _cg = rk_color_g; _cb = rk_color_b; );
+    gfx_set(_cr, _cg, _cb, 1);
+    gfx_rect(ox+sc*(500 + _ii*64), sc*312, sc*60, sc*24);
+    rk_ink_for(_cr, _cg, _cb);
+    gfx_setfont(1,"Arial",max(8,floor(10*sc)));
+    gfx_x = ox+sc*(508 + _ii*64); gfx_y = sc*318; gfx_drawstr("label");
+    _ii += 1;
+  );
+  mx >= ox+sc*500 && mx < ox+sc*688 && my >= sc*312 && my < sc*336 ?
+    rk_tooltip_check(903, "rk_ink — one call; the label inks itself against whatever is behind it");
 );
 
 // ═══════════════════════ TAB 2 · SLIDERS ═══════════════════════

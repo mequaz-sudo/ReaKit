@@ -41,7 +41,6 @@ options:gfx_hz=60 no_meter
 //   [nomain] rk_ui_meter.jsfx-inc
 //   [nomain] rk_curve.jsfx-inc
 //   [nomain] rk_popup.jsfx-inc
-//   [nomain] rk_icons.jsfx-inc
 //   [nomain] rk_ink.jsfx-inc
 //   [nomain] rk_tooltip.jsfx-inc
 //   [nomain] rk_textfield.jsfx-inc
@@ -109,7 +108,6 @@ import meters_kbsg.jsfx-inc
 import rk_padgrid.jsfx-inc
 import rk_piano.jsfx-inc
 import rk_curve.jsfx-inc
-import rk_icons.jsfx-inc
 import rk_ink.jsfx-inc
 import rk_tooltip.jsfx-inc
 import rk_textfield.jsfx-inc
@@ -439,23 +437,12 @@ btn_tab_draw(ox+sc*458, sc*233, sc*57, sc*26, 2, slider31, "Mod", bm[0]);
 // ── the widgets that came out of Swing, on the tab with room for them ──
 slider1 == 1 ? (
   gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80);
-  gfx_x=ox+sc*14; gfx_y=sc*292; gfx_drawstr("TEXT · ICONS · TOOLTIP");
+  gfx_x=ox+sc*14; gfx_y=sc*292; gfx_drawstr("TEXT · COLOUR · INK · TOOLTIP");
 
   // rk_textfield — click it and type. Enter commits, ESC puts it back.
   rk_text_run(tfmem, #el_text, ox+sc*14, sc*312, sc*160, sc*24, 24,
               0.29, 0.62, 1.00);
   rk_tooltip_check(901, "rk_textfield — click to edit, Enter commits, ESC restores");
-
-  // rk_icons — 46 of them, drawn in code, inked against what is behind
-  _ix = 0;
-  loop(10,
-    gfx_set(0.16, 0.17, 0.21, 1);
-    gfx_rect(ox+sc*(190 + _ix*30), sc*312, sc*26, sc*24);
-    rk_icon_draw(_ix, ox+sc*(190 + _ix*30) + sc*13, sc*324, sc*18, 0.18);
-    _ix += 1;
-  );
-  mx >= ox+sc*190 && mx < ox+sc*490 && my >= sc*312 && my < sc*336 ?
-    rk_tooltip_check(902, "rk_icons — 46 instrument icons, two levels of detail");
 
   // rk_colorpick — swatches for speed, the strip for the one you wanted. The
   // widget writes nothing; el_hue is ours.

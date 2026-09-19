@@ -36,7 +36,7 @@ desc: ReaKit dropdown / popup menu widget
 // MEMORY: one caller-owned block of 16 words. [0] open, [1..2] position,
 // [3] just-opened latch, [4] item count, [5] result, [6] hover row,
 // [7..11] the input state the gate preserved, [12] wheel out, [13] width,
-// [14] hover ramp.
+// [14] hover ramp, [15] first visible row.
 //
 // PUBLIC API:
 //   rk_popup_open(mem, x, y, w)    arm it at a point, with a width
@@ -57,7 +57,10 @@ desc: ReaKit dropdown / popup menu widget
 //                                  gfx_showmenu, or -1 cancelled, or 0 while
 //                                  it is still open.
 //   rk_popup_hover(mem)            hovered row, 0-based, or -1
-//   rk_popup_wheel(mem)            -1 / 0 / +1, wheel over a row this frame
+//   rk_popup_wheel(mem)            -1 / 0 / +1, wheel over a row this frame —
+//                                  reported only when the list is short enough
+//                                  not to scroll, since a scrolling list needs
+//                                  the wheel for itself
 // ══════════════════════════════════════════════════════════════════════
 
 @init
@@ -73,7 +76,7 @@ function rk_popup_active(mem) ( mem[0]; );
 function rk_popup_open(mem, x, y, w) (
   mem[0] = 1; mem[1] = x; mem[2] = y;
   mem[3] = 1;          // swallow the press that opened it
-  mem[5] = 0; mem[6] = -1; mem[12] = 0; mem[13] = w; mem[14] = 0;
+  mem[5] = 0; mem[6] = -1; mem[12] = 0; mem[13] = w; mem[14] = 0; mem[15] = 0;
 );
 
 function rk_popup_close(mem) ( mem[0] = 0; mem[3] = 0; );
@@ -125,13 +128,19 @@ function rk_popup_hover(mem) ( mem[6]; );
 function rk_popup_wheel(mem) ( mem[12]; );
 
 function rk_popup_run(mem, items, item_h, ch, r, g, b)
-local(n, i, x, y, w, h, rmx, rmy, edge, hov, ry, hdr, inside, res, tw, th, pad) (
+local(n, i, x, y, w, h, rmx, rmy, edge, hov, ry, hdr, inside, res, tw, th, pad, vis) (
   res = 0;
   mem[0] ? (
     n = rk_popup_count(items);
     n < 1 ? ( rk_popup_close(mem); res = -1; ) : (
       pad = max(2, item_h * 0.12);
-      w = mem[13]; h = n * item_h + pad * 2;
+      w = mem[13];
+      // ⭐ A menu taller than the window has to scroll, not overflow. Twenty
+      // faces at eighteen pixels is already taller than a small FX window.
+      vis = max(1, floor((gfx_h - 8 - pad * 2) / item_h));
+      vis > n ? vis = n;
+      h = vis * item_h + pad * 2;
+      mem[15] = max(0, min(mem[15], n - vis));
       x = mem[1]; y = mem[2];
 
       // Clamp, so a menu opened near an edge is not half outside the window.
@@ -154,11 +163,20 @@ local(n, i, x, y, w, h, rmx, rmy, edge, hov, ry, hdr, inside, res, tw, th, pad) 
       gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
       gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
 
+      // Wheel: it scrolls when there is somewhere to scroll to, and otherwise
+      // keeps its old job of reporting a tick over the hovered row. One or the
+      // other — a menu that both scrolled and stepped a value would do both at
+      // once and neither on purpose.
+      inside = rmx >= x && rmx < x + w && rmy >= y && rmy < y + h;
+      n > vis && inside && mem[11] != 0 ? (
+        mem[15] = max(0, min(mem[15] - mem[11] * 3, n - vis));
+      );
+
       gfx_setfont(1, "Arial", max(8, floor(item_h * 0.58)));
       mem[6] = -1; mem[12] = 0;
-      i = 0;
-      while(i < n) (
-        ry  = y + pad + i * item_h;
+      i = mem[15];
+      while(i < mem[15] + vis) (
+        ry  = y + pad + (i - mem[15]) * item_h;
         hdr = rk_popup_row(items, i);
         inside = rmx >= x && rmx < x + w && rmy >= ry && rmy < ry + item_h;
         !hdr && inside && strlen(#rkpp_s) > 0 ? (
@@ -189,8 +207,17 @@ local(n, i, x, y, w, h, rmx, rmy, edge, hov, ry, hdr, inside, res, tw, th, pad) 
         i += 1;
       );
 
-      // wheel over a row — the caller decides what that means
-      mem[11] != 0 && mem[6] >= 0 ? mem[12] = mem[11] > 0 ? 1 : -1;
+      // wheel over a row — only when the list is not the thing scrolling
+      n <= vis && mem[11] != 0 && mem[6] >= 0 ? mem[12] = mem[11] > 0 ? 1 : -1;
+
+      // A thumb, so a truncated list looks truncated rather than complete.
+      n > vis ? (
+        gfx_set(r, g, b, 0.18);
+        gfx_rect(x + w - 4, y + pad, 3, h - pad * 2);
+        gfx_set(r, g, b, 0.75);
+        gfx_rect(x + w - 4, y + pad + (h - pad * 2) * mem[15] / n, 3,
+                 max(8, (h - pad * 2) * vis / n));
+      );
 
       // a click anywhere else, or ESC, cancels
       !(rmx >= x && rmx < x + w && rmy >= y && rmy < y + h) && edge ? res = -1;

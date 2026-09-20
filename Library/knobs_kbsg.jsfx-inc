@@ -31,6 +31,15 @@ __knobs_kbsg_loaded = 1;
 //   LMB           — mouse_cap & 1
 //   lmb_down      — LMB && !prev_LMB (edge detect, computed ONCE per frame)
 //   rmb_down      — RMB && !prev_RMB (right-click resets to vdefault)
+//
+// MODIFIER CONVENTION — every interact in this file, without exception:
+//   plain drag  = coarse      wheel = 2% of range per tick
+//   CTRL        = fine (0.1x) wheel = 0.5%
+//   SHIFT       = extra-fine  wheel = 0.2%
+// A knob that learns differently from its neighbour is the complaint this
+// convention exists to prevent, so a new interact copies it rather than
+// inventing a sensitivity. (Stepped wheels — detents, rotary selectors —
+// move one position per tick and take no modifier.)
 //   CTRL          — mouse_cap & 4
 //   SHIFT         — mouse_cap & 8
 //   dt            — frame delta time
@@ -564,7 +573,7 @@ local(hover, d, new_val, fine, step, now)
   );
   // Continue drag
   mem[1] && LMB ? (
-    fine = CTRL ? 0.1 : 1;
+    fine = CTRL ? 0.1 : SHIFT ? 0.025 : 1;
     step = (mem[2] - my) / (radius * 4) * (vmax - vmin) * fine;
     new_val = clamp(mem[3] + step, vmin, vmax);
   );
@@ -575,7 +584,7 @@ local(hover, d, new_val, fine, step, now)
   );
   // Scroll
   hover && frame_wheel != 0 ? (
-    step = (vmax - vmin) * 0.02 * frame_wheel;
+    step = (vmax - vmin) * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02) * frame_wheel;
     new_val = clamp(cur_val + step, vmin, vmax);
     mem[5] = 1;
 
@@ -673,7 +682,7 @@ local(hover, d, new_val, fine, step, now, det_step, cur_det, new_det)
   );
   // Continue drag (continuous)
   mem[1] && LMB ? (
-    fine = CTRL ? 0.1 : 1;
+    fine = CTRL ? 0.1 : SHIFT ? 0.025 : 1;
     // Scale drag travel so it always takes ~200px for full range (prevents snapping on large ranges)
     step = (mem[2] - my) / max(radius * 4, 200) * (vmax - vmin) * fine;
     new_val = clamp(mem[3] + step, vmin, vmax);
@@ -693,7 +702,7 @@ local(hover, d, new_val, fine, step, now, det_step, cur_det, new_det)
       new_val = vmin + new_det * det_step;
     ) : (
       // Smooth: 2% of range per scroll tick (fine with CTRL)
-      _scl = CTRL ? 0.005 : 0.02;
+      _scl = CTRL ? 0.005 : SHIFT ? 0.002 : 0.02;
       new_val = clamp(cur_val + frame_wheel * (vmax - vmin) * _scl, vmin, vmax);
     );
     mem[5] = 1;
@@ -951,7 +960,7 @@ local(d, hover, ni, no_, fine, step, now, ds, cd, nd)
     mi[3] = cur_i;
   );
   mi[1] && LMB ? (
-    fine = CTRL ? 0.1 : 1;
+    fine = CTRL ? 0.1 : SHIFT ? 0.025 : 1;
     step = (mi[2] - my) / (ri * 4) * (imax - imin) * fine;
     ni = clamp(mi[3] + step, imin, imax);
   );

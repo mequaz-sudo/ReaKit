@@ -35,6 +35,14 @@
 //   hv_speed      — hover animation speed (typ. 11)
 //   frame_wheel   — mouse_wheel / 120 (caller zeroes mouse_wheel after)
 //
+// MODIFIER CONVENTION — matches knobs_kbsg, deliberately:
+//   plain drag  = coarse      wheel = 2% of range per tick
+//   CTRL        = fine (4x)   wheel = 0.5%
+//   SHIFT       = extra-fine  wheel = 0.2%
+// A fader that learns differently from the knob beside it is the complaint
+// this exists to prevent. (The stepped slider's wheel moves one step per
+// tick and takes no modifier.)
+//
 // MEMORY CONVENTION (16 slots per instance):
 //   [0]  hover_t        [1]  is_dragging     [2]  drag_ref (mouse pos)
 //   [3]  drag_start_val [4]  last_click_time  [5]  automate_flag
@@ -160,7 +168,7 @@ function sld_horiz_interact(mem, x, y, w, h, cur_val)
   );
   mem[1] && LMB ? (
     dx = mx - mem[2];
-    sens = CTRL ? (w * 4) : w;
+    sens = CTRL ? (w * 4) : SHIFT ? (w * 16) : w;
     new_val = _sld_clamp(mem[3] + dx / sens, 0, 1);
   );
   mem[1] && !LMB ? (
@@ -168,7 +176,7 @@ function sld_horiz_interact(mem, x, y, w, h, cur_val)
     mem[5] = 1;
   );
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );
@@ -251,7 +259,7 @@ function sld_vert_interact(mem, x, y, w, h, cur_val)
   );
   mem[1] && LMB ? (
     dy = mem[2] - my;
-    sens = CTRL ? (h * 4) : h;
+    sens = CTRL ? (h * 4) : SHIFT ? (h * 16) : h;
     new_val = _sld_clamp(mem[3] + dy / sens, 0, 1);
   );
   mem[1] && !LMB ? (
@@ -259,7 +267,7 @@ function sld_vert_interact(mem, x, y, w, h, cur_val)
     mem[5] = 1;
   );
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );
@@ -327,7 +335,7 @@ function sld_fillbar_interact(mem, x, y, w, h, cur_val)
   );
   mem[1] && LMB ? (
     dx = mx - mem[2];
-    sens = CTRL ? (w * 4) : w;
+    sens = CTRL ? (w * 4) : SHIFT ? (w * 16) : w;
     new_val = _sld_clamp(mem[3] + dx / sens, 0, 1);
   );
   mem[1] && !LMB ? (
@@ -335,7 +343,7 @@ function sld_fillbar_interact(mem, x, y, w, h, cur_val)
     mem[5] = 1;
   );
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );
@@ -407,7 +415,7 @@ function sld_stepped_interact(mem, x, y, w, h, cur_val, n_steps)
   );
   mem[1] && LMB ? (
     dx = mx - mem[2];
-    sens = CTRL ? (w * 4) : w;
+    sens = CTRL ? (w * 4) : SHIFT ? (w * 16) : w;
     raw = _sld_clamp(mem[3] + dx / sens, 0, 1);
     new_val = floor(raw / step_sz + 0.5) * step_sz;
     new_val = _sld_clamp(new_val, 0, 1);
@@ -494,7 +502,7 @@ function sld_bipolar_interact(mem, x, y, w, h, cur_val)
   );
   mem[1] && LMB ? (
     dx = mx - mem[2];
-    sens = CTRL ? (w * 4) : w;
+    sens = CTRL ? (w * 4) : SHIFT ? (w * 16) : w;
     new_val = _sld_clamp(mem[3] + dx / sens, 0, 1);
   );
   mem[1] && !LMB ? (
@@ -502,7 +510,7 @@ function sld_bipolar_interact(mem, x, y, w, h, cur_val)
     mem[5] = 1;
   );
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );
@@ -564,7 +572,7 @@ function sld_mini_interact(mem, x, y, w, h, cur_val)
   );
   mem[1] && LMB ? (
     dx = mx - mem[2];
-    sens = CTRL ? (w * 4) : w;
+    sens = CTRL ? (w * 4) : SHIFT ? (w * 16) : w;
     new_val = _sld_clamp(mem[3] + dx / sens, 0, 1);
   );
   mem[1] && !LMB ? (
@@ -572,7 +580,7 @@ function sld_mini_interact(mem, x, y, w, h, cur_val)
     mem[5] = 1;
   );
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.03, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.0075 : SHIFT ? 0.003 : 0.03), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );
@@ -680,7 +688,7 @@ function sld_arc_interact(mem, cx, cy, r, arc_thick, cur_val)
   mem[1] && LMB ? (
     dy = mem[2] - my;
     mem[2] = my;
-    sens = CTRL ? 600 : 150;
+    sens = CTRL ? 600 : SHIFT ? 2400 : 150;
     new_val = _sld_clamp(cur_val + dy / sens, 0, 1);
   );
   mem[1] && !LMB ? (
@@ -688,7 +696,7 @@ function sld_arc_interact(mem, cx, cy, r, arc_thick, cur_val)
     mem[5] = 1;
   );
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );
@@ -784,7 +792,7 @@ function sld_range_interact(mem, x, y, w, h, cur_lo, cur_hi)
 
   mem[1] && LMB ? (
     dx = mx - mem[2];
-    sens = CTRL ? (w * 4) : w;
+    sens = CTRL ? (w * 4) : SHIFT ? (w * 16) : w;
     mem[7] == 0 ? (
       raw = _sld_clamp(mem[3] + dx / sens, 0, 1);
       new_lo = min(raw, cur_hi - 0.01);
@@ -805,9 +813,9 @@ function sld_range_interact(mem, x, y, w, h, cur_lo, cur_hi)
     lo_d = abs(mx - lo_x);
     hi_d = abs(mx - hi_x);
     lo_d <= hi_d ? (
-      new_lo = _sld_clamp(cur_lo + frame_wheel * 0.02, 0, cur_hi - 0.01);
+      new_lo = _sld_clamp(cur_lo + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, cur_hi - 0.01);
     ) : (
-      new_hi = _sld_clamp(cur_hi + frame_wheel * 0.02, cur_lo + 0.01, 1);
+      new_hi = _sld_clamp(cur_hi + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), cur_lo + 0.01, 1);
     );
     mem[5] = 1;
     frame_wheel = 0;
@@ -894,7 +902,7 @@ function sld_vled_interact(mem, x, y, w, h, cur_val)
   mem[1] && LMB ? (
     dy = mem[2] - my;
     mem[2] = my;
-    sens = CTRL ? 600 : 150;
+    sens = CTRL ? 600 : SHIFT ? 2400 : 150;
     new_val = _sld_clamp(cur_val + dy / sens, 0, 1);
   );
   mem[1] && !LMB ? (
@@ -902,7 +910,7 @@ function sld_vled_interact(mem, x, y, w, h, cur_val)
     mem[5] = 1;
   );
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );
@@ -1011,7 +1019,7 @@ function sld_vgroove_interact(mem, x, y, w, h, cur_val)
   );
   mem[1] && LMB ? (
     dy = mem[2] - my;
-    sens = CTRL ? (h * 4) : h;
+    sens = CTRL ? (h * 4) : SHIFT ? (h * 16) : h;
     new_val = _sld_clamp(mem[3] + dy / sens, 0, 1);
   );
   mem[1] && !LMB ? (
@@ -1019,7 +1027,7 @@ function sld_vgroove_interact(mem, x, y, w, h, cur_val)
     mem[5] = 1;
   );
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );
@@ -1068,7 +1076,7 @@ function sld_vbipolar_interact(mem, x, y, w, h, cur_val)
   // Continue drag (inverted: up = increase)
   mem[1] && LMB ? (
     dy = mem[2] - my;
-    sens = CTRL ? (h * 4) : h;
+    sens = CTRL ? (h * 4) : SHIFT ? (h * 16) : h;
     new_val = _sld_clamp(mem[3] + dy / sens, 0, 1);
   );
   // End drag
@@ -1078,7 +1086,7 @@ function sld_vbipolar_interact(mem, x, y, w, h, cur_val)
   );
   // Scroll wheel
   hover && frame_wheel != 0 ? (
-    new_val = _sld_clamp(cur_val + frame_wheel * 0.02, 0, 1);
+    new_val = _sld_clamp(cur_val + frame_wheel * (CTRL ? 0.005 : SHIFT ? 0.002 : 0.02), 0, 1);
     mem[5] = 1;
     frame_wheel = 0;
   );

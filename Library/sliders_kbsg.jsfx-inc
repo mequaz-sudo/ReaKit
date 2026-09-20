@@ -1092,7 +1092,7 @@ function sld_vbipolar_interact(mem, x, y, w, h, cur_val)
 // ─────────────────────────────────────────────────────────────────────────
 function sld_vssl_draw(x, y, w, h, value, mem)
   local(ht, cx, tw_trk, tx, cy, fy, fh, neg, cap_w, cap_h, cap_x, cap_y,
-        i, ty, gy, tpos, tlbl, sw_, sh_)
+        i, ty, gy, tpos, tstr, sw_, sh_)
 (
   ht = mem[0];
   cx = x + floor(w * 0.42);
@@ -1100,22 +1100,22 @@ function sld_vssl_draw(x, y, w, h, value, mem)
   tx = cx - floor(tw_trk * 0.5);
   cy = y + floor(h * 0.5);
 
-  // Dotted dB scale + numerals (right side)
+  // Dotted dB scale + numerals (right side). Labels are constant — literal
+  // strings instead of per-frame sprintf; height measured once (same for all).
   gfx_setfont(1, "Arial", max(7, floor(h * 0.05)));
+  gfx_measurestr("0", sw_, sh_);
   i = 0;
   loop(8,
     tpos = i == 0 ? 0.04 : i == 1 ? 0.13 : i == 2 ? 0.24 : i == 3 ? 0.36 :
            i == 4 ? 0.5  : i == 5 ? 0.66 : i == 6 ? 0.83 : 0.97;
-    tlbl = i == 0 ? 12 : i == 1 ? 6 : i == 2 ? 0 : i == 3 ? 5 :
-           i == 4 ? 10 : i == 5 ? 20 : i == 6 ? 30 : 40;
+    tstr = i == 0 ? "12" : i == 1 ? "6" : i == 2 ? "0" : i == 3 ? "5" :
+           i == 4 ? "10" : i == 5 ? "20" : i == 6 ? "30" : "40";
     ty = y + floor(tpos * h);
     gfx_set(0.80, 0.82, 0.87, 0.5);
     gfx_circle(cx + w * 0.19, ty, 1, 1);
     gfx_set(0.78, 0.80, 0.84, 0.45);
-    sprintf(#, "%d", tlbl);
-    gfx_measurestr(#, sw_, sh_);
     gfx_x = cx + w * 0.286; gfx_y = ty - floor(sh_ * 0.5);
-    gfx_drawstr(#);
+    gfx_drawstr(tstr);
     i += 1;
   );
 
@@ -1154,13 +1154,18 @@ function sld_vssl_draw(x, y, w, h, value, mem)
   gfx_rect(cap_x, cap_y + floor(cap_h * 0.4), cap_w, floor(cap_h * 0.35));
   gfx_set(0.42, 0.44, 0.47, 1);
   gfx_rect(cap_x, cap_y + floor(cap_h * 0.75), cap_w, cap_h - floor(cap_h * 0.75));
-  // 4 deep ribs
+  // 4 deep ribs — two-pass: rows are disjoint (rect gy..gy+1, line gy+2,
+  // spacing cap_h/5 >= 4), so all-dark-then-all-light is pixel-identical.
+  gfx_set(0.12, 0.13, 0.16, 0.6);
+  i = 1;
+  loop(4,
+    gfx_rect(cap_x + 2, cap_y + floor(i * cap_h / 5), cap_w - 4, 2);
+    i += 1;
+  );
+  gfx_set(1, 1, 1, 0.4);
   i = 1;
   loop(4,
     gy = cap_y + floor(i * cap_h / 5);
-    gfx_set(0.12, 0.13, 0.16, 0.6);
-    gfx_rect(cap_x + 2, gy, cap_w - 4, 2);
-    gfx_set(1, 1, 1, 0.4);
     gfx_line(cap_x + 2, gy + 2, cap_x + cap_w - 2, gy + 2);
     i += 1;
   );
@@ -1428,7 +1433,7 @@ function sld_vtube_draw(x, y, w, h, value, mem)
 // ─────────────────────────────────────────────────────────────────────────
 function sld_vpt_draw(x, y, w, h, value, mem)
   local(cx, tw_trk, tx, cap_w, cap_h, cap_x, cap_y,
-        i, ty, zr, tpos, tlbl, sw_, sh_)
+        i, ty, zr, tpos, tstr, sw_, sh_)
 (
   cx = x + floor(w * 0.60);
   tw_trk = max(3, floor(w * 0.10));
@@ -1441,18 +1446,17 @@ function sld_vpt_draw(x, y, w, h, value, mem)
     tpos = i == 0 ? 0 : i == 1 ? 0.07 : i == 2 ? 0.155 : i == 3 ? 0.25 :
            i == 4 ? 0.35 : i == 5 ? 0.45 : i == 6 ? 0.56 : i == 7 ? 0.68 :
            i == 8 ? 0.82 : 1.0;
-    tlbl = i == 0 ? 12 : i == 1 ? 5 : i == 2 ? 0 : i == 3 ? 5 :
-           i == 4 ? 10 : i == 5 ? 15 : i == 6 ? 20 : i == 7 ? 30 :
-           i == 8 ? 40 : 60;
+    tstr = i == 0 ? "12" : i == 1 ? "5" : i == 2 ? "0" : i == 3 ? "5" :
+           i == 4 ? "10" : i == 5 ? "15" : i == 6 ? "20" : i == 7 ? "30" :
+           i == 8 ? "40" : "60";
     ty = y + floor(tpos * h);
     zr = i == 2;
     zr ? gfx_set(0.84, 0.86, 0.90, 0.7) : gfx_set(0.78, 0.80, 0.84, 0.30);
     gfx_line(tx - w * (zr ? 0.27 : 0.19), ty, tx - w * 0.083, ty);
-    sprintf(#, "%d", tlbl);
-    gfx_measurestr(#, sw_, sh_);
+    gfx_measurestr(tstr, sw_, sh_);
     gfx_x = tx - w * 0.31 - sw_; gfx_y = ty - floor(sh_ * 0.5);
     zr ? gfx_set(0.80, 0.82, 0.86, 0.55) : gfx_set(0.78, 0.80, 0.84, 0.40);
-    gfx_drawstr(#);
+    gfx_drawstr(tstr);
     i += 1;
   );
 
@@ -1539,13 +1543,18 @@ function sld_vmpc_draw(x, y, w, h, value, mem)
   gfx_rect(cap_x, cap_y + floor(cap_h * 0.55), cap_w, cap_h - floor(cap_h * 0.55));
   gfx_set(1, 1, 1, 0.18);
   gfx_rect(cap_x + 2, cap_y + 1, cap_w - 4, 1);
-  // 3 deep grooves
+  // 3 deep grooves — two-pass: rows are disjoint (spacing >= 4px), so
+  // all-dark-then-all-light is pixel-identical.
+  gfx_set(0, 0, 0, 0.9);
+  i = 1;
+  loop(3,
+    gfx_rect(cap_x + 3, cap_y + floor(cap_h * 0.22) + floor(i * (cap_h * 0.62) / 4), cap_w - 6, 2);
+    i += 1;
+  );
+  gfx_set(1, 1, 1, 0.10);
   i = 1;
   loop(3,
     gy = cap_y + floor(cap_h * 0.22) + floor(i * (cap_h * 0.62) / 4);
-    gfx_set(0, 0, 0, 0.9);
-    gfx_rect(cap_x + 3, gy, cap_w - 6, 2);
-    gfx_set(1, 1, 1, 0.10);
     gfx_line(cap_x + 3, gy + 2, cap_x + cap_w - 3, gy + 2);
     i += 1;
   );
@@ -1559,7 +1568,7 @@ function sld_vmpc_draw(x, y, w, h, value, mem)
 // Unipolar — pair with sld_vert_interact. 1:1 with the Forge vconsole painter.
 // ─────────────────────────────────────────────────────────────────────────
 function sld_vconsole_draw(x, y, w, h, value, mem)
-  local(cx, tw_trk, tx, cap_w, cap_h, cap_x, cap_y, b5, i, ty, ry)
+  local(cx, tw_trk, tx, cap_w, cap_h, cap_x, cap_y, b5, i, ty, ry, ry_end)
 (
   cx = x + floor(w * 0.5);
   tw_trk = max(4, floor(w * 0.12));
@@ -1599,13 +1608,19 @@ function sld_vconsole_draw(x, y, w, h, value, mem)
   gfx_rect(cap_x, cap_y + b5 * 3, cap_w, b5);
   gfx_set(0.50, 0.53, 0.58, 1);
   gfx_rect(cap_x, cap_y + b5 * 4, cap_w, cap_h - b5 * 4);
-  // Fine ribs across the whole face
+  // Fine ribs across the whole face — two-pass: dark rows ≡ +0 mod 3, light
+  // rows ≡ +1 mod 3 (disjoint), so all-dark-then-all-light is pixel-identical.
   ry = cap_y + 3;
-  while(ry < cap_y + cap_h - 2) (
-    gfx_set(0.20, 0.22, 0.26, 0.5);
+  ry_end = cap_y + cap_h - 2;
+  gfx_set(0.20, 0.22, 0.26, 0.5);
+  while(ry < ry_end) (
     gfx_line(cap_x + 1, ry, cap_x + cap_w - 1, ry);
-    gfx_set(1, 1, 1, 0.55);
-    gfx_line(cap_x + 1, ry + 1, cap_x + cap_w - 1, ry + 1);
+    ry += 3;
+  );
+  gfx_set(1, 1, 1, 0.55);
+  ry = cap_y + 4;
+  while(ry < ry_end + 1) (
+    gfx_line(cap_x + 1, ry, cap_x + cap_w - 1, ry);
     ry += 3;
   );
   gfx_set(0.08, 0.09, 0.11, 0.8);

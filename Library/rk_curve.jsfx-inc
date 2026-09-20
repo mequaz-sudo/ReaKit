@@ -359,7 +359,10 @@ local(i, hov, mods, dx, dy, sens, now) (
       mem[1] = mx; mem[2] = my;
       mem[3] = fbuf[i]; mem[4] = dbuf[i]; mem[5] = mods;
     );
-    sens = CTRL ? 0.10 : SHIFT ? 0.35 : 1;
+    // CTRL fine, SHIFT extra-fine -- the same ladder knobs_kbsg and
+    // sliders_kbsg document. This read 0.35 for SHIFT, which made it
+    // COARSER than CTRL and contradicted both headers.
+    sens = CTRL ? 0.10 : SHIFT ? 0.025 : 1;
     dx = (mx - mem[1]) * sens;
     dy = (my - mem[2]) * sens;
     rk_curve_ni  = i;

@@ -14,6 +14,7 @@
 
 gfx_ext_retina = 1;
 rk_prev_LMB   = 0;
+rk_prev_RMB   = 0;
 rk_prev_wheel  = 0;
 rk_last_t      = time_precise();
 tau = 2 * $pi;  // constant — set once at init, not per frame
@@ -33,9 +34,13 @@ function rk_frame_start() (
   mx = mouse_x;
   my = mouse_y;
   LMB   = mouse_cap & 1;
+  RMB   = mouse_cap & 2;
   CTRL  = mouse_cap & 4;
   SHIFT = mouse_cap & 8;
   lmb_down    = LMB && !rk_prev_LMB;
+  // rmb_down: right-click-to-default. Four knob interacts read it and NOTHING
+  // set it before now, so that reset was dead in every Forge export.
+  rmb_down    = RMB && !rk_prev_RMB;
   frame_wheel = mouse_wheel != rk_prev_wheel
                 ? (mouse_wheel - rk_prev_wheel) / 120 : 0;
   rk_prev_wheel = mouse_wheel;
@@ -59,4 +64,5 @@ function rk_frame_start() (
 // Call this ONCE at the end of @gfx, after all widget code.
 function rk_frame_end() (
   rk_prev_LMB = LMB;
+  rk_prev_RMB = RMB;
 );

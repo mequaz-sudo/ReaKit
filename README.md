@@ -143,7 +143,7 @@ Knob style ids: 1 ssl · 2 varimu · 3 api · 4 ws · 5 neve · 6 jo · 7 mpc ·
 
 Every knob and fader takes the same two modifiers: CTRL drags fine, SHIFT
 finer still, on the drag and on the wheel. Right-click resets to the default
-you passed, which is what  above is for.
+you passed, which is what the `rmb_down` line above is for.
 Sliders/buttons/meters are name-dispatched — see the headers in each inc and
 the showcase source for working examples of every element. The pad grid is
 `rk_padgrid_interact` + `rk_padgrid_draw` (rk_padgrid.jsfx-inc) and the piano

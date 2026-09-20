@@ -126,6 +126,7 @@ km = freemem; freemem += KS;
 @gfx 200 120
 mx = mouse_x; my = mouse_y;
 LMB = mouse_cap & 1; lmb_down = LMB && !_pLMB; _pLMB = LMB;
+RMB = mouse_cap & 2; rmb_down = RMB && !_pRMB; _pRMB = RMB;
 CTRL = mouse_cap & 4; SHIFT = mouse_cap & 8;
 dt = time_precise() - _lt; _lt = time_precise(); hv_speed = 11;
 frame_wheel = mouse_wheel / 120; mouse_wheel = 0;
@@ -137,7 +138,12 @@ rk_knob_draw(5, 100, 60, 30, slider1, 0, 100, 0, km[0], 0.81,0.23,0.19, 0, 0.10,
 
 Knob style ids: 1 ssl · 2 varimu · 3 api · 4 ws · 5 neve · 6 jo · 7 mpc · 8 jog
 · 10 sp · 11 encoder · 12 pultec · 13 ableton · 14 fl · 15 protools
-· 16 fabfilter · 17 serum · 18 roland · 19 pultec_cream · 20 neve_alt.
+· 16 fabfilter · 17 serum · 18 roland · 19 pultec_cream · 20 neve_alt
+· 21 sslg.
+
+Every knob and fader takes the same two modifiers: CTRL drags fine, SHIFT
+finer still, on the drag and on the wheel. Right-click resets to the default
+you passed, which is what  above is for.
 Sliders/buttons/meters are name-dispatched — see the headers in each inc and
 the showcase source for working examples of every element. The pad grid is
 `rk_padgrid_interact` + `rk_padgrid_draw` (rk_padgrid.jsfx-inc) and the piano

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <index version="1" name="ReaKit">
   <category name="Library">
-    <reapack name="ReaKit Elements.jsfx" type="effect" desc="ReaKit - UI widget library for JSFX (19 knobs / 17 faders / 10 buttons / 12 meters / analog VU / pads / piano) + showcase">
+    <reapack name="ReaKit Elements.jsfx" type="effect" desc="ReaKit - UI widget library for JSFX (20 knobs / 17 faders / 10 buttons / 12 meters / analog VU / pads / piano) + showcase">
       <metadata>
-        <description><![CDATA[ReaKit is a free, procedural UI/widget library for JSFX. 19 knob styles, 17 slider/fader types, 10 buttons, 12 meters with DSP, analog VU with 20 faces. Crisp at any size, themable with one call, one shared interaction model (drag / ctrl-fine / wheel / double-click reset / automation-safe). Installing this package brings the library incs plus the all-elements showcase JSFX. MIT licensed.]]></description>
+        <description><![CDATA[ReaKit is a free, procedural UI/widget library for JSFX. 20 knob styles, 17 slider/fader types, 10 buttons, 12 meters with DSP, analog VU with 20 faces. Crisp at any size, themable with one call, one shared interaction model (drag / ctrl-fine / shift-finer / wheel / right-click or double-click reset / automation-safe). Installing this package brings the library incs plus the all-elements showcase JSFX. MIT licensed.]]></description>
         <link rel="website">https://forum.cockos.com/showthread.php?p=2952442</link>
         <link rel="repository">https://github.com/mequaz-sudo/ReaKit</link>
       </metadata>
@@ -202,6 +202,50 @@ The Elements showcase gains a CURVE tab and fills the window at any shape - each
         <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_colorpick.jsfx-inc</source>
         <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/17c84669225f5df974c13bd46c3c27e91da49517/Library/rk_adsr.jsfx-inc</source>
   </version>
+      <version name="1.5.0" author="Quaz (EON Studios)" time="2026-09-20T21:02:39Z">
+        <changelog><![CDATA[New: one interaction model, on every control.
+
+Every knob and every fader now answers the same two modifiers, on the drag and on the wheel - CTRL for fine, SHIFT for finer still. Most controls were CTRL-only before this, one knob used SHIFT where everything else used CTRL, and the full ladder that did exist sat in a function almost nothing reached. The convention is written into the headers of knobs_kbsg and sliders_kbsg now, so a new widget copies it instead of inventing a sensitivity.
+
+Right-click on a knob resets it to the default you passed. This was read by one knob and set by nothing, so it had never once worked in a plugin that used rk_frame_start. rk_frame_start supplies rmb_down now; if you set the globals yourself, add that line - the README example shows it.
+
+The BirdBird, Joanny and Spice knobs take real values and ranges. They were the last three still wanting a value pre-squashed to 0..1, and they snapped back to a hardcoded constant rather than your default. They take vmin/vmax on the draw and vmin/vmax/vdefault/n_detents on the interact now, the same shape the other eighteen have had for months.
+
+Both dispatchers are unchanged. rk_knob_draw and rk_knob_interact keep their exact signatures, so existing plugins - and anything Forge has already generated - keep working untouched. Only code that calls those three per-style functions directly needs the extra arguments.
+
+Fixed:
+- rk_frame_start called gfx_getchar and threw the result away. Each call takes one character off the keyboard queue, so any plugin using rk_textfield lost the first keystroke of every frame.
+- A SHIFT press or a right-click over a Joanny knob started a drag with no click, and the drag stayed alive after the button came up while SHIFT was still held. It tested the whole mouse_cap bitfield instead of the left button.
+- The four vertical faders ran sprintf once per dB label per frame to draw scale numerals that never change, and set a colour per rib inside the draw loop.
+- The Spice knob drew its arc five times over where three cover it, and drew its needle sixty times regardless of how thick the needle was - sixteen times the necessary work at radius 25. The Neve, Neve Alt and FabFilter knobs recomputed loop-invariant colours inside their segment loops.
+- rk_curve dragged nodes with SHIFT travelling further than CTRL, making SHIFT the coarse modifier on a curve and the fine one everywhere else.
+
+Changed:
+- The jog knob caps its detail in absolute pixels again, so a large one keeps fine features instead of scaling every element up with the radius.
+- The double-click window is a named constant, RK_DBLCLICK_T. Set it in your own @init, which runs after the imports, to retune reset-on-double-click across every knob and fader at once.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/ReaKit%20Elements.jsfx</source>
+        <source file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/ReaKit%20Starter.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_vu.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_curve.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_curve.jsfx-inc</source>
+        <source file="rk_popup.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_popup.jsfx-inc</source>
+        <source file="rk_ink.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_ink.jsfx-inc</source>
+        <source file="rk_tooltip.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_tooltip.jsfx-inc</source>
+        <source file="rk_textfield.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_textfield.jsfx-inc</source>
+        <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_colorpick.jsfx-inc</source>
+        <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/04a6edea420d2afc55970d38ddc3a5f20c38b4cb/Library/rk_adsr.jsfx-inc</source>
+      </version>
     </reapack>
   </category>
   <category name="Floatter">

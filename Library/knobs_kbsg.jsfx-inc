@@ -183,7 +183,7 @@ local(d, hover, new_val, now, sens, dy, _range)
     mem[2] = my;     // track last y for delta
   );
   // Continue drag (delta-per-frame)
-  mem[1] && LMB ? (
+  mem[1] && LMB && !_srf_foreign ? (
     dy = mem[2] - my;
     mem[2] = my;
     sens = CTRL ? 1000 : SHIFT ? 4000 : 100;
@@ -479,7 +479,7 @@ local(d, hover, new_val, now, sens, sensitivity, _range)
   );
 
   // Continue drag (absolute offset from start, CTRL=fine, SHIFT=extra-fine)
-  mem[1] == 1 ? (
+  mem[1] == 1 && !_srf_foreign ? (
     sens = CTRL ? 0.03 : SHIFT ? 0.0075 : 0.3;
     sensitivity = (_range / r) * sens;
     new_val = clamp(mem[3] + (mem[2] - my) * sensitivity, vmin, vmax);
@@ -572,7 +572,7 @@ local(hover, d, new_val, fine, step, now)
     mem[3] = cur_val;
   );
   // Continue drag
-  mem[1] && LMB ? (
+  mem[1] && LMB && !_srf_foreign ? (
     fine = CTRL ? 0.1 : SHIFT ? 0.025 : 1;
     step = (mem[2] - my) / (radius * 4) * (vmax - vmin) * fine;
     new_val = clamp(mem[3] + step, vmin, vmax);
@@ -681,7 +681,7 @@ local(hover, d, new_val, fine, step, now, det_step, cur_det, new_det)
     mem[3] = cur_val;
   );
   // Continue drag (continuous)
-  mem[1] && LMB ? (
+  mem[1] && LMB && !_srf_foreign ? (
     fine = CTRL ? 0.1 : SHIFT ? 0.025 : 1;
     // Scale drag travel so it always takes ~200px for full range (prevents snapping on large ranges)
     step = (mem[2] - my) / max(radius * 4, 200) * (vmax - vmin) * fine;
@@ -959,7 +959,7 @@ local(d, hover, ni, no_, fine, step, now, ds, cd, nd)
     mi[2] = my;
     mi[3] = cur_i;
   );
-  mi[1] && LMB ? (
+  mi[1] && LMB && !_srf_foreign ? (
     fine = CTRL ? 0.1 : SHIFT ? 0.025 : 1;
     step = (mi[2] - my) / (ri * 4) * (imax - imin) * fine;
     ni = clamp(mi[3] + step, imin, imax);
@@ -1329,7 +1329,7 @@ local(hover, d, new_val, step, now, _range, _scl)
     mem[3] = cur_val;
   );
   // Continue drag (CTRL=fine, SHIFT=extra-fine)
-  mem[1] && LMB ? (
+  mem[1] && LMB && !_srf_foreign ? (
     step = (mem[2] - my) / max(radius * 4, 200) * _range * (CTRL ? 0.1 : SHIFT ? 0.025 : 1);
     new_val = clamp(mem[3] + step, vmin, vmax);
   );
@@ -2016,7 +2016,7 @@ local(d, hover, new_pos, dragdelta)
     mem[3] = cur_pos;
   );
   // Continue drag — one position per radius of vertical travel, snapped
-  mem[1] && LMB ? (
+  mem[1] && LMB && !_srf_foreign ? (
     dragdelta = (mem[2] - my) / radius;
     new_pos = clamp(floor(mem[3] + dragdelta + 0.5), 0, n_pos - 1);
     new_pos != cur_pos ? mem[5] = 1;

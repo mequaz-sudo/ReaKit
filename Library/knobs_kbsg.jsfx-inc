@@ -284,8 +284,13 @@ local(hover, new_val, now, fine, nv, box_hw)
 
   // canChange gate (v6 exact pattern):
   // Must hover first with no mouse button, THEN press to activate
+  // ⚠️ LEFT BUTTON ONLY (mouse_cap & 1), never all of mouse_cap: it is a bitfield
+  // that also carries Shift/Ctrl/Alt and the other buttons. Testing all of it let
+  // a Shift press or a right-click over the knob start a drag with no click, and
+  // kept a drag alive after the button came up while Shift was still held --
+  // moving the mouse then changed the value (2026-09-13 audit).
   hover ? (
-    !mouse_cap ? mem[8] = 1;  // hasEntered = true when hovering with no button
+    !(mouse_cap & 1) ? mem[8] = 1;  // hasEntered = true when hovering with no button
   ) : (
     mem[8] = 0;               // leave hover zone = reset gate
   );
@@ -294,10 +299,10 @@ local(hover, new_val, now, fine, nv, box_hw)
   mem[1] == 0 ? mem[2] = my;
 
   // Activate drag only if canChange gate is open (skip if double-click just fired)
-  mem[8] && mouse_cap && !mem[5] ? ( mem[1] = 1; );
+  mem[8] && (mouse_cap & 1) && !mem[5] ? ( mem[1] = 1; );
 
   // Drag (delta-per-frame, CTRL for fine — matches every other interact)
-  mouse_cap && mem[1] ? (
+  (mouse_cap & 1) && mem[1] ? (
     fine = CTRL ? 3000 : 300;
     nv = 1 / fine * (mem[2] - my);
     new_val = clamp(cur_val + nv, 0, 1);
@@ -305,7 +310,7 @@ local(hover, new_val, now, fine, nv, box_hw)
   );
 
   // Release
-  mouse_cap == 0 ? (
+  !(mouse_cap & 1) ? (
     mem[1] ? mem[5] = 1;
     mem[1] = 0;
   );

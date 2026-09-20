@@ -23,7 +23,11 @@ tau = 2 * $pi;  // constant — set once at init, not per frame
 // Sets all the globals that knobs_kbsg / buttons_kbsg / etc. expect.
 
 function rk_frame_start() (
-  gfx_getchar();
+  // NO gfx_getchar() HERE. Each call pops ONE character off the keyboard
+  // queue, so draining it at frame start swallows the first keystroke of
+  // every frame for rk_textfield (which drains the queue itself) and for
+  // rk_popup (which is handed this frame's char for ESC). A caller that
+  // wants keyboard reads it once and passes it on — see ReaKit Starter.
 
   // Mouse state
   mx = mouse_x;

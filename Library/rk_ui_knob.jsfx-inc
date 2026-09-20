@@ -108,7 +108,7 @@ local(hover, d, new_val, step, now)
   // Double-click → 64
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 64; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 64; mem[5] = 1; );
     mem[4] = now;
   );
   // Start drag (skip if double-click just fired)

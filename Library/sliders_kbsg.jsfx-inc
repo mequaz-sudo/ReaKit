@@ -54,6 +54,11 @@
 function _sld_clamp(x, lo, hi) ( min(max(x, lo), hi); );
 function _sld_lerp(a, b, t)   ( a + (b - a) * t; );
 
+// Double-click window, in seconds. Defined here too so this file stays
+// standalone — the *_kbsg libraries import nothing. knobs_kbsg sets the same
+// value; a host overriding it in its own @init wins over both.
+RK_DBLCLICK_T = 0.3;
+
 
 // ─────────────────────────────────────────────────────────────────────────
 // COLOR SYSTEM
@@ -145,7 +150,7 @@ function sld_horiz_interact(mem, x, y, w, h, cur_val)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -236,7 +241,7 @@ function sld_vert_interact(mem, x, y, w, h, cur_val)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -312,7 +317,7 @@ function sld_fillbar_interact(mem, x, y, w, h, cur_val)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -392,7 +397,7 @@ function sld_stepped_interact(mem, x, y, w, h, cur_val, n_steps)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -479,7 +484,7 @@ function sld_bipolar_interact(mem, x, y, w, h, cur_val)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -548,7 +553,7 @@ function sld_mini_interact(mem, x, y, w, h, cur_val)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -664,7 +669,7 @@ function sld_arc_interact(mem, cx, cy, r, arc_thick, cur_val)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -757,7 +762,7 @@ function sld_range_interact(mem, x, y, w, h, cur_lo, cur_hi)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? (
+    (now - mem[4] < RK_DBLCLICK_T) ? (
       new_lo = 0.25; new_hi = 0.75;
       mem[5] = 1;
     );
@@ -877,7 +882,7 @@ function sld_vled_interact(mem, x, y, w, h, cur_val)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -996,7 +1001,7 @@ function sld_vgroove_interact(mem, x, y, w, h, cur_val)
 
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   lmb_down && hover && !mem[1] && !mem[5] ? (
@@ -1051,7 +1056,7 @@ function sld_vbipolar_interact(mem, x, y, w, h, cur_val)
   // Double-click → reset to center (0.5)
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
   // Start drag

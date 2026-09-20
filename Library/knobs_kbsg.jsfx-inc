@@ -57,6 +57,11 @@ function lerp(a, b, t) ( a + (b - a) * t; );
 function dist(x1, y1, x2, y2) ( sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)); );
 function sign_of(x) ( x < 0 ? -1 : x > 0 ? 1 : 0; );
 
+// Double-click window, in seconds. A host may override this in its own @init
+// (which runs after every import) to retune reset-on-double-click for all
+// knobs and sliders at once.
+RK_DBLCLICK_T = 0.3;
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. BIRDBIRD VIC
@@ -153,7 +158,7 @@ local(d, hover, new_val, now, sens, dy)
   // Double-click reset (to 0, matching v6)
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0; mem[5] = 1; );
     mem[4] = now;
   );
   // Start drag (skip if double-click just fired)
@@ -273,7 +278,7 @@ local(hover, new_val, now, fine, nv, box_hw)
   // Double-click reset to 0.5
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0.5; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0.5; mem[5] = 1; );
     mem[4] = now;
   );
 
@@ -291,9 +296,9 @@ local(hover, new_val, now, fine, nv, box_hw)
   // Activate drag only if canChange gate is open (skip if double-click just fired)
   mem[8] && mouse_cap && !mem[5] ? ( mem[1] = 1; );
 
-  // Drag (delta-per-frame, SHIFT for fine)
+  // Drag (delta-per-frame, CTRL for fine — matches every other interact)
   mouse_cap && mem[1] ? (
-    fine = SHIFT ? 3000 : 300;
+    fine = CTRL ? 3000 : 300;
     nv = 1 / fine * (mem[2] - my);
     new_val = clamp(cur_val + nv, 0, 1);
     mem[2] = my;
@@ -445,7 +450,7 @@ local(d, hover, new_val, now, sens, sensitivity)
   // Double-click reset to 0
   lmb_down && hover ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = 0; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = 0; mem[5] = 1; );
     mem[4] = now;
   );
 
@@ -540,7 +545,7 @@ local(hover, d, new_val, fine, step, now)
   // Double-click
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = vdefault; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = vdefault; mem[5] = 1; );
     mem[4] = now;
   );
   // Start drag (skip if double-click just fired)
@@ -649,7 +654,7 @@ local(hover, d, new_val, fine, step, now, det_step, cur_det, new_det)
   // Double-click
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = vdefault; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = vdefault; mem[5] = 1; );
     mem[4] = now;
   );
   // Start drag (skip if double-click just fired)
@@ -1285,7 +1290,7 @@ local(hover, d, new_val, step, now, _range, _scl)
   // Double-click reset
   hover && lmb_down ? (
     now = time_precise();
-    (now - mem[4] < 0.3) ? ( new_val = vdefault; mem[5] = 1; );
+    (now - mem[4] < RK_DBLCLICK_T) ? ( new_val = vdefault; mem[5] = 1; );
     mem[4] = now;
   );
   // Start drag (skip if reset just fired)

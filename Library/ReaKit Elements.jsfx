@@ -1,5 +1,5 @@
 desc:ReaKit Elements
-options:gfx_hz=60 no_meter
+options:gfx_hz=60 no_meter want_all_kb
 // @description ReaKit - UI widget library for JSFX (knobs, faders, buttons, meters, VU, pads, piano)
 // @author Quaz (EON Studios)
 // @version 1.5.2
@@ -50,6 +50,12 @@ tags: effect
 
 // Requires the EON ReaKit *_kbsg.jsfx-inc libs on the JSFX import path
 //   (knobs_kbsg must be the dispatcher build that defines rk_knob_draw).
+
+// want_all_kb (the options line) is for the text field on the Buttons tab.
+// Without it REAPER keeps SPACE for the transport and the field never sees
+// it. It pre-ticks "Send all keyboard input to plug-in" on a fresh insert, so
+// while this window has focus the keyboard is the plugin's — SPACE included.
+// An instance saved before 1.5.3 keeps the setting it was saved with.
 
 slider1:0<0,5,1{Knobs,Buttons,Sliders,Meters,Pads & Keys,Curve}>-Tab
 slider3:60<0,100,0.01>-SSL
@@ -116,6 +122,15 @@ import rk_colorpick.jsfx-inc
 import rk_adsr.jsfx-inc
 
 @init
+// ⭐ ext_noinit: @init runs once, at load. Without it REAPER re-runs @init
+// whenever playback starts, and a file with no @serialize has every variable
+// and all of its memory zeroed first — so pressing play put the typed text,
+// the colour, the envelope, the curve nodes, the threshold and the VU face
+// back to their seeds. SPACE is play, which is how "type, press space, the
+// text went away" looked from outside. ext_noinit also stops a samplerate
+// change re-running @init, so everything that derives from srate is in
+// el_rate_init() below, which @block calls again when the rate moves.
+ext_noinit = 1.0;
 gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below follows
 freemem = 0;      // rk_vu claims no memory
 KS = 16;
@@ -125,14 +140,21 @@ sldmem = freemem; freemem += 16 * 16;  // 16 words/slider
 pgdmem_0 = freemem; freemem += 17;     // pad grid: 16 hover ramps + the held pad
 WF_LEN = 256;
 wf_0 = freemem; freemem += WF_LEN; wfp_0 = 0;
-mtr_base = freemem; freemem += 1380; meter_init(mtr_base);   // meters_kbsg DSP state
-mtr_en_rms = 1;   // enable (set after meter_init resets flags)
-mtr_en_gonio = 1;   // enable (set after meter_init resets flags)
-mtr_en_phase = 1;   // enable (set after meter_init resets flags)
-mtr_en_wave = 1;   // enable (set after meter_init resets flags)
-mtr_en_spectrum = 1;   // enable (set after meter_init resets flags)
-mtr_en_lufs = 1;   // enable (set after meter_init resets flags)
-vu_0.rk_vu_init(-18);   // analog VU: 300 ms movement, 0 VU = a -18 dBFS sine
+mtr_base = freemem; freemem += 1380;   // meters_kbsg DSP state
+
+// The meters' coefficients and the VU's ballistics, which are all srate.
+function el_rate_init() (
+  meter_init(mtr_base);
+  mtr_en_rms = 1;   // enable (set after meter_init resets flags)
+  mtr_en_gonio = 1;
+  mtr_en_phase = 1;
+  mtr_en_wave = 1;
+  mtr_en_spectrum = 1;
+  mtr_en_lufs = 1;
+  vu_0.rk_vu_init(-18);   // analog VU: 300 ms movement, 0 VU = a -18 dBFS sine
+  el_srate = srate;
+);
+el_rate_init();
 _vu_face = 0;           // face 0..19 (Cream); click the meter's coil cover to pick another
 
 // CURVE tab. The graph spans the audio band; it does NOT have to match the
@@ -170,6 +192,10 @@ el_a = 12; el_d = 180; el_s = 0.6; el_r = 300;   // ms, ms, 0..1, ms
 @slider
 
 @block
+// A samplerate change no longer re-runs @init (ext_noinit), so the meters' and
+// the VU's rate-derived state is refreshed here. Also catches a load that
+// handed @init an srate of 0.
+srate != el_srate ? el_rate_init();
 
 @sample
 vu_0.rk_vu_sample((spl0 + spl1) * 0.5);   // mono sum; the meter rectifies
@@ -236,6 +262,11 @@ btn_tab_draw(sc_ui*344, sc_ui*10, sc_ui*93, sc_ui*28, 2, slider1, "SLIDERS", bm[
 btn_tab_draw(sc_ui*441, sc_ui*10, sc_ui*93, sc_ui*28, 3, slider1, "METERS", bm[0]);
 btn_tab_draw(sc_ui*538, sc_ui*10, sc_ui*93, sc_ui*28, 4, slider1, "PADS/KEYS", bm[0]);
 btn_tab_draw(sc_ui*635, sc_ui*10, sc_ui*93, sc_ui*28, 5, slider1, "CURVE", bm[0]);
+
+// Leaving the Buttons tab closes its text field, keeping what was typed. It is
+// not run on another tab, so one left open would go on holding the keyboard
+// for a page that is not showing.
+slider1 != 1 ? rk_text_close(tfmem);
 
 // The spectrum bins are fed here, not inside a tab, because TWO tabs read them
 // — Meters draws the bars and Curve uses them as the analyser behind the graph.
@@ -460,7 +491,8 @@ slider1 == 1 ? (
   gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80);
   gfx_x=ox+sc*14; gfx_y=sc*292; gfx_drawstr("TEXT · COLOUR · ENVELOPE · INK · TOOLTIP");
 
-  // rk_textfield — click it and type. Enter commits, ESC puts it back.
+  // rk_textfield — click it and type. Enter commits, ESC puts it back. SPACE
+  // reaches it only because the options line asks for want_all_kb.
   rk_text_run(tfmem, #el_text, ox+sc*14, sc*312, sc*160, sc*24, 24,
               0.29, 0.62, 1.00);
   mx >= ox+sc*14 && mx < ox+sc*174 && my >= sc*312 && my < sc*336 ?

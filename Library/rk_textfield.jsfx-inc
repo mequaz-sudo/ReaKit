@@ -26,6 +26,24 @@ desc: ReaKit text input field
 //   - IT HAS TO OWN ITS RECT. While a field is open it takes the keyboard, and
 //     a click inside places the caret rather than falling through to whatever
 //     is underneath.
+//   - SPACE BELONGS TO REAPER unless the plugin asks for it. Without
+//     options:want_all_kb in the host's header, REAPER keeps SPACE and every
+//     CTRL combination for its own shortcuts: press space mid-word and the
+//     transport starts instead. Letters, digits, Enter, Backspace, the arrows
+//     and ESC arrive either way (measured, REAPER 7.78). The option only
+//     pre-ticks "Send all keyboard input to plug-in" on a FRESH insert — an
+//     instance already saved in a project keeps the setting it was saved with.
+//   - FOCUS CAN LEAVE MID-EDIT. Click into another window and nothing more
+//     arrives, so an open field would blink there forever. Fifteen frames
+//     without keyboard focus commits it, as a click away does.
+//   - KEYS QUEUE BEFORE THE FIELD OPENS. The queue fills whether or not
+//     anything reads it (WDL eel_lice.h: a 64-key ring that drops the oldest),
+//     so a space pressed earlier to start playback would land in the field the
+//     next time it opened. Opening empties the queue first.
+//
+// ⚠️ The text lives in the HOST's string. Seed it in @init and it is reset
+// every time playback starts, because REAPER re-runs @init then — unless the
+// host sets ext_noinit (ReaKit Elements does, and says why).
 //
 // ONE FIELD AT A TIME. The undo snapshot for cancel is module state, so only
 // one field can be open at once — which is what focus means anyway.
@@ -34,18 +52,25 @@ desc: ReaKit text input field
 //   - mx, my       — mouse position
 //   - lmb_down     — left-button PRESS edge
 //   - dt, hv_speed — frame delta + hover ramp speed
+//   - options:want_all_kb in the header, or SPACE never arrives (see above)
 //
 // MEMORY: one caller-owned block of 8 words. [0] open, [1] caret, [2] scroll,
-// [3] blink origin, [4] char cap, [5] hover ramp.
+// [3] blink origin, [4] char cap, [5] hover ramp, [6] frames without focus.
 //
 // PUBLIC API:
 //   rk_text_run(mem, buf, x, y, w, h, maxlen, r, g, b)
 //        the whole widget. Draws the box and, when open, edits `buf` in place.
-//        Click it to start. Returns 1 on commit (Enter or a click away),
-//        -1 on cancel (ESC, with `buf` restored), 0 otherwise.
+//        Click it to start. Returns 1 on commit (Enter, a click away, or the
+//        window losing focus), -1 on cancel (ESC, with `buf` restored),
+//        0 otherwise.
 //   rk_text_active(mem)        1 while it has the keyboard
 //   rk_text_open(mem, buf)     start editing without a click
 //   rk_text_cancel(mem, buf)   abandon, restoring the text
+//   rk_text_close(mem)         stop editing and KEEP the text — a commit. For
+//                              a host about to stop drawing the field (a tab
+//                              change, a panel closing): rk_text_run is not
+//                              called then, so nothing inside it can close
+//                              the field. Returns 1 if one was open.
 // ══════════════════════════════════════════════════════════════════════
 
 @init
@@ -54,16 +79,24 @@ RKTF_MEM = 8;
 
 function rk_text_active(mem) ( mem[0]; );
 
-function rk_text_open(mem, buf) (
+function rk_text_open(mem, buf) local(n) (
   mem[0] = 1;
   mem[1] = strlen(buf);     // caret at the end, as every editor does
   mem[2] = 0;
   mem[3] = time_precise();
+  mem[6] = 0;
   strcpy(#rktf_orig, buf);  // for ESC
+  // Whatever queued before the field opened was not typed into it.
+  n = 0;
+  while(n < 64 && gfx_getchar() > 0) ( n += 1; );
 );
 
 function rk_text_cancel(mem, buf) (
   mem[0] ? ( strcpy(buf, #rktf_orig); mem[0] = 0; );
+);
+
+function rk_text_close(mem) (
+  mem[0] ? ( mem[0] = 0; 1; ) : 0;
 );
 
 // Pixel width of buf[a..b). ⚠️ Sets the font itself: gfx_setfont is global and
@@ -115,7 +148,7 @@ function rk_text_caret_at(buf, px_, x0, fsz) local(i, n, wprev, wcur) (
 );
 
 function rk_text_run(mem, buf, x, y, w, h, maxlen, r, g, b)
-local(res, hov, fsz, pad, c, drained, cx_, i0, i1, wid, avail, off, blink, n) (
+local(res, hov, fsz, pad, c, drained, cx_, i0, i1, wid, avail, off, blink, n, fl) (
   res = 0;
   fsz = max(8, floor(h * 0.55));
   pad = max(3, floor(h * 0.18));
@@ -132,6 +165,20 @@ local(res, hov, fsz, pad, c, drained, cx_, i0, i1, wid, avail, off, blink, n) (
       mem[1] = rk_text_caret_at(buf, mx + mem[2], x + pad, fsz);
       mem[3] = time_precise();
     ) : ( mem[0] ? ( mem[0] = 0; res = 1; ); );   // click away commits
+  );
+
+  // ── focus ─────────────────────────────────────────────────────────────
+  // 65536 asks the window for its flags: &1 the query is supported, &2 it has
+  // the keyboard. &1 is checked first, so a REAPER that cannot answer leaves
+  // the field alone instead of closing it every fifteen frames. Fifteen, not
+  // one: focus can take a frame or two to arrive after the click that opened
+  // the field.
+  mem[0] ? (
+    fl = gfx_getchar(65536);
+    (fl & 1) && !(fl & 2) ? (
+      mem[6] += 1;
+      mem[6] > 15 ? ( mem[0] = 0; res = 1; );   // lost focus commits
+    ) : ( mem[6] = 0; );
   );
 
   // ── keys ──────────────────────────────────────────────────────────────

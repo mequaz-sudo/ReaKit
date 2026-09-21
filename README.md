@@ -65,7 +65,9 @@ system. Scrolls when the list outgrows the window, and understands the same
 `#` header, `!` tick and separator syntax the native menu does.
 **Text field** (rk_textfield) — a single-line editor with a caret, click-to-place,
 arrow keys and scrolling. It drains the key queue, because typing outruns the
-frame rate and one key per frame silently drops characters.
+frame rate and one key per frame silently drops characters. Put `want_all_kb`
+on your `options:` line, or REAPER keeps the spacebar for its transport and the
+field never sees a space.
 **Envelope** (rk_adsr) — drag it by its corners. Each segment owns a fixed slice
 of the width, so moving one parameter never shifts the others, and time is
 logarithmic in both the drawing and the drag, so 1–50 ms is actually reachable.

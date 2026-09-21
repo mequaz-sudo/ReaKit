@@ -2,7 +2,7 @@ desc:ReaKit Elements
 options:gfx_hz=60 no_meter
 // @description ReaKit - UI widget library for JSFX (knobs, faders, buttons, meters, VU, pads, piano)
 // @author Quaz (EON Studios)
-// @version 1.5.1
+// @version 1.5.2
 // @changelog
 //   New: ReaKit Starter - a working GUI skeleton to copy from. Installing this
 //   package now also drops a second JSFX alongside this showcase. Where

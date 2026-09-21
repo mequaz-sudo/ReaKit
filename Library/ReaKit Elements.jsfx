@@ -188,6 +188,12 @@ cvc    = freemem; freemem += 4 * 3;
 rk_curve_palette(cvc, 4);
 cvl    = freemem; freemem += 4;   // each node's name, drawn inside its ring
 cvl[0] = "1"; cvl[1] = "2"; cvl[2] = "3"; cvl[3] = "4";
+// The look selectors under the graph: how a band is shown, how a node is shown.
+// Plain variables like the rest of this tab's state; zero is Fill and Ring, the
+// default every plugin built on rk_curve starts from.
+cvsb = freemem; freemem += 8;     // BANDS segment bar
+cvsn = freemem; freemem += 8;     // NODES segment bar
+cv_bands = 0; cv_nodes = 0;
 cv_hash = -1;
 thrmem = freemem; freemem += 8;   // threshold line: hover ramp + drag latch
 thr_db = -18;                     // the draggable threshold, in dB
@@ -850,7 +856,7 @@ slider1 == 5 ? (
   gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80);
   gfx_x=ox+sc*14; gfx_y=sc*56; gfx_drawstr("CURVE — rk_curve: drag a node, wheel for width, double-click to flatten");
 
-  _cx = ox+sc*14; _cy = sc*76; _cw = sc*712; _ch = sc*286;
+  _cx = ox+sc*14; _cy = sc*76; _cw = sc*712; _ch = sc*262;   // 24 shorter: the look selectors sit under it
 
   // Refill only when an input changes. Four bells over 512 points is ~4000
   // transcendentals a fill, and doing that every frame is how the Drum Strip's
@@ -886,6 +892,7 @@ slider1 == 5 ? (
   // Every band in its own colour, at the library's own alphas, lifted while
   // its node is hovered or held (cvnm + 8 is the node block's hover ramps).
   // Then the sum over all of them.
+  rk_curve_style(cv_bands, cv_nodes);
   rk_curve_bands(_cx, _cy, _cw, _ch, cvb, CV_PTS, 4, 18, cvc, -1, cvnm + 8, -1, 0);
   rk_curve_trace(_cx, _cy, _cw, _ch, cvbuf, CV_PTS, 18, 0, 0.90,0.92,0.96);
 
@@ -898,6 +905,25 @@ slider1 == 5 ? (
     cvw[_n] = max(CV_WMIN, min(cvw[_n] * (1 - rk_curve_nwheel * 0.12), 3));
   rk_curve_dblclk && _n >= 0 ? cvd[_n] = 0;
   rk_curve_nodes_draw_ex(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4, rk_curve_hov, cvc, -1, cvl);
+
+  // THE LOOK. One library, three ways to show a band and three to show a node;
+  // the segment bars are buttons_kbsg's own. Try them: this is the same switch
+  // (rk_curve_style) a plugin exposes however it likes.
+  _sgw = sc*58; _sgg = sc*3; _sgy = sc*344; _sgh = sc*20;
+  gfx_setfont(1,"Arial",max(8,floor(10*sc)),'b'); gfx_set(0.55,0.58,0.64);
+  gfx_x = ox+sc*14;  gfx_y = _sgy + sc*4; gfx_drawstr("BANDS");
+  gfx_x = ox+sc*280; gfx_y = _sgy + sc*4; gfx_drawstr("NODES");
+  gfx_setfont(1,"Arial",max(8,floor(9*sc)),'b');
+  _sgx = ox+sc*62;
+  cv_bands = btn_segment_interact(cvsb, _sgx, _sgy, _sgw, _sgh, 3, _sgg, cv_bands);
+  btn_segment_draw(_sgx,                    _sgy, _sgw, _sgh, 0, cv_bands, "FILL",  cvsb[0], 0.29,0.62,1.00);
+  btn_segment_draw(_sgx + (_sgw+_sgg),      _sgy, _sgw, _sgh, 1, cv_bands, "LINES", cvsb[0], 0.29,0.62,1.00);
+  btn_segment_draw(_sgx + (_sgw+_sgg) * 2,  _sgy, _sgw, _sgh, 2, cv_bands, "BOTH",  cvsb[0], 0.29,0.62,1.00);
+  _sgx = ox+sc*328;
+  cv_nodes = btn_segment_interact(cvsn, _sgx, _sgy, _sgw, _sgh, 3, _sgg, cv_nodes);
+  btn_segment_draw(_sgx,                    _sgy, _sgw, _sgh, 0, cv_nodes, "RING",  cvsn[0], 0.29,0.62,1.00);
+  btn_segment_draw(_sgx + (_sgw+_sgg),      _sgy, _sgw, _sgh, 1, cv_nodes, "DOT",   cvsn[0], 0.29,0.62,1.00);
+  btn_segment_draw(_sgx + (_sgw+_sgg) * 2,  _sgy, _sgw, _sgh, 2, cv_nodes, "BADGE", cvsn[0], 0.29,0.62,1.00);
 
   gfx_setfont(1,"Arial",max(8,floor(10*sc))); gfx_set(0.55,0.58,0.64);
   gfx_x=ox+sc*14; gfx_y=sc*370;

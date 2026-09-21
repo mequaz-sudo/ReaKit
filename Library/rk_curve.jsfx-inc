@@ -77,6 +77,10 @@ desc: ReaKit response-curve widget
 //   rk_curve_nodes_draw_rgb(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, cbuf)
 //        the same nodes, each in its own colour. `cbuf` holds r, g, b per node,
 //        three words each, in node order. Pairs with rk_curve_band.
+//   rk_curve_palette(cbuf, n)
+//        fills `cbuf` with the library's band colours for `n` bands (up to 6),
+//        low to high: red, yellow, green, blue, violet, pink. ONE definition,
+//        so every plugin's band 1 is the same red. Call once, in @init.
 //
 // The TRACE buffer holds `n` dB values spread evenly across the rect in X, and
 // because X is log frequency that is log spacing in Hz. ~512 is a good `n`.
@@ -334,6 +338,23 @@ local(i, j, t, fr, x0, x1, y0, y1, cy_, top, bot) (
         i += 1;
       );
     );
+  );
+);
+
+// The band colours, in one place. They run in FREQUENCY order, low to high
+// like a spectrum, so neighbouring bands never share a hue -- two bands whose
+// fills overlap in the same colour read as one shape. A caller is free to fill
+// its own cbuf instead; this exists so that the ones that do not care all agree.
+function rk_curve_palette(cbuf, n) local(i) (
+  i = 0;
+  loop(min(max(n, 0), 6),
+    i == 0 ? ( cbuf[0]  = 1.00; cbuf[1]  = 0.42; cbuf[2]  = 0.42; ) :   // red
+    i == 1 ? ( cbuf[3]  = 0.98; cbuf[4]  = 0.80; cbuf[5]  = 0.08; ) :   // yellow
+    i == 2 ? ( cbuf[6]  = 0.29; cbuf[7]  = 0.87; cbuf[8]  = 0.50; ) :   // green
+    i == 3 ? ( cbuf[9]  = 0.29; cbuf[10] = 0.62; cbuf[11] = 1.00; ) :   // blue
+    i == 4 ? ( cbuf[12] = 0.68; cbuf[13] = 0.44; cbuf[14] = 0.96; ) :   // violet
+             ( cbuf[15] = 0.96; cbuf[16] = 0.45; cbuf[17] = 0.78; );    // pink
+    i += 1;
   );
 );
 

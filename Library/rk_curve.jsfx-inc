@@ -60,6 +60,12 @@ desc: ReaKit response-curve widget
 //   rk_curve_plate(x, y, w, h, dr)
 //        plate, frequency grid + labels, dB grid + labels, border. Sets a
 //        small font for the labels and does not restore it.
+//   rk_curve_plate_ex(x, y, w, h, dr, mode)
+//        the same plate with the grid in `mode` (see rk_curve_grid).
+//   rk_curve_font(px)
+//        label size for the grid and the node readout. 0, the default, sizes
+//        them from the rect's height -- right for a graph of one size, too big
+//        for one that fills a resizable window. Give it your own scaled size.
 //   rk_curve_grid(x, y, w, h, dr, lr, lg, lb, tr, tg, tb, mode)
 //        the grid WITHOUT the plate, lines in one ink and labels in another,
 //        for a graph that sits on a panel the plugin already painted. `mode` 0
@@ -182,6 +188,9 @@ function rk_curve_grid_f(i) (
   i == 4 ? 500  : i == 5 ? 1000 : i == 6 ? 2000 : i == 7 ? 5000 : 10000;
 );
 
+function rk_curve_font(px) ( rkcv_font = max(0, px); );
+function rk_curve_font_px(h) ( rkcv_font > 0 ? rkcv_font : max(8, floor(h * 0.075)); );
+
 // The grid alone, in the caller's inks. rk_curve_plate is a plate, this, and a
 // border -- so a graph on its own plate and a graph on a themed panel still put
 // every line and every label in the same place.
@@ -199,7 +208,7 @@ local(i, f, gx_, gy_, tw, th, last_x, db) (
       f *= 10;
     );
   ) : (
-    gfx_setfont(1, "Arial", max(8, floor(h * 0.075)));
+    gfx_setfont(1, "Arial", rk_curve_font_px(h));
 
     // Frequency grid. Labels sit INSIDE the rect: outside they get clipped by
     // whatever the caller has drawn around the graph.
@@ -250,16 +259,18 @@ local(i, f, gx_, gy_, tw, th, last_x, db) (
   );
 );
 
-function rk_curve_plate(x, y, w, h, dr) (
+function rk_curve_plate_ex(x, y, w, h, dr, mode) (
   gfx_set(0.043, 0.047, 0.067, 1);
   gfx_rect(x, y, w, h);
 
-  rk_curve_grid(x, y, w, h, dr, 0.18, 0.20, 0.25, 0.42, 0.45, 0.52, 0);
+  rk_curve_grid(x, y, w, h, dr, 0.18, 0.20, 0.25, 0.42, 0.45, 0.52, mode);
 
   gfx_set(0.20, 0.22, 0.27, 1);
   gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
   gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
 );
+
+function rk_curve_plate(x, y, w, h, dr) ( rk_curve_plate_ex(x, y, w, h, dr, 0); );
 
 // ── Analyser underlay ─────────────────────────────────────────────────
 // Filled to the bottom, quads guarded on an integer column change so many
@@ -644,7 +655,7 @@ function rk_curve_node_paint(nx, ny, rad, ht, on, r, g, b) (
 // A line of text by a node. Above it; below when above would leave the rect.
 function rk_curve_node_label(nx, ny, rad, x, y, w, h, str)
 local(tw, th, ty) (
-  gfx_setfont(1, "Arial", max(8, floor(h * 0.075)));
+  gfx_setfont(1, "Arial", rk_curve_font_px(h));
   gfx_measurestr(str, tw, th);
   ty = ny - rad * 1.4 - th - 2;
   ty < y + 1 ? ty = ny + rad * 1.4 + 2;

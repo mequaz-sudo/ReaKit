@@ -510,6 +510,7 @@ sc < 0.35 ? sc = 0.35;
 
 mx = mouse_x; my = mouse_y;
 LMB = mouse_cap & 1; lmb_down = LMB && !_pLMB; _pLMB = LMB;
+RMB = mouse_cap & 2; rmb_down = RMB && !_pRMB; _pRMB = RMB;
 CTRL = mouse_cap & 4; SHIFT = mouse_cap & 8;
 dt = time_precise() - _lt; _lt = time_precise();
 hv_speed = 11; tau = 2 * $pi;

@@ -60,6 +60,11 @@ desc: ReaKit response-curve widget
 //        part of the graph whatever range the graph itself is set to.
 //   rk_curve_trace(x, y, w, h, buf, n, dr, fill, r, g, b)
 //        the curve. `fill` 1 shades to the midline.
+//   rk_curve_band(x, y, w, h, buf, n, dr, r, g, b, fill_a, line_a)
+//        ONE band's own contribution, in that band's colour: a shade of it
+//        filling to the midline at `fill_a`, and its outline at `line_a` (0
+//        skips either). Call it once per band, before the summed trace. The
+//        caller fills one array per band, the same way it fills the sum.
 //   rk_curve_nodes(mem, x, y, w, h, dr, fbuf, dbuf, n)
 //        the whole gesture: hover, grab, delta drag, wheel, double-click.
 //        Publishes rk_curve_ni / rk_curve_nf / rk_curve_ndb / rk_curve_moved /
@@ -69,6 +74,9 @@ desc: ReaKit response-curve widget
 //        clamps and calls slider_automate, which is the one thing that made
 //        every surveyed implementation unusable as a widget.
 //   rk_curve_nodes_draw(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, r, g, b)
+//   rk_curve_nodes_draw_rgb(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, cbuf)
+//        the same nodes, each in its own colour. `cbuf` holds r, g, b per node,
+//        three words each, in node order. Pairs with rk_curve_band.
 //
 // The TRACE buffer holds `n` dB values spread evenly across the rect in X, and
 // because X is log frequency that is log spacing in Hz. ~512 is a good `n`.
@@ -288,6 +296,47 @@ local(i, x0, x1, y0, y1, cy_, top, bot, t, j, fr) (
   );
 );
 
+// ── One band, in its own colour ───────────────────────────────────────
+// A multi-band curve reads as BANDS when each keeps a colour: its node, and a
+// shade of the same colour filling that band's own bell under the summed
+// trace. Everything sitting on the midline is skipped -- a column shorter than
+// half a pixel, a segment with both ends on 0 dB -- so four bands do not stack
+// four lines along 0 dB, and a narrow band costs only the pixels it covers.
+function rk_curve_band(x, y, w, h, buf, n, dr, r, g, b, fill_a, line_a)
+local(i, j, t, fr, x0, x1, y0, y1, cy_, top, bot) (
+  n < 2 ? 0 : (
+    top = y + 1; bot = y + h - 2; cy_ = y + h * 0.5;
+    fill_a > 0 ? (
+      gfx_set(r, g, b, fill_a);
+      i = 0;
+      loop(floor(w),
+        t  = i / max(w - 1, 1) * (n - 1);
+        j  = floor(t);
+        fr = t - j;
+        j >= n - 1 ? ( j = n - 2; fr = 1; );
+        y0 = rk_curve_d2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, dr);
+        y0 = min(max(y0, top), bot);
+        abs(y0 - cy_) >= 0.5 ? gfx_rect(x + i, min(cy_, y0), 1, abs(y0 - cy_));
+        i += 1;
+      );
+    );
+    line_a > 0 ? (
+      gfx_set(r, g, b, line_a);
+      i = 0;
+      loop(n - 1,
+        y0 = min(max(rk_curve_d2y(buf[i],     y, h, dr), top), bot);
+        y1 = min(max(rk_curve_d2y(buf[i + 1], y, h, dr), top), bot);
+        abs(y0 - cy_) >= 0.5 || abs(y1 - cy_) >= 0.5 ? (
+          x0 = x + i * w / (n - 1);
+          x1 = x + (i + 1) * w / (n - 1);
+          gfx_line(x0, y0, x1, y1);
+        );
+        i += 1;
+      );
+    );
+  );
+);
+
 // ── Nodes ─────────────────────────────────────────────────────────────
 
 function rk_curve_node_r(w) ( max(5, min(w * 0.020, 11)); );
@@ -373,31 +422,48 @@ local(i, hov, mods, dx, dy, sens, now) (
   rk_curve_ni;
 );
 
+// One node. Both painters below call it, so a node looks the same whichever
+// one drew it and the two cannot drift apart.
+function rk_curve_node_paint(nx, ny, rad, ht, on, r, g, b) (
+  // hover halo
+  ht > 0.01 ? (
+    gfx_set(r, g, b, 0.16 * ht);
+    gfx_circle(nx, ny, rad * 1.9, 1, 1);
+  );
+  // body, dark core, ring, centre dot
+  gfx_set(r, g, b, on ? 1 : 0.78);
+  gfx_circle(nx, ny, rad, 1, 1);
+  gfx_set(0.04, 0.04, 0.06, 0.85);
+  gfx_circle(nx, ny, rad * 0.55, 1, 1);
+  gfx_set(1, 1, 1, on ? 0.95 : 0.55);
+  gfx_circle(nx, ny, rad, 0, 1);
+  on ? (
+    gfx_set(1, 1, 1, 0.9);
+    gfx_circle(nx, ny, max(1, rad * 0.18), 1, 1);
+  );
+);
+
 function rk_curve_nodes_draw(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, r, g, b)
-local(i, nx, ny, rad, ht, held) (
+local(i, rad, held) (
   rad = rk_curve_node_r(w);
   held = mem[0];
   i = 0;
   loop(n,
-    nx = rk_curve_f2x(fbuf[i], x, w);
-    ny = rk_curve_d2y(dbuf[i], y, h, dr);
-    ht = mem[8 + i];
-    // hover halo
-    ht > 0.01 ? (
-      gfx_set(r, g, b, 0.16 * ht);
-      gfx_circle(nx, ny, rad * 1.9, 1, 1);
-    );
-    // body, dark core, ring, centre dot
-    gfx_set(r, g, b, i == sel || i == held ? 1 : 0.78);
-    gfx_circle(nx, ny, rad, 1, 1);
-    gfx_set(0.04, 0.04, 0.06, 0.85);
-    gfx_circle(nx, ny, rad * 0.55, 1, 1);
-    gfx_set(1, 1, 1, i == sel || i == held ? 0.95 : 0.55);
-    gfx_circle(nx, ny, rad, 0, 1);
-    i == sel || i == held ? (
-      gfx_set(1, 1, 1, 0.9);
-      gfx_circle(nx, ny, max(1, rad * 0.18), 1, 1);
-    );
+    rk_curve_node_paint(rk_curve_f2x(fbuf[i], x, w), rk_curve_d2y(dbuf[i], y, h, dr),
+                        rad, mem[8 + i], i == sel || i == held, r, g, b);
+    i += 1;
+  );
+);
+
+function rk_curve_nodes_draw_rgb(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, cbuf)
+local(i, rad, held) (
+  rad = rk_curve_node_r(w);
+  held = mem[0];
+  i = 0;
+  loop(n,
+    rk_curve_node_paint(rk_curve_f2x(fbuf[i], x, w), rk_curve_d2y(dbuf[i], y, h, dr),
+                        rad, mem[8 + i], i == sel || i == held,
+                        cbuf[i * 3], cbuf[i * 3 + 1], cbuf[i * 3 + 2]);
     i += 1;
   );
 );

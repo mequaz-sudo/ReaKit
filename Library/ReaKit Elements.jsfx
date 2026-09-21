@@ -141,7 +141,15 @@ _vu_face = 0;           // face 0..19 (Cream); click the meter's coil cover to p
 // "by construction" is supposed to mean, and what matching two hand-written
 // numbers never was.
 rk_curve_init(20, 20000);
-CV_PTS = 256;
+// The narrowest bell, in octaves. cvw is the width of a Gaussian in log
+// frequency, and its half-gain width is 1.665 x cvw, so 0.05 is about Q 17 —
+// past the 4-band EQ's Q 10. The floor used to be 0.2, which is about Q 4,
+// while the fill loop's own guard already said 0.05; both read this now.
+CV_WMIN = 0.05;
+// 512 points, rk_curve's own recommendation. A narrow bell needs them: at 256
+// a bell at the floor could fall between two points and draw its peak 2 dB
+// below its own node.
+CV_PTS = 512;
 cvbuf  = freemem; freemem += CV_PTS;
 cvspec = freemem; freemem += 16;
 cvf    = freemem; freemem += 4;   cvf[0] = 80; cvf[1] = 400; cvf[2] = 2000; cvf[3] = 8000;
@@ -750,7 +758,7 @@ slider1 == 5 ? (
 
   _cx = ox+sc*14; _cy = sc*76; _cw = sc*712; _ch = sc*286;
 
-  // Refill only when an input changes. Four bells over 256 points is ~2000
+  // Refill only when an input changes. Four bells over 512 points is ~4000
   // transcendentals a fill, and doing that every frame is how the Drum Strip's
   // graph once burned ~600k of them a second while nothing moved.
   _h = cvd[0] + cvd[1]*7 + cvd[2]*31 + cvd[3]*127
@@ -763,7 +771,7 @@ slider1 == 5 ? (
       _f = rk_curve_x2f(_i, 0, CV_PTS - 1);
       _sum = 0; _j = 0;
       loop(4,
-        _d = log(_f / cvf[_j]) / 0.69314718 / max(cvw[_j], 0.05);
+        _d = log(_f / cvf[_j]) / 0.69314718 / max(cvw[_j], CV_WMIN);
         _sum += cvd[_j] * exp(-_d * _d);
         _j += 1;
       );
@@ -785,7 +793,7 @@ slider1 == 5 ? (
     cvd[_n] = max(-15, min(rk_curve_ndb, 15));
   );
   rk_curve_nwheel != 0 && _n >= 0 ?
-    cvw[_n] = max(0.2, min(cvw[_n] * (1 - rk_curve_nwheel * 0.12), 3));
+    cvw[_n] = max(CV_WMIN, min(cvw[_n] * (1 - rk_curve_nwheel * 0.12), 3));
   rk_curve_dblclk && _n >= 0 ? cvd[_n] = 0;
   rk_curve_nodes_draw(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4,
                       rk_curve_hov, 0.29,0.62,1.00);

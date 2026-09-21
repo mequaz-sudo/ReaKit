@@ -559,6 +559,12 @@ local(hover, d, new_val, fine, step, now)
   mem[6] = hover || mem[1];
   new_val = cur_val;
   mem[5] = 0;
+
+  // Right-click resets to the caller's default. This lived only in bb/jo/sp
+  // and the encoder, none of which rk_knob_interact ever reaches -- so the
+  // gesture existed and no plugin using the dispatcher could fire it.
+  hover && rmb_down ? ( new_val = vdefault; mem[5] = 1; );
+
   // Double-click
   hover && lmb_down ? (
     now = time_precise();
@@ -668,6 +674,12 @@ local(hover, d, new_val, fine, step, now, det_step, cur_det, new_det)
   mem[6] = hover || mem[1];
   new_val = cur_val;
   mem[5] = 0;
+
+  // Right-click resets to the caller's default. This lived only in bb/jo/sp
+  // and the encoder, none of which rk_knob_interact ever reaches -- so the
+  // gesture existed and no plugin using the dispatcher could fire it.
+  hover && rmb_down ? ( new_val = vdefault; mem[5] = 1; );
+
   // Double-click
   hover && lmb_down ? (
     now = time_precise();

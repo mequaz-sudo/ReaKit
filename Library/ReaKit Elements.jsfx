@@ -884,6 +884,7 @@ slider1 == 5 ? (
   _i = 0;
   loop(16, cvspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
 
+  rk_curve_font(max(8, floor(10 * sc)));   // the ruler scales with the rest of the face
   rk_curve_plate(_cx, _cy, _cw, _ch, 18);
   // Neutral, so the colour belongs to the bands: an orange analyser behind them
   // turned the red and yellow bands to mud.

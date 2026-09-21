@@ -64,8 +64,8 @@ desc: ReaKit response-curve widget
 //        the same plate with the grid in `mode` (see rk_curve_grid).
 //   rk_curve_font(px)
 //        label size for the grid and the node readout. 0, the default, sizes
-//        them from the rect's height -- right for a graph of one size, too big
-//        for one that fills a resizable window. Give it your own scaled size.
+//        them from the rect's height, CAPPED at 11 px (x gfx_ext_retina). A
+//        plugin that scales its whole face should pass its own scaled size.
 //   rk_curve_grid(x, y, w, h, dr, lr, lg, lb, tr, tg, tb, mode)
 //        the grid WITHOUT the plate, lines in one ink and labels in another,
 //        for a graph that sits on a panel the plugin already painted. `mode` 0
@@ -203,7 +203,14 @@ function rk_curve_grid_f(i) (
 );
 
 function rk_curve_font(px) ( rkcv_font = max(0, px); );
-function rk_curve_font_px(h) ( rkcv_font > 0 ? rkcv_font : max(8, floor(h * 0.075)); );
+// The default was 7.5% of the height with no ceiling: on a 290 px graph that is
+// 21 px, bigger than the plugin's own title, and the ruler shouted over the
+// curve it was there to measure. Capped at 11 px, doubled with the surface on a
+// HiDPI display (gfx_ext_retina reads 0 in a plugin that never sets it).
+function rk_curve_font_px(h) (
+  rkcv_font > 0 ? rkcv_font
+                : min(max(8, floor(h * 0.075)), floor(11 * max(1, gfx_ext_retina)));
+);
 
 // The grid alone, in the caller's inks. rk_curve_plate is a plate, this, and a
 // border -- so a graph on its own plate and a graph on a themed panel still put
@@ -265,6 +272,8 @@ local(i, f, gx_, gy_, tw, th, last_x, db) (
       // through this. A half step (15 dB range -> 7.5) keeps its decimal; the
       // 4-Band used to print that one as "+8".
       i == 2 || i == 0 || (mode == 2 && i != -2) ? (
+        // 0 is "0": "%+d" prints "+0", which is nobody's idea of zero.
+        db == 0 ? strcpy(#rkcv_s, "0") :
         mode == 2 && db != floor(db) ? sprintf(#rkcv_s, "%+.1f", db) : sprintf(#rkcv_s, "%+d", db);
         gfx_measurestr(#rkcv_s, tw, th);
         gfx_set(tr, tg, tb, 0.85);
@@ -470,6 +479,7 @@ local(i, j, t, fr, x0, x1, y0, y1, cy_, top, bot, ay, a0, a1) (
 // never calls this, and memory that starts zeroed, both land on Fill and Ring.
 RKCV_FILL = 0; RKCV_LINES = 1; RKCV_BOTH = 2;
 RKCV_RING = 0; RKCV_DOT   = 1; RKCV_BADGE = 2;
+RKCV_BADGE_K = 1.12;      // a Badge disc's radius, as a multiple of the node radius
 
 function rk_curve_style(bands, nodes) (
   rkcv_sty_bands = min(max(floor(bands), 0), 2);
@@ -678,7 +688,12 @@ local(i, hov, mods, dx, dy, sens, now) (
 //   Ring   the 4-Band's: a disc in the band's colour, a dark centre, the band's
 //          name inside it. With no name, the centre is smaller and carries a dot.
 //   Dot    EON Tone's: a plain disc with a dark outline.
-//   Badge  Apex's: a bigger disc with white rims, the name underneath.
+//   Badge  a bigger solid disc with white rims, the name INSIDE it in dark
+//          type. (It came from Apex with the name underneath, because Apex
+//          fills the disc with a filter-shape picture. With nothing inside, the
+//          disc was an empty blob over the peak it marked and the name was a
+//          speck below it. Apex passes no name and draws its picture and its
+//          number itself, sized from RKCV_BADGE_K.)
 // `al` scales every alpha, for a band that is switched off.
 function rk_curve_node_paint_ex(nx, ny, rad, ht, on, al, r, g, b, lbl)
 local(tw, th, br) (
@@ -690,7 +705,7 @@ local(tw, th, br) (
     gfx_circle(nx, ny, rad * 0.85, 0, 1);
     on ? ( gfx_set(1, 1, 1, 0.90 * al); gfx_circle(nx, ny, rad * 0.85 + 2, 0, 1); );
   ) : rkcv_sty_nodes == RKCV_BADGE ? (
-    br = rad * 1.25;
+    br = rad * RKCV_BADGE_K;
     ht > 0.01 ? ( gfx_set(r, g, b, 0.18 * ht * al); gfx_circle(nx, ny, br * 1.6, 1, 1); );
     gfx_set(r, g, b, al);
     gfx_circle(nx, ny, br, 1, 1);
@@ -699,10 +714,11 @@ local(tw, th, br) (
     gfx_set(0, 0, 0, 0.85 * al); gfx_circle(nx, ny, br + 1, 0, 1);
     on ? ( gfx_set(1, 1, 1, 0.80 * al); gfx_circle(nx, ny, br + 3, 0, 1); );
     lbl >= 0 ? (
-      gfx_setfont(1, "Arial", max(7, floor(rad * 0.95)), 'b');
+      // the name, dark on the band's colour
+      gfx_setfont(1, "Arial", max(7, floor(rad * 1.05)), 'b');
       gfx_measurestr(lbl, tw, th);
-      gfx_set(r, g, b, 0.85 * al);
-      gfx_x = nx - tw * 0.5; gfx_y = ny + br + 3;
+      gfx_set(0.04, 0.05, 0.07, 0.92 * al);
+      gfx_x = nx - tw * 0.5 + 0.5; gfx_y = ny - th * 0.5;
       gfx_drawstr(lbl);
     );
   ) : (

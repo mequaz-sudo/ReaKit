@@ -687,6 +687,7 @@ _h != eq_hash ? ( eq_hash = _h; eq_fill(eqbuf, eqb, EQ_PTS, eqf, eqd, eqw, 4); )
 _i = 0;
 loop(16, eqspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
 
+rk_curve_font(max(8, floor(px(9) + 0.5)));    // the ruler, at the face's own label size
 rk_curve_plate(_cx, _cy, _cw, _ch, 18);
 // The analyser is neutral so the colour belongs to the bands: in the accent's
 // secondary it turned whichever band shared its hue to mud.

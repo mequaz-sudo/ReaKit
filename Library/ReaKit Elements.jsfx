@@ -186,6 +186,8 @@ cvb    = freemem; freemem += 4 * CV_PTS;   // each band's own bell, for its fill
 // since it belongs to no one band.
 cvc    = freemem; freemem += 4 * 3;
 rk_curve_palette(cvc, 4);
+cvl    = freemem; freemem += 4;   // each node's name, drawn inside its ring
+cvl[0] = "1"; cvl[1] = "2"; cvl[2] = "3"; cvl[3] = "4";
 cv_hash = -1;
 thrmem = freemem; freemem += 8;   // threshold line: hover ramp + drag latch
 thr_db = -18;                     // the draggable threshold, in dB
@@ -881,17 +883,10 @@ slider1 == 5 ? (
   // turned the red and yellow bands to mud.
   rk_curve_analyser(_cx, _cy, _cw, _ch, cvspec, 16, mtr_spec_lo, mtr_spec_hi,
                     0, -60, 0.55,0.62,0.75);
-  // Each band in its own colour: a shade of it filling the band's own bell,
-  // brighter while its node is hovered or held (cvnm[8 + band] is the node's
-  // hover ramp, in rk_curve's documented block). Then the sum over all of them.
-  _j = 0;
-  loop(4,
-    _ht = cvnm[8 + _j];
-    rk_curve_band(_cx, _cy, _cw, _ch, cvb + _j * CV_PTS, CV_PTS, 18,
-                  cvc[_j * 3], cvc[_j * 3 + 1], cvc[_j * 3 + 2],
-                  0.13 + 0.14 * _ht, 0.40 + 0.40 * _ht);
-    _j += 1;
-  );
+  // Every band in its own colour, at the library's own alphas, lifted while
+  // its node is hovered or held (cvnm + 8 is the node block's hover ramps).
+  // Then the sum over all of them.
+  rk_curve_bands(_cx, _cy, _cw, _ch, cvb, CV_PTS, 4, 18, cvc, -1, cvnm + 8, -1, 0);
   rk_curve_trace(_cx, _cy, _cw, _ch, cvbuf, CV_PTS, 18, 0, 0.90,0.92,0.96);
 
   _n = rk_curve_nodes(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4);
@@ -902,7 +897,7 @@ slider1 == 5 ? (
   rk_curve_nwheel != 0 && _n >= 0 ?
     cvw[_n] = max(CV_WMIN, min(cvw[_n] * (1 - rk_curve_nwheel * 0.12), 3));
   rk_curve_dblclk && _n >= 0 ? cvd[_n] = 0;
-  rk_curve_nodes_draw_rgb(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4, rk_curve_hov, cvc);
+  rk_curve_nodes_draw_ex(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4, rk_curve_hov, cvc, -1, cvl);
 
   gfx_setfont(1,"Arial",max(8,floor(10*sc))); gfx_set(0.55,0.58,0.64);
   gfx_x=ox+sc*14; gfx_y=sc*370;

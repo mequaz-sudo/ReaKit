@@ -152,6 +152,9 @@ eqf    = freemem; freemem += 4;           // node frequencies
 eqd    = freemem; freemem += 4;           // node gains
 eqw    = freemem; freemem += 4;           // bell widths, in octaves
 eqnm   = freemem; freemem += 8 + 4;       // node drag state: 8 + one per node
+eqb    = freemem; freemem += 4 * EQ_PTS;  // each band's own bell, for its fill
+eqc    = freemem; freemem += 4 * 3;       // a colour per band: r, g, b each
+rk_curve_palette(eqc, 4);                 // the library's own, low to high
 ppmem  = freemem; freemem += RKPP_MEM;    // the face dropdown's popup
 eqnm[0] = -1;                             // nothing grabbed
 eq_hash = -1;                             // forces the first fill
@@ -400,8 +403,11 @@ function ui_segment3(mem, x, y, w, h, cur, l0, l1, l2) local(nv, sw, gap) (
 // ⭐ It refills only when something changed. Four bands over 256 points is
 // ~2000 transcendentals a fill, and doing that every frame is exactly how the
 // Drum Strip's graph once burned ~600k of them a second while nothing moved.
-function eq_fill(buf, n, fbuf, gbuf, wbuf, nb)
-local(i, j, f, d, sum) (
+//
+// Each band's own bell is kept as well as the sum (`bbuf`, nb arrays of n, one
+// after another), because rk_curve_band fills each band's shape in its colour.
+function eq_fill(buf, bbuf, n, fbuf, gbuf, wbuf, nb)
+local(i, j, f, d, v, sum) (
   i = 0;
   loop(n,
     f = rk_curve_x2f(i, 0, n - 1);        // a unit rect: point index IS the x
@@ -409,7 +415,9 @@ local(i, j, f, d, sum) (
     j = 0;
     loop(nb,
       d = log(f / fbuf[j]) / 0.69314718 / max(wbuf[j], 0.05);   // octaves away
-      sum += gbuf[j] * exp(-d * d);
+      v = gbuf[j] * exp(-d * d);
+      bbuf[j * n + i] = v;
+      sum += v;
       j += 1;
     );
     buf[i] = sum;
@@ -664,16 +672,34 @@ eqw[0] = eq_w1; eqw[1] = eq_w2; eqw[2] = eq_w3; eqw[3] = eq_w4;
 _h = eq_lo + eq_lmf * 7 + eq_hmf * 31 + eq_hi * 127
    + eq_f1 * 0.001 + eq_f2 * 0.003 + eq_f3 * 0.007 + eq_f4 * 0.013
    + eq_w1 * 11 + eq_w2 * 53 + eq_w3 * 211 + eq_w4 * 907;
-_h != eq_hash ? ( eq_hash = _h; eq_fill(eqbuf, EQ_PTS, eqf, eqd, eqw, 4); );
+_h != eq_hash ? ( eq_hash = _h; eq_fill(eqbuf, eqb, EQ_PTS, eqf, eqd, eqw, 4); );
 
 // The meter's sixteen bands, in dB, on the same span as the graph.
 _i = 0;
 loop(16, eqspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
 
 rk_curve_plate(_cx, _cy, _cw, _ch, 18);
+// The analyser is neutral so the colour belongs to the bands: in the accent's
+// secondary it turned whichever band shared its hue to mud.
 rk_curve_analyser(_cx, _cy, _cw, _ch, eqspec, 16, mtr_spec_lo, mtr_spec_hi,
-                  0, -60, a2_r, a2_g, a2_b);
-rk_curve_trace(_cx, _cy, _cw, _ch, eqbuf, EQ_PTS, 18, 1, ac_r, ac_g, ac_b);
+                  0, -60, 0.55, 0.62, 0.75);
+// Each band in its own colour: a shade of it filling the band's own bell,
+// brighter while its node is hovered or held (eqnm[8 + band] is that node's
+// hover ramp). Then the sum of them all, neutral, since it belongs to no one
+// band. With the EQ switched out everything dims -- the curve is still what
+// you would get, it is just not what you are hearing.
+_ea = eq_on ? 1 : 0.35;
+_j = 0;
+loop(4,
+  _ht = eqnm[8 + _j];
+  rk_curve_band(_cx, _cy, _cw, _ch, eqb + _j * EQ_PTS, EQ_PTS, 18,
+                eqc[_j * 3], eqc[_j * 3 + 1], eqc[_j * 3 + 2],
+                (0.13 + 0.14 * _ht) * _ea, (0.40 + 0.40 * _ht) * _ea);
+  _j += 1;
+);
+rk_curve_trace(_cx, _cy, _cw, _ch, eqbuf, EQ_PTS, 18, 0,
+               0.90 * _ea + 0.30 * (1 - _ea), 0.92 * _ea + 0.31 * (1 - _ea),
+               0.96 * _ea + 0.33 * (1 - _ea));
 
 // Nodes. rk_curve hands back where the grabbed node WANTS to be; clamping and
 // automation stay here, which is the whole reason it is reusable.
@@ -701,8 +727,8 @@ rk_curve_dblclk && _n >= 0 ? (
   _n == 2 ? ( eq_hmf = 0; slider_automate(eq_hmf); ) :
             ( eq_hi  = 0; slider_automate(eq_hi);  );
 );
-rk_curve_nodes_draw(eqnm, _cx, _cy, _cw, _ch, 18, eqf, eqd, 4,
-                    rk_curve_hov, ac_r, ac_g, ac_b);
+rk_curve_nodes_draw_rgb(eqnm, _cx, _cy, _cw, _ch, 18, eqf, eqd, 4,
+                        rk_curve_hov, eqc);
 ui_tip(_cx, _cy, _cw, _ch, "EQ curve — rk_curve. Drag a node, wheel for width, double-click to flatten");
 
 _nv = ui_toggle(m_eqon, c2 + px(10), st_y(280), w2 - px(20), px(24),

@@ -79,8 +79,11 @@ desc: ReaKit response-curve widget
 //        three words each, in node order. Pairs with rk_curve_band.
 //   rk_curve_palette(cbuf, n)
 //        fills `cbuf` with the library's band colours for `n` bands (up to 6),
-//        low to high: red, yellow, green, blue, violet, pink. ONE definition,
-//        so every plugin's band 1 is the same red. Call once, in @init.
+//        low to high, from red orange green teal blue violet. ONE definition,
+//        so every plugin's low band is the same orange. Call once, in @init.
+//   rk_curve_band_rgb(cbuf, i, c)
+//        one slot, by hand: colour `c` (0 red .. 5 violet) into node `i`, for a
+//        layout the palette does not guess -- a filter node, say.
 //
 // The TRACE buffer holds `n` dB values spread evenly across the rect in X, and
 // because X is log frequency that is log spacing in Hz. ~512 is a good `n`.
@@ -341,21 +344,37 @@ local(i, j, t, fr, x0, x1, y0, y1, cy_, top, bot) (
   );
 );
 
-// The band colours, in one place. They run in FREQUENCY order, low to high
-// like a spectrum, so neighbouring bands never share a hue -- two bands whose
-// fills overlap in the same colour read as one shape. A caller is free to fill
-// its own cbuf instead; this exists so that the ones that do not care all agree.
-function rk_curve_palette(cbuf, n) local(i) (
-  i = 0;
-  loop(min(max(n, 0), 6),
-    i == 0 ? ( cbuf[0]  = 1.00; cbuf[1]  = 0.42; cbuf[2]  = 0.42; ) :   // red
-    i == 1 ? ( cbuf[3]  = 0.98; cbuf[4]  = 0.80; cbuf[5]  = 0.08; ) :   // yellow
-    i == 2 ? ( cbuf[6]  = 0.29; cbuf[7]  = 0.87; cbuf[8]  = 0.50; ) :   // green
-    i == 3 ? ( cbuf[9]  = 0.29; cbuf[10] = 0.62; cbuf[11] = 1.00; ) :   // blue
-    i == 4 ? ( cbuf[12] = 0.68; cbuf[13] = 0.44; cbuf[14] = 0.96; ) :   // violet
-             ( cbuf[15] = 0.96; cbuf[16] = 0.45; cbuf[17] = 0.78; );    // pink
-    i += 1;
-  );
+// The band colours, in one place: the six the EON EQs wear (Swing's master and
+// per-pad EQ, EON Tone). They run in FREQUENCY order, low to high like a
+// spectrum, so neighbouring bands never share a hue -- two bands whose fills
+// overlap in the same colour read as one shape.
+//   0 red   1 orange   2 green   3 teal   4 blue   5 violet
+// The ends belong to the filters (HPF red, LPF violet) and teal to a second
+// mid, so fewer than six bands take the MIDDLE of the run, the way those EQs do:
+//   3 -> orange green blue          4 -> orange green teal blue
+//   5 -> red orange green blue violet          6 -> all of them
+function rk_curve_band_rgb(cbuf, i, c) (
+  c == 0 ? ( cbuf[i * 3] = 0.92; cbuf[i * 3 + 1] = 0.30; cbuf[i * 3 + 2] = 0.30; ) :
+  c == 1 ? ( cbuf[i * 3] = 0.96; cbuf[i * 3 + 1] = 0.60; cbuf[i * 3 + 2] = 0.18; ) :
+  c == 2 ? ( cbuf[i * 3] = 0.38; cbuf[i * 3 + 1] = 0.86; cbuf[i * 3 + 2] = 0.36; ) :
+  c == 3 ? ( cbuf[i * 3] = 0.22; cbuf[i * 3 + 1] = 0.82; cbuf[i * 3 + 2] = 0.70; ) :
+  c == 4 ? ( cbuf[i * 3] = 0.30; cbuf[i * 3 + 1] = 0.66; cbuf[i * 3 + 2] = 0.96; ) :
+           ( cbuf[i * 3] = 0.68; cbuf[i * 3 + 1] = 0.44; cbuf[i * 3 + 2] = 0.96; );
+);
+
+function rk_curve_palette(cbuf, n) (
+  n <= 1 ? ( rk_curve_band_rgb(cbuf, 0, 2); ) :
+  n == 2 ? ( rk_curve_band_rgb(cbuf, 0, 1); rk_curve_band_rgb(cbuf, 1, 4); ) :
+  n == 3 ? ( rk_curve_band_rgb(cbuf, 0, 1); rk_curve_band_rgb(cbuf, 1, 2);
+             rk_curve_band_rgb(cbuf, 2, 4); ) :
+  n == 4 ? ( rk_curve_band_rgb(cbuf, 0, 1); rk_curve_band_rgb(cbuf, 1, 2);
+             rk_curve_band_rgb(cbuf, 2, 3); rk_curve_band_rgb(cbuf, 3, 4); ) :
+  n == 5 ? ( rk_curve_band_rgb(cbuf, 0, 0); rk_curve_band_rgb(cbuf, 1, 1);
+             rk_curve_band_rgb(cbuf, 2, 2); rk_curve_band_rgb(cbuf, 3, 4);
+             rk_curve_band_rgb(cbuf, 4, 5); ) :
+           ( rk_curve_band_rgb(cbuf, 0, 0); rk_curve_band_rgb(cbuf, 1, 1);
+             rk_curve_band_rgb(cbuf, 2, 2); rk_curve_band_rgb(cbuf, 3, 3);
+             rk_curve_band_rgb(cbuf, 4, 4); rk_curve_band_rgb(cbuf, 5, 5); );
 );
 
 // ── Nodes ─────────────────────────────────────────────────────────────

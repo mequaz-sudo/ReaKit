@@ -279,6 +279,37 @@ Nothing else moved. If you are on 1.5.0 and right-click already did what you exp
         <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/a180135ccbf067c550b41809c2e9ed33b5748621/Library/rk_colorpick.jsfx-inc</source>
         <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/a180135ccbf067c550b41809c2e9ed33b5748621/Library/rk_adsr.jsfx-inc</source>
       </version>
+      <version name="1.5.2" author="Quaz (EON Studios)" time="2026-09-21T11:25:30Z">
+        <changelog><![CDATA[Fixed: right-click reset works in the showcase, which is where you would have tried it.
+
+1.5.1 taught ssl_knob_interact to read rmb_down, so every knob style could finally reset on right-click. It did not check the other end. ReaKit Elements and ReaKit Starter set their mouse globals inline rather than calling rk_frame_start, and neither of them set rmb_down — so the two files that ship with the package, and the two a new user opens first, were the two where the gesture still did nothing.
+
+Both set it now. If you are copying the setup block out of Elements or Starter into your own plugin, it is two lines, and the README example has them as well.
+
+That is three releases in a row touching one gesture: 1.5.0 supplied the flag, 1.5.1 taught the shared interact to read it, and 1.5.2 makes the demo that advertises it actually send it. Each fix was real and none of them was the whole path. There is now a check in the build that walks every global the widget libraries read and every file that ships, and fails if one is read and never set.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/ReaKit%20Elements.jsfx</source>
+        <source file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/ReaKit%20Starter.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_vu.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_curve.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_curve.jsfx-inc</source>
+        <source file="rk_popup.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_popup.jsfx-inc</source>
+        <source file="rk_ink.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_ink.jsfx-inc</source>
+        <source file="rk_tooltip.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_tooltip.jsfx-inc</source>
+        <source file="rk_textfield.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_textfield.jsfx-inc</source>
+        <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_colorpick.jsfx-inc</source>
+        <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/db24eea99034fa3c27ec9fe351cfede12f9b8e11/Library/rk_adsr.jsfx-inc</source>
+      </version>
     </reapack>
   </category>
   <category name="Floatter">

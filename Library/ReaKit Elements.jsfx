@@ -891,10 +891,10 @@ slider1 == 5 ? (
                     0, -60, 0.55,0.62,0.75);
   // Every band in its own colour, at the library's own alphas, lifted while
   // its node is hovered or held (cvnm + 8 is the node block's hover ramps).
-  // Then the sum over all of them.
+  // rk_curve_draw owns the order: shades, the summed curve, outlines on top.
   rk_curve_style(cv_bands, cv_nodes);
-  rk_curve_bands(_cx, _cy, _cw, _ch, cvb, CV_PTS, 4, 18, cvc, -1, cvnm + 8, -1, 0);
-  rk_curve_trace(_cx, _cy, _cw, _ch, cvbuf, CV_PTS, 18, 0, 0.90,0.92,0.96);
+  rk_curve_draw(_cx, _cy, _cw, _ch, cvb, CV_PTS, 4, 18, cvc, -1, cvnm + 8, -1, 0,
+                cvbuf, 0.90, 0.92, 0.96, 1);
 
   _n = rk_curve_nodes(cvnm, _cx, _cy, _cw, _ch, 18, cvf, cvd, 4);
   rk_curve_moved && _n >= 0 ? (

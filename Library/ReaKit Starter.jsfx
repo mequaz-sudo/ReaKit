@@ -693,14 +693,13 @@ rk_curve_plate(_cx, _cy, _cw, _ch, 18);
 rk_curve_analyser(_cx, _cy, _cw, _ch, eqspec, 16, mtr_spec_lo, mtr_spec_hi,
                   0, -60, 0.55, 0.62, 0.75);
 // Every band, in its own colour, in the look the two selectors below chose.
-// rk_curve_bands owns the alphas, the hover lift (eqnm + 8 is the node block's
+// rk_curve_draw owns the ORDER (shades, summed curve, outlines on top), the alphas, the hover lift (eqnm + 8 is the node block's
 // hover ramps, one per band) and the dimming while EQ IN is off -- the curve is
 // still what you would get, it is just not what you are hearing. Then the sum
 // of them all, neutral, since it belongs to no one band.
 rk_curve_style(eq_bands, eq_nodes);
-rk_curve_bands(_cx, _cy, _cw, _ch, eqb, EQ_PTS, 4, 18, eqc, -1, eqnm + 8, -1, !eq_on);
-rk_curve_trace_a(_cx, _cy, _cw, _ch, eqbuf, EQ_PTS, 18, 0, 0.90, 0.92, 0.96,
-                 eq_on ? 1 : 0.35);
+rk_curve_draw(_cx, _cy, _cw, _ch, eqb, EQ_PTS, 4, 18, eqc, -1, eqnm + 8, -1, !eq_on,
+              eqbuf, 0.90, 0.92, 0.96, eq_on ? 1 : 0.35);
 
 // Nodes. rk_curve hands back where the grabbed node WANTS to be; clamping and
 // automation stay here, which is the whole reason it is reusable.

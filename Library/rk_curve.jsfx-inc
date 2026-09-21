@@ -88,13 +88,25 @@ desc: ReaKit response-curve widget
 //        disc), 2 Badge (a bigger disc, the name under it). Never called, it is
 //        Fill and Ring. A plugin exposes the two as it likes; the default is the
 //        same everywhere, which is what makes two EQs side by side agree.
+//   rk_curve_draw(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim,
+//                 sbuf, tr, tg, tb, ta)
+//        ⭐ THE ONE CALL for a multi-band response: every band's shade, the
+//        0 dB line, the summed curve (`sbuf`, n points, colour tr,tg,tb at
+//        alpha ta), and LAST every band's coloured outline, over the summed
+//        curve. The ORDER lives here so no plugin can get it differently. The
+//        band arguments are rk_curve_bands's, below.
 //   rk_curve_bands(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim)
+//        the bands alone, all passes at once, for a graph with no summed curve.
 //        EVERY band, in the current style, at the house alphas -- they live
 //        here and nowhere else. `bbuf` is nb arrays of n dB values one after
 //        another; `cbuf` r,g,b per band; `ebuf` 1/0 per band for on/off (pass
 //        -1: all on); `hbuf` a 0..1 hover ramp per band (pass -1: none -- the
 //        node block's mem + 8 is exactly this); `sel` the selected band or -1;
-//        `dim` 1 while the whole EQ is bypassed. Call before the summed trace.
+//        `dim` 1 while the whole EQ is bypassed.
+//   rk_curve_bands_ex(..., what)
+//        the same, one PASS at a time: what = 1 shades, 4 the 0 dB line,
+//        2 outlines (add them). For a plugin that layers a second set of bands
+//        and has to interleave the passes itself; everyone else: rk_curve_draw.
 //   rk_curve_band(x, y, w, h, buf, n, dr, r, g, b, fill_a, line_a)
 //        ONE band's own contribution, in that band's colour: a shade of it
 //        filling to the midline at `fill_a`, and its outline at `line_a` (0
@@ -474,7 +486,14 @@ function rk_curve_style(bands, nodes) (
 //   axis  in the two styles that draw outlines, ONE neutral line along 0 dB,
 //         edge to edge, that every outline runs into (0.55)
 //   dim   everything x 0.35 while the whole EQ is bypassed
-function rk_curve_bands(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim)
+//
+// ⭐ ORDER. Shades, then the 0 dB line, then the SUMMED curve, then the coloured
+// outlines ON TOP of it. A band that overlaps no other IS the sum over its own
+// span, so with the outlines underneath the white curve hid every one of them
+// and "Fill + Lines" looked exactly like "Fill" (user, 2026-09-21: "draw the
+// colored outlines over the white curve"). Hence passes: rk_curve_draw runs
+// them in that order with the trace in the middle.
+function rk_curve_bands_ex(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim, what)
 local(i, en, ht, fa, la, k, r, g, b) (
   k = dim ? 0.35 : 1;
   i = 0;
@@ -487,19 +506,34 @@ local(i, en, ht, fa, la, k, r, g, b) (
          rkcv_sty_bands == RKCV_LINES ? ( en ? 0.85 + 0.15 * ht : 0.18 )
                                       : ( en ? 0.40 + 0.40 * ht : 0.18 );
     r = cbuf[i * 3]; g = cbuf[i * 3 + 1]; b = cbuf[i * 3 + 2];
-    rk_curve_band(x, y, w, h, bbuf + i * n, n, dr, r, g, b, fa * k, la * k);
-    // Alone, a one-pixel outline is too thin to carry a colour: a second pass
-    // a pixel lower gives it weight without a polygon.
-    rkcv_sty_bands == RKCV_LINES && en ?
-      rk_curve_band(x, y + 1, w, h, bbuf + i * n, n, dr, r, g, b, 0, la * k * 0.45);
+    (what & 1) && fa > 0 ? rk_curve_band(x, y, w, h, bbuf + i * n, n, dr, r, g, b, fa * k, 0);
+    (what & 2) && la > 0 ? (
+      rk_curve_band(x, y, w, h, bbuf + i * n, n, dr, r, g, b, 0, la * k);
+      // Alone, a one-pixel outline is too thin to carry a colour: a second pass
+      // a pixel lower gives it weight without a polygon.
+      rkcv_sty_bands == RKCV_LINES && en ?
+        rk_curve_band(x, y + 1, w, h, bbuf + i * n, n, dr, r, g, b, 0, la * k * 0.45);
+    );
     i += 1;
   );
-  // The line the outlines run into. Last, so it is unbroken; on the same pixel
-  // row the outlines snap to and the grid's own 0 dB line sits on.
-  rkcv_sty_bands != RKCV_FILL ? (
+  // The line the outlines run into: on the same pixel row the outlines snap to
+  // and the grid's own 0 dB line sits on. Under the summed curve, which is
+  // white where it lies flat along it.
+  (what & 4) && rkcv_sty_bands != RKCV_FILL ? (
     gfx_set(0.62, 0.66, 0.74, 0.55 * k);
     gfx_rect(x + 1, floor(y + h * 0.5), w - 2, 1);
   );
+);
+
+function rk_curve_bands(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim) (
+  rk_curve_bands_ex(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim, 7);
+);
+
+function rk_curve_draw(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim,
+                       sbuf, tr, tg, tb, ta) (
+  rk_curve_bands_ex(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim, 5);
+  rk_curve_trace_a(x, y, w, h, sbuf, n, dr, 0, tr, tg, tb, ta);
+  rk_curve_bands_ex(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim, 2);
 );
 
 // The band colours, in one place: the six the EON EQs wear (Swing's master and

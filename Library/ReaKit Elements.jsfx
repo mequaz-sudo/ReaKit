@@ -115,6 +115,7 @@ import meters_kbsg.jsfx-inc
 import rk_padgrid.jsfx-inc
 import rk_piano.jsfx-inc
 import rk_curve.jsfx-inc
+import rk_popup.jsfx-inc
 import rk_ink.jsfx-inc
 import rk_tooltip.jsfx-inc
 import rk_textfield.jsfx-inc
@@ -187,7 +188,24 @@ cpmem = freemem; freemem += RKCP_MEM;   // the colour picker
 el_hue = 0.58;                          // its value: -2 black, -1 white, 0..1 hue
 admem = freemem; freemem += RKAD_MEM;   // the envelope editor
 admem[0] = -1;
-el_a = 12; el_d = 180; el_s = 0.6; el_r = 300;   // ms, ms, 0..1, ms
+ppmem = freemem; freemem += RKPP_MEM;   // the envelope presets' dropdown
+
+// The envelope presets, keyed by the menu row that picks them: 1-based, as
+// rk_popup_run returns it. Row 1 is the menu's header and row 6 its separator,
+// so neither comes back; anything that is not a preset is the default.
+function el_env_preset(k) (
+  el_pre = k >= 2 && k <= 5 ? k : 7;    // the row the menu ticks
+  el_pre == 2 ? ( el_a = 1;   el_d = 160;  el_s = 0;    el_r = 90;   ) :   // Pluck
+  el_pre == 3 ? ( el_a = 4;   el_d = 700;  el_s = 0.35; el_r = 400;  ) :   // Keys
+  el_pre == 4 ? ( el_a = 450; el_d = 1200; el_s = 0.75; el_r = 1800; ) :   // Pad
+  el_pre == 5 ? ( el_a = 900; el_d = 400;  el_s = 1;    el_r = 3000; ) :   // Swell
+                ( el_a = 12;  el_d = 180;  el_s = 0.6;  el_r = 300;  );    // Default
+);
+function el_pre_name(k) (
+  k == 2 ? "Pluck" : k == 3 ? "Keys" : k == 4 ? "Pad" : k == 5 ? "Swell" :
+  k == 7 ? "Default" : "Custom";
+);
+el_env_preset(7);   // ms, ms, 0..1, ms
 
 @slider
 
@@ -248,6 +266,17 @@ CTRL = mouse_cap & 4; SHIFT = mouse_cap & 8;
 dt = time_precise() - _lt; _lt = time_precise(); hv_speed = 11; tau = 2*$pi;
 frame_wheel = mouse_wheel / 120; mouse_wheel = 0;
 
+// The keyboard. The text field drains the queue itself while it is open; the
+// rest of the time one key a frame is read here. That is all the dropdown
+// needs (ESC closes it), and it keeps keys from piling up while nothing is
+// listening — with want_all_kb the queue fills whenever this window has focus.
+el_key = rk_text_active(tfmem) ? 0 : gfx_getchar();
+
+// While the dropdown's menu is open nothing drawn after this sees the mouse,
+// so a click cannot land on a widget under it. rk_popup_run, last in @gfx,
+// gets the real values back.
+rk_popup_gate(ppmem);
+
 // REAKIT ELEMENTS (title)
 gfx_setfont(1,"Arial",max(9,floor(14*sc_ui)),'b'); gfx_set(0.85,0.20,0.11); gfx_x=sc_ui*14; gfx_y=sc_ui*18; gfx_drawstr("REAKIT ELEMENTS");
 
@@ -263,10 +292,10 @@ btn_tab_draw(sc_ui*441, sc_ui*10, sc_ui*93, sc_ui*28, 3, slider1, "METERS", bm[0
 btn_tab_draw(sc_ui*538, sc_ui*10, sc_ui*93, sc_ui*28, 4, slider1, "PADS/KEYS", bm[0]);
 btn_tab_draw(sc_ui*635, sc_ui*10, sc_ui*93, sc_ui*28, 5, slider1, "CURVE", bm[0]);
 
-// Leaving the Buttons tab closes its text field, keeping what was typed. It is
-// not run on another tab, so one left open would go on holding the keyboard
-// for a page that is not showing.
-slider1 != 1 ? rk_text_close(tfmem);
+// Leaving the Buttons tab closes its text field, keeping what was typed, and
+// its dropdown. Neither is run on another tab, so one left open would go on
+// holding the keyboard, or the mouse, for a page that is not showing.
+slider1 != 1 ? ( rk_text_close(tfmem); rk_popup_close(ppmem); );
 
 // The spectrum bins are fed here, not inside a tab, because TWO tabs read them
 // — Meters draws the bars and Curve uses them as the analyser behind the graph.
@@ -489,7 +518,7 @@ btn_tab_draw(ox+sc*458, sc*233, sc*57, sc*26, 2, slider31, "Mod", bm[0]);
 // ── the widgets that came out of Swing, on the tab with room for them ──
 slider1 == 1 ? (
   gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80);
-  gfx_x=ox+sc*14; gfx_y=sc*292; gfx_drawstr("TEXT · COLOUR · ENVELOPE · INK · TOOLTIP");
+  gfx_x=ox+sc*14; gfx_y=sc*292; gfx_drawstr("TEXT · COLOUR · ENVELOPE · DROPDOWN · INK · TOOLTIP");
 
   // rk_textfield — click it and type. Enter commits, ESC puts it back. SPACE
   // reaches it only because the options line asks for want_all_kb.
@@ -513,12 +542,36 @@ slider1 == 1 ? (
               el_a, el_d, el_s, el_r, 1000, 10000, 5000, 0.29, 0.62, 1.00);
   rk_adsr_moved ? (
     el_a = rk_adsr_a; el_d = rk_adsr_d; el_s = rk_adsr_s; el_r = rk_adsr_r;
+    el_pre = 0;   // drawn by hand now, so no preset is ticked
   );
   gfx_setfont(1,"Arial",max(8,floor(10*sc))); gfx_set(0.55,0.58,0.64);
   sprintf(#_el_s, "A %.0f   D %.0f   S %.2f   R %.0f ms", el_a, el_d, el_s, el_r);
   gfx_x = ox+sc*372; gfx_y = sc*378; gfx_drawstr(#_el_s);
   mx >= ox+sc*14 && mx < ox+sc*362 && my >= sc*378 && my < sc*442 ?
     rk_tooltip_check(905, "rk_adsr — drag a corner. Time is log, so 1-50 ms is reachable");
+
+  // rk_popup — the box is ours, the list is the widget's. A click on the box
+  // opens the menu, and the pick comes back from rk_popup_run at the end of
+  // @gfx. The menu is rebuilt every frame so its tick follows the envelope:
+  // pick a preset and it is ticked, drag a corner and nothing is. The header,
+  // the tick and the empty separator row are gfx_showmenu's own syntax.
+  sprintf(#el_menu, "#ENVELOPE|%sPluck|%sKeys|%sPad|%sSwell||%sDefault",
+          el_pre == 2 ? "!" : "", el_pre == 3 ? "!" : "", el_pre == 4 ? "!" : "",
+          el_pre == 5 ? "!" : "", el_pre == 7 ? "!" : "");
+  _dx = ox+sc*372; _dy = sc*400; _dw = sc*150; _dh = sc*24;
+  _dhov = mx >= _dx && mx < _dx + _dw && my >= _dy && my < _dy + _dh;
+  gfx_set(0, 0, 0, 0.30); gfx_rect(_dx, _dy, _dw, _dh);
+  gfx_set(0.29, 0.62, 1.00, rk_popup_active(ppmem) ? 0.95 : _dhov ? 0.65 : 0.30);
+  gfx_rect(_dx, _dy, _dw, 1); gfx_rect(_dx, _dy + _dh - 1, _dw, 1);
+  gfx_rect(_dx, _dy, 1, _dh); gfx_rect(_dx + _dw - 1, _dy, 1, _dh);
+  gfx_setfont(1,"Arial",max(8,floor(_dh*0.55))); gfx_set(0.84,0.855,0.886,1);
+  gfx_x = _dx + sc*8; gfx_y = _dy + (_dh - gfx_texth) * 0.5;
+  gfx_drawstr(el_pre_name(el_pre));
+  gfx_set(0.29, 0.62, 1.00, 0.85);
+  gfx_triangle(_dx + _dw - sc*15, _dy + _dh*0.42, _dx + _dw - sc*7, _dy + _dh*0.42,
+               _dx + _dw - sc*11, _dy + _dh*0.64);
+  _dhov && lmb_down && !rk_popup_active(ppmem) ? rk_popup_open(ppmem, _dx, _dy + _dh, _dw);
+  _dhov ? rk_tooltip_check(906, "rk_popup — a menu that draws itself: #header, !tick, separator");
 
   // rk_ink — the SAME call on three lightnesses of the colour you just picked.
   // Drag the picker above and watch the label flip from dark to light on its
@@ -844,3 +897,8 @@ slider1 == 3 ? (
   _vu_pk = vu_0.rk_vu_picker(ox+sc*14, sc*80, sc*250, sc*150, _vu_face);
   _vu_pk >= 0 ? _vu_face = _vu_pk;
 );
+
+// The dropdown's menu, genuinely last: it draws over everything, tooltips
+// included. A pick loads that envelope; ESC or a click away changes nothing.
+_pp = rk_popup_run(ppmem, #el_menu, sc*18, el_key, 0.29, 0.62, 1.00);
+_pp > 0 ? el_env_preset(_pp);

@@ -408,19 +408,18 @@ local(i, j, t, fr, x0, x1, y0, y1, cy_, top, bot) (
         i += 1;
       );
     );
-    // The outline FADES into the midline over its last few pixels. It used to
-    // stop dead half a pixel from it, which is invisible under a fill (the
-    // shade ends there too) and, drawn alone, left each band's line hanging in
-    // mid-air beside a 0 dB gridline too faint to read as where it had gone.
+    // The outline is SOLID and ends where the band meets the midline (a segment
+    // with both ends within half a pixel of 0 dB is skipped, so four bands do
+    // not stack four lines along it). It briefly FADED in over its last 4 px:
+    // a bell's tail nears 0 dB so slowly that those 4 px were a long stretch of
+    // the graph, and every line went weak and murky. Do not bring that back.
     line_a > 0 ? (
       gfx_set(r, g, b, line_a);
       i = 0;
       loop(n - 1,
         y0 = min(max(rk_curve_d2y(buf[i],     y, h, dr), top), bot);
         y1 = min(max(rk_curve_d2y(buf[i + 1], y, h, dr), top), bot);
-        t = max(abs(y0 - cy_), abs(y1 - cy_));
-        t >= 0.25 ? (
-          gfx_a = line_a * min(t * 0.25, 1);      // full strength from 4 px out
+        abs(y0 - cy_) >= 0.5 || abs(y1 - cy_) >= 0.5 ? (
           x0 = x + i * w / (n - 1);
           x1 = x + (i + 1) * w / (n - 1);
           gfx_line(x0, y0, x1, y1);

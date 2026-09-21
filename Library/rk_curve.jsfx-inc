@@ -300,49 +300,69 @@ function rk_curve_plate_ex(x, y, w, h, dr, mode) (
 function rk_curve_plate(x, y, w, h, dr) ( rk_curve_plate_ex(x, y, w, h, dr, 0); );
 
 // ── Analyser underlay ─────────────────────────────────────────────────
-// Filled to the bottom, quads guarded on an integer column change so many
-// bands landing in one pixel do not each emit a degenerate triangle.
+// A shade down to the floor, and an OUTLINE along its top.
+//
+// ⭐ Bands are placed BY FREQUENCY, not by spreading them evenly across the
+// rect. The first version assumed the buffer spanned the whole graph, which was
+// true only while the analyser and the graph happened to share a range -- and
+// the moment the meter's span changed with srate, every band moved. Each pixel
+// asks what frequency it is and fetches the level for it, so the two align
+// however either one is configured.
+//
+// ⭐ OUTSIDE the buffer's span it ROLLS OFF to the floor, reaching it at the
+// graph's own edge. It used to draw nothing there, so a meter covering 40 Hz to
+// 16 kHz on a 20 Hz to 20 kHz graph began with a vertical WALL at 40 Hz, the
+// full height of whatever the lowest band read. That reads as cut off, not as
+// "no data below here".
+//
+// ⭐ The outline is CONTINUOUS and carries the shape. It used to be one dot per
+// column at 0.32, which on a steep slope broke into a dotted line; and the shade
+// is faint on purpose, so once coloured band shades were drawn over it the
+// analyser vanished wherever a band was -- it looked chopped off flat along
+// 0 dB. (EON Tone's analyser reads through its bands the same way: by its line.)
+// Nothing is drawn along the floor: a silent analyser used to rule a line there.
+
+// The level at one frequency, in dB, including the roll-off outside the span.
+function rk_curve_an_db(fx, buf, n, f_lo, f_hi, lspan, floor_db)
+local(t, j, fr) (
+  fx < f_lo ? (
+    t = log(fx / RKCV_FMIN) / max(log(f_lo / RKCV_FMIN), 0.0001);
+    floor_db + (buf[0] - floor_db) * min(max(t, 0), 1);
+  ) : fx > f_hi ? (
+    t = log(RKCV_FMAX / fx) / max(log(RKCV_FMAX / f_hi), 0.0001);
+    floor_db + (buf[n - 1] - floor_db) * min(max(t, 0), 1);
+  ) : (
+    t  = log(fx / max(f_lo, 1)) / lspan * (n - 1);
+    j  = floor(t);
+    fr = t - j;
+    j < 0 ? ( j = 0; fr = 0; );
+    j >= n - 1 ? ( j = n - 2; fr = 1; );
+    buf[j] + (buf[j + 1] - buf[j]) * fr;
+  );
+);
 
 function rk_curve_analyser(x, y, w, h, buf, n, f_lo, f_hi, ceil_db, floor_db, r, g, b)
-local(i, x0, x1, y0, y1, bot, t, j, fr, fx, lspan) (
+local(i, y0, py, bot, lspan) (
   n < 2 ? 0 : (
     bot = y + h - 1;
     lspan = log(max(f_hi, f_lo * 2) / max(f_lo, 1));
-    // ⭐ Bands are placed BY FREQUENCY, not by spreading them evenly across the
-    // rect. The first version assumed the buffer spanned the whole graph, which
-    // was true only while the analyser and the graph happened to share a range
-    // — and the moment the meter's span changed with srate, every band moved.
-    // Each pixel asks what frequency it is and fetches the band for it, so the
-    // two align however either one is configured.
     gfx_set(r, g, b, 0.13);
+    py = bot;
     i = 0;
     loop(floor(w),
-      fx = rk_curve_x2f(x + i, x, w);
-      fx >= f_lo && fx <= f_hi ? (
-        t  = log(fx / max(f_lo, 1)) / lspan * (n - 1);
-        j  = floor(t);
-        fr = t - j;
-        j < 0 ? ( j = 0; fr = 0; );
-        j >= n - 1 ? ( j = n - 2; fr = 1; );
-        y0 = rk_curve_a2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, ceil_db, floor_db);
-        y0 < bot ? gfx_rect(x + i, y0, 1, bot - y0);
+      y0 = rk_curve_a2y(rk_curve_an_db(rk_curve_x2f(x + i, x, w), buf, n, f_lo, f_hi, lspan, floor_db),
+                        y, h, ceil_db, floor_db);
+      y0 < bot ? (
+        gfx_a = 0.13;
+        gfx_rect(x + i, y0, 1, bot - y0);
       );
-      i += 1;
-    );
-    // Capping line, same placement, so the edge and the fill agree.
-    gfx_set(r, g, b, 0.32);
-    i = 1;
-    loop(floor(w) - 1,
-      fx = rk_curve_x2f(x + i, x, w);
-      fx >= f_lo && fx <= f_hi ? (
-        t  = log(fx / max(f_lo, 1)) / lspan * (n - 1);
-        j  = floor(t); fr = t - j;
-        j < 0 ? ( j = 0; fr = 0; );
-        j >= n - 1 ? ( j = n - 2; fr = 1; );
-        y0 = rk_curve_a2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, ceil_db, floor_db);
-        y1 = rk_curve_a2y(buf[j], y, h, ceil_db, floor_db);
-        gfx_rect(x + i, y0, 1, 1);
+      // the outline, from the previous column's top to this one's -- skipped
+      // while both sit on the floor
+      i > 0 && (y0 < bot - 0.5 || py < bot - 0.5) ? (
+        gfx_a = 0.45;
+        gfx_line(x + i - 1, py, x + i, y0);
       );
+      py = y0;
       i += 1;
     );
   );

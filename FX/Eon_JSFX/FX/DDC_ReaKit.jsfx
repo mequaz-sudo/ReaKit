@@ -1,0 +1,784 @@
+desc:EON: DDC
+// EON Studios — ReaKit Suite
+// DSP: Digital Drum Compressor by LOSER (Michael Gruhn, 2006)
+// ReaKit GUI: Quaz
+// v2.0.0
+options:gmem=Swing_Media_Transfer no_meter
+
+import ../../ReaKit/knobs_kbsg.jsfx-inc
+import ../../ReaKit/buttons_kbsg.jsfx-inc
+import ../../ReaKit/smooth_kbsg.jsfx-inc
+import ../../ReaKit/oversample_kbsg.jsfx-inc
+import ../../ReaKit/rk_theme.jsfx-inc
+
+in_pin:left input
+in_pin:right input
+in_pin:sidechain left input
+in_pin:sidechain right input
+out_pin:left output
+out_pin:right output
+
+slider1:-20<-60,0,.1>-Threshold (dB)
+slider2:20<0,50,.1>-Ratio
+slider3:20<0,500,1>-Attack (ms)
+slider4:.5<0,500,.1>-Hold (ms)
+slider5:200<0,1000,1>-Release (ms)
+slider6:0<0,1000,1>-RMS Size (ms)
+slider7:0<0,2,1{Feedforward,Feedback,Sidechain}>-Feed
+slider8:0<0,1,1{No,Yes}>-Auto Make-Up
+slider9:0<-120,60,1>-Output (dB)
+slider10:0,-Reduction (dB)
+slider11:0<0,20,0.1>-Knee (dB)
+slider12:100<0,100,1>-Mix (%)
+slider13:0<0,500,1>-SC HPF (Hz)
+slider14:100<0,100,1>-Link (%)
+slider15:0<0,1,1{Off,2x}>-Oversample
+slider16:0<0,5,0.1>-Lookahead (ms)
+
+@init
+gfx_ext_retina = 1;
+// Render the embedded UI without REAPER's frame/title-bar decoration
+// (REAPER 7.45+, gfx_ext_flags 0x100). Must be set in @init, not @gfx.
+gfx_ext_flags |= 0x100 | 0x400; // +0x400: no MCP hover tooltip (7.79+; older ignores)
+ext_tail_size = -1;
+gain = seekgain = 1;
+gainL = seekgainL = 1;
+gainR = seekgainR = 1;
+c_ampdB = 8.65617025;
+ext_gr_meter = 0;
+cDenorm = pow(10,-30);
+dsp_dirty = 0;
+snap_params = 1;
+
+// Gain smoothers (10ms)
+gain_sL.smooth_init(10);
+gain_sL.smooth_set(1);
+gain_sR.smooth_init(10);
+gain_sR.smooth_set(1);
+
+// Oversampling
+os.os2_stereo_reset();
+
+// GUI memory — above DDC's max 1M RMS buffer
+KS = 16; BS = 8;
+freemem = 1100000;
+km  = freemem; freemem += 12 * KS;  // 12 knobs (was 7)
+bm  = freemem; freemem += 2 * BS;   // feed segment + auto pill
+
+// Lookahead ring buffers (max 5ms @ 192k = 960, use 1024)
+la_buf_L = freemem; freemem += 1024;
+la_buf_R = freemem; freemem += 1024;
+la_pos = 0;
+la_size = 0;
+
+// SC HPF biquad state
+sc_hpf_b0 = 1; sc_hpf_b1 = 0; sc_hpf_b2 = 0;
+sc_hpf_a1 = 0; sc_hpf_a2 = 0;
+sc_hpf_x1L = 0; sc_hpf_x2L = 0; sc_hpf_y1L = 0; sc_hpf_y2L = 0;
+sc_hpf_x1R = 0; sc_hpf_x2R = 0; sc_hpf_y1R = 0; sc_hpf_y2R = 0;
+sc_hpf_on = 0;
+
+// RMS ring buffer for stereo unlinked (R channel)
+// L channel reuses existing rms_bpos[0..rms_size] at address 0
+rms_buf_R = freemem; freemem += 1000001;
+rms_sqr_sum_R = 0; rms_bpos_R = 0;
+
+// SSL palette
+bg_r  = 0.42; bg_g  = 0.43; bg_b  = 0.44;
+hdr_r = 0.33; hdr_g = 0.34; hdr_b = 0.35;
+ac_r  = 0.18; ac_g  = 0.18; ac_b  = 0.20;
+txt_r = 0.12; txt_g = 0.12; txt_b = 0.14;
+knb_r = 0.55; knb_g = 0.62; knb_b = 0.74;
+knb_gr = 0.35; knb_gg = 0.72; knb_gb = 0.38;   // green (thresh)
+knb_wr = 0.82; knb_wg = 0.84; knb_wb = 0.86;   // white (output)
+dm_r  = 0.25; dm_g  = 0.26; dm_b  = 0.28;
+led_r = 0.92; led_g = 0.68; led_b = 0.12;
+
+gr_disp = 0;
+
+// ── DSP recalc ──────────────────────────────────────────────
+function recalc_dsp() (
+  treshdB = min(slider1,-.1);
+  tresh = exp(treshdB/c_ampdB);
+  ratio_1 = ratio;
+  ratio = max(slider2,0.0001);
+
+  treshdB == -.1 || ratio_1 < .1  ? (
+    gainL = seekgainL = 1;
+    gainR = seekgainR = 1;
+  );
+
+  attack = exp( -treshdB/max( slider3*srate/1000 , 1) / c_ampdB  ) ;
+  hold = slider4/1000*srate;
+  under_treshL = 0; under_treshR = 0;
+  release = exp( -treshdB/max( slider5*srate/1000 , 1) / c_ampdB ) ;
+
+  rms_size_1 = rms_size;
+  rms_size = min( max(slider6/1000*srate,1) , 1000000);
+  rms_size_1 != rms_size ? (
+      rms_sqr_sum = rms_bpos = 0;
+      memset(0,0,rms_size);
+      rms_sqr_sum_R = rms_bpos_R = 0;
+      memset(rms_buf_R, 0, rms_size);
+  );
+
+  feed = slider7;
+
+  mode_make_up = ratio < .5 ? 1:slider8;
+
+  rms_size == 1 ? (
+      volume = exp(slider9/c_ampdB) / (mode_make_up ? tresh+(1-tresh)/ratio : 1);
+  ):(
+      volume = exp(slider9/c_ampdB) / (mode_make_up ? tresh+(1-tresh)/ratio * 2.828427125 : 1);
+  );
+
+  seekgainL = 1; seekgainR = 1;
+
+  // Knee
+  knee = slider11;
+  knee_lo = treshdB - knee * 0.5;
+  knee_hi = treshdB + knee * 0.5;
+
+  // Mix
+  mix_pct = slider12 / 100;
+
+  // SC HPF (RBJ highpass)
+  sc_hpf_freq = slider13;
+  sc_hpf_on = sc_hpf_freq > 0;
+  sc_hpf_on ? (
+    _w0 = 2 * $pi * sc_hpf_freq / srate;
+    _cs = cos(_w0); _sn = sin(_w0);
+    _alpha = _sn / (2 * 0.707);  // Q = 0.707
+    _a0 = 1 + _alpha;
+    sc_hpf_b0 = ((1 + _cs) * 0.5) / _a0;
+    sc_hpf_b1 = -(1 + _cs) / _a0;
+    sc_hpf_b2 = sc_hpf_b0;
+    sc_hpf_a1 = (-2 * _cs) / _a0;
+    sc_hpf_a2 = (1 - _alpha) / _a0;
+  );
+
+  // Stereo link
+  link_pct = slider14 / 100;
+
+  // Oversampling
+  os_on = slider15;
+  os_on ? os.os2_stereo_reset();
+
+  // Lookahead
+  la_ms = slider16;
+  la_size_new = min(floor(la_ms * 0.001 * srate + 0.5), 1024);
+  la_size_new != la_size ? (
+    la_size = la_size_new;
+    la_pos = 0;
+    memset(la_buf_L, 0, 1024);
+    memset(la_buf_R, 0, 1024);
+  );
+
+
+  // Gain smoothers (handle srate changes)
+  gain_sL.smooth_init(10);
+  gain_sR.smooth_init(10);
+);
+
+@slider
+recalc_dsp();
+
+@block
+atomic_get(dsp_dirty) ? (
+  recalc_dsp();
+  atomic_set(dsp_dirty, 0);
+);
+// PDC is declared here, at block rate (house rule: never in @init/@slider).
+pdc_delay = (os_on ? 3 : 0) + la_size;
+pdc_bot_ch = 0; pdc_top_ch = 2;
+
+@sample
+// ── Snap smoothers on project load (avoid audible ramp) ──
+snap_params ? (
+  gain_sL.smooth_set(gainL);
+  gain_sR.smooth_set(gainR);
+  snap_params = 0;
+);
+
+// ── Store dry for Mix ──
+dry0 = spl0; dry1 = spl1;
+
+// ── Detection signal ──
+feed == 0 ? ( sc_L = spl0; sc_R = spl1; );
+feed == 1 ? ( sc_L = spl0_out; sc_R = spl1_out; );
+feed == 2 ? ( sc_L = spl2; sc_R = spl3; );
+
+// ── SC HPF (filter kick from detection) ──
+sc_hpf_on ? (
+  _inL = sc_L + cDenorm;
+  sc_L = sc_hpf_b0 * _inL + sc_hpf_b1 * sc_hpf_x1L + sc_hpf_b2 * sc_hpf_x2L
+         - sc_hpf_a1 * sc_hpf_y1L - sc_hpf_a2 * sc_hpf_y2L;
+  sc_hpf_x2L = sc_hpf_x1L; sc_hpf_x1L = _inL;
+  sc_hpf_y2L = sc_hpf_y1L; sc_hpf_y1L = sc_L;
+
+  _inR = sc_R + cDenorm;
+  sc_R = sc_hpf_b0 * _inR + sc_hpf_b1 * sc_hpf_x1R + sc_hpf_b2 * sc_hpf_x2R
+         - sc_hpf_a1 * sc_hpf_y1R - sc_hpf_a2 * sc_hpf_y2R;
+  sc_hpf_x2R = sc_hpf_x1R; sc_hpf_x1R = _inR;
+  sc_hpf_y2R = sc_hpf_y1R; sc_hpf_y1R = sc_R;
+);
+
+// ── Stereo link blending ──
+lev_L = abs(sc_L); lev_R = abs(sc_R);
+linked = max(lev_L, lev_R);
+det_L = lev_L + (linked - lev_L) * link_pct;
+det_R = lev_R + (linked - lev_R) * link_pct;
+
+// ── RMS (L channel) ──
+rms_sqr_sum = max(rms_sqr_sum - rms_bpos[0], 0) + (rms_bpos[0] = sqr(det_L));
+(rms_bpos += 1) >= rms_size ? rms_bpos = 0;
+rmsL = sqrt(rms_sqr_sum / rms_size);
+
+// ── RMS (R channel) ──
+rms_sqr_sum_R = max(rms_sqr_sum_R - (rms_buf_R + rms_bpos_R)[0], 0) + ((rms_buf_R + rms_bpos_R)[0] = sqr(det_R));
+(rms_bpos_R += 1) >= rms_size ? rms_bpos_R = 0;
+rmsR = sqrt(rms_sqr_sum_R / rms_size);
+
+// ── Gain computation L channel ──
+knee > 0 ? (
+  rms_dB = log(max(rmsL, 0.0000001)) * c_ampdB;
+  rms_dB < knee_lo ? (
+    (under_treshL += 1) > hold ? ( seekgainL = 1; );
+  ) : rms_dB < knee_hi ? (
+    _x = (rms_dB - knee_lo) / knee;
+    _eff_r = 1 + (ratio - 1) * _x * _x * 0.5;
+    _sg = exp((treshdB + (rms_dB - treshdB) / _eff_r - rms_dB) / c_ampdB);
+    hold ? (
+      ratio > 1 ? ( seekgainL = min(_sg, seekgainL); ) : ( seekgainL = max(_sg, seekgainL); );
+    ) : ( seekgainL = _sg; );
+    under_treshL = 0;
+  ) : (
+    _sg = (tresh + (rmsL - tresh) / ratio) / max(rmsL, 0.000001);
+    hold ? (
+      ratio > 1 ? ( seekgainL = min(_sg, seekgainL); ) : ( seekgainL = max(_sg, seekgainL); );
+    ) : ( seekgainL = _sg; );
+    under_treshL = 0;
+  );
+) : (
+  rmsL > tresh ? (
+    hold ? (
+      ratio > 1 ? ( seekgainL = min((tresh + (rmsL - tresh) / ratio) / max(rmsL, 0.000001), seekgainL); )
+                : ( seekgainL = max((tresh + (rmsL - tresh) / ratio) / max(rmsL, 0.000001), seekgainL); );
+    ) : ( seekgainL = (tresh + (rmsL - tresh) / ratio) / max(rmsL, 0.000001); );
+    under_treshL = 0;
+  ) : (
+    (under_treshL += 1) > hold ? ( seekgainL = 1; );
+  );
+);
+
+// ── Gain computation R channel ──
+knee > 0 ? (
+  rms_dB = log(max(rmsR, 0.0000001)) * c_ampdB;
+  rms_dB < knee_lo ? (
+    (under_treshR += 1) > hold ? ( seekgainR = 1; );
+  ) : rms_dB < knee_hi ? (
+    _x = (rms_dB - knee_lo) / knee;
+    _eff_r = 1 + (ratio - 1) * _x * _x * 0.5;
+    _sg = exp((treshdB + (rms_dB - treshdB) / _eff_r - rms_dB) / c_ampdB);
+    hold ? (
+      ratio > 1 ? ( seekgainR = min(_sg, seekgainR); ) : ( seekgainR = max(_sg, seekgainR); );
+    ) : ( seekgainR = _sg; );
+    under_treshR = 0;
+  ) : (
+    _sg = (tresh + (rmsR - tresh) / ratio) / max(rmsR, 0.000001);
+    hold ? (
+      ratio > 1 ? ( seekgainR = min(_sg, seekgainR); ) : ( seekgainR = max(_sg, seekgainR); );
+    ) : ( seekgainR = _sg; );
+    under_treshR = 0;
+  );
+) : (
+  rmsR > tresh ? (
+    hold ? (
+      ratio > 1 ? ( seekgainR = min((tresh + (rmsR - tresh) / ratio) / max(rmsR, 0.000001), seekgainR); )
+                : ( seekgainR = max((tresh + (rmsR - tresh) / ratio) / max(rmsR, 0.000001), seekgainR); );
+    ) : ( seekgainR = (tresh + (rmsR - tresh) / ratio) / max(rmsR, 0.000001); );
+    under_treshR = 0;
+  ) : (
+    (under_treshR += 1) > hold ? ( seekgainR = 1; );
+  );
+);
+
+// ── Attack/release envelope (per-channel) ──
+gainL > seekgainL ? gainL = max(gainL / attack, seekgainL) : gainL = min(gainL * release, seekgainL);
+gainR > seekgainR ? gainR = max(gainR / attack, seekgainR) : gainR = min(gainR * release, seekgainR);
+
+// ── Smooth gain (eliminates zipper noise) ──
+gL = gain_sL.smooth(gainL) * volume;
+gR = gain_sR.smooth(gainR) * volume;
+
+// ── Lookahead: delay audio, detection stays current ──
+la_size > 0 ? (
+  // Write current into buffer, read delayed
+  _la_out_L = la_buf_L[la_pos];
+  _la_out_R = la_buf_R[la_pos];
+  la_buf_L[la_pos] = spl0;
+  la_buf_R[la_pos] = spl1;
+  la_pos = (la_pos + 1) % la_size;
+  spl0 = _la_out_L;
+  spl1 = _la_out_R;
+);
+
+// ── Apply gain (with optional 2x oversampling) ──
+os_on ? (
+  os.os2_stereo_up(spl0, spl1);
+  os.y1L *= gL; os.y1R *= gR;
+  os.y0L *= gL; os.y0R *= gR;
+  os.os2_stereo_down();
+  spl0 = os.outL;
+  spl1 = os.outR;
+) : (
+  spl0 *= gL;
+  spl1 *= gR;
+);
+
+// ── Mix (parallel compression) ──
+mix_pct < 1 ? (
+  spl0 = dry0 + (spl0 - dry0) * mix_pct;
+  spl1 = dry1 + (spl1 - dry1) * mix_pct;
+);
+
+spl0_out = spl0;
+spl1_out = spl1;
+
+// ── GR meter (show worst channel) ──
+_gr_gain = min(gain_sL.val, gain_sR.val);
+ext_gr_meter = slider10 = log(_gr_gain) * c_ampdB;
+sliderchange(512);
+
+@gfx 600 520
+gfx_clear = 0x706E6B;
+// ── EON theme: when a theme is live, follow the suite palette (read-only band);
+// otherwise restore DDC's native SSL greys. rk_theme_apply() re-skins the shared
+// button-library globals; the block below maps the semantic band onto DDC's own
+// palette vars (BG/PANEL/TEXT/ACCENT). Green/white knobs stay semantic.
+rk_theme_apply();
+// Theme knob STYLE (shape) — follow the suite's published knob style, else SSL.
+sk_kp = (gmem[GS_THEME_ID] > 0 && gmem[GS_THEME_KNOB_P] > 0) ? (gmem[GS_THEME_KNOB_P] | 0) : 1;
+gmem[GS_THEME_ID] > 0 ? (
+  bg_r =gmem[GS_THEME_BASE   ]; bg_g =gmem[GS_THEME_BASE+1 ]; bg_b =gmem[GS_THEME_BASE+2 ];  // BG
+  hdr_r=gmem[GS_THEME_BASE+3 ]; hdr_g=gmem[GS_THEME_BASE+4 ]; hdr_b=gmem[GS_THEME_BASE+5 ];  // PANEL
+  txt_r=gmem[GS_THEME_BASE+6 ]; txt_g=gmem[GS_THEME_BASE+7 ]; txt_b=gmem[GS_THEME_BASE+8 ];  // TEXT
+  dm_r =gmem[GS_THEME_BASE+9 ]; dm_g =gmem[GS_THEME_BASE+10]; dm_b =gmem[GS_THEME_BASE+11];  // TEXT_DIM (value readouts / subtitle)
+  ac_r =gmem[GS_THEME_BASE+12]; ac_g =gmem[GS_THEME_BASE+13]; ac_b =gmem[GS_THEME_BASE+14];  // ACCENT (segment on)
+  knb_r =gmem[GS_THEME_BASE+12]; knb_g =gmem[GS_THEME_BASE+13]; knb_b =gmem[GS_THEME_BASE+14]; // ACCENT (row-2 knobs)
+  knb_gr=gmem[GS_THEME_BASE+12]; knb_gg=gmem[GS_THEME_BASE+13]; knb_gb=gmem[GS_THEME_BASE+14]; // ACCENT (row-1 knobs)
+  knb_wr=gmem[GS_THEME_BASE+15]; knb_wg=gmem[GS_THEME_BASE+16]; knb_wb=gmem[GS_THEME_BASE+17]; // ACCENT2 (output knob)
+  led_r=gmem[GS_THEME_BASE+12]; led_g=gmem[GS_THEME_BASE+13]; led_b=gmem[GS_THEME_BASE+14];  // ACCENT (AUTO LED)
+) : (
+  bg_r=0.42;bg_g=0.43;bg_b=0.44; hdr_r=0.33;hdr_g=0.34;hdr_b=0.35; txt_r=0.12;txt_g=0.12;txt_b=0.14;
+  dm_r=0.25;dm_g=0.26;dm_b=0.28; // TEXT_DIM (native SSL dim grey)
+  ac_r=0.18;ac_g=0.18;ac_b=0.20; knb_r=0.55;knb_g=0.62;knb_b=0.74; led_r=0.92;led_g=0.68;led_b=0.12;
+  knb_gr=0.35;knb_gg=0.72;knb_gb=0.38; knb_wr=0.82;knb_wg=0.84;knb_wb=0.86;
+);
+// 0x200 (embedded click-through) is now armed conditionally inside the
+// embedded branch — only over dead zones — see below.
+gfx_getchar(); // enable keyboard/focus handling
+// ── Mouse ────────────────────────────────────────────────
+mx = mouse_x; my = mouse_y;
+prev_LMB = LMB; LMB = (mouse_cap & 1);
+lmb_down    = LMB && !prev_LMB;
+CTRL        = (mouse_cap & 4) ? 1 : 0;
+SHIFT       = mouse_cap & 8;
+frame_wheel = mouse_wheel / 120; mouse_wheel = 0;
+dt          = 1/60;
+tau         = 2*$pi;
+hv_speed    = 11;
+ret         = max(1, gfx_ext_retina);
+
+is_embedded = (gfx_ext_flags & 1);
+
+is_embedded ? (
+// ══════════════════════════════════════════════════════════
+// EMBEDDED MODE — GR Bar + 2 Knobs (THRESH + OUTPUT)
+// ══════════════════════════════════════════════════════════
+  gfx_ext_flags & 0x200 ? gfx_ext_flags -= 0x200;
+  emb_widget_active = 0;
+  ew = gfx_w; eh = gfx_h;
+  gfx_set(bg_r, bg_g, bg_b, 1); gfx_rect(0, 0, ew, eh);
+
+  // GR bar across top
+  bar_x = 3*ret; bar_y = 3*ret;
+  bar_w = ew - 6*ret; bar_h = max(10*ret, eh * 0.16);
+  gfx_set(0.10, 0.10, 0.12, 1); gfx_rect(bar_x, bar_y, bar_w, bar_h);
+  gr_disp += (slider10 - gr_disp) * 0.25;
+  gr_fill = bar_w * min(1, max(0, -gr_disp / 30));
+  gr_fill > 0 ? (
+    gfx_set(led_r, led_g, led_b, 0.85);
+    gfx_rect(bar_x, bar_y, gr_fill, bar_h);
+  );
+  // GR dB readout inside bar
+  gfx_set(0.90, 0.90, 0.92, 0.8);
+  gfx_setfont(1, "Arial", max(8*ret, bar_h*0.55));
+  gfx_x = bar_x + 2*ret; gfx_y = bar_y + (bar_h - gfx_texth) * 0.5;
+  gfx_drawstr("GR ");
+  gfx_drawnumber(gr_disp, 1);
+
+  // Knobs below bar — use more of the width
+  knob_top = bar_y + bar_h + 4*ret;
+  knob_bot = eh - 4*ret;
+  knob_space = knob_bot - knob_top;
+  kr_e = min(floor(ew * 0.14), floor(knob_space * 0.34));
+  kr_e = max(10, min(kr_e, 22*ret));
+  kcy_e = knob_top + knob_space * 0.30;
+
+  // THRESH knob (green) — evenly spaced: 1/3 and 2/3
+  kcx1 = ew * 0.33;
+  nv1 = ssl_knob_interact(km+0*KS, kcx1, kcy_e, kr_e, slider1, -60, 0, -20, 0);
+  emb_widget_active |= (km+0*KS)[6];
+  nv1 != slider1 ? ( slider1 = nv1; slider_automate(1); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx1, kcy_e, kr_e, slider1, -60, 0, 0, (km+0*KS)[0], knb_gr,knb_gg,knb_gb, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.9); gfx_setfont(1,"Arial",max(8*ret,kr_e*0.35),'b');
+  gfx_measurestr("THR", etw, eth);
+  gfx_x = kcx1 - etw*0.5; gfx_y = kcy_e + kr_e + 2*ret; gfx_drawstr("THR");
+
+  // OUTPUT knob (white)
+  kcx2 = ew * 0.67;
+  nv2 = ssl_knob_interact(km+6*KS, kcx2, kcy_e, kr_e, slider9, -120, 60, 0, 0);
+  emb_widget_active |= (km+6*KS)[6];
+  nv2 != slider9 ? ( slider9 = nv2; slider_automate(256); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx2, kcy_e, kr_e, slider9, -120, 60, 1, (km+6*KS)[0], knb_wr,knb_wg,knb_wb, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.9); gfx_setfont(1,"Arial",max(8*ret,kr_e*0.35),'b');
+  gfx_measurestr("OUT", etw, eth);
+  gfx_x = kcx2 - etw*0.5; gfx_y = kcy_e + kr_e + 2*ret; gfx_drawstr("OUT");
+
+  // AUTO pill (bottom center)
+  pill_me = bm + 1 * BS;
+  pill_we = max(ew * 0.26, 30*ret);
+  pill_he = max(10*ret, 14*ret);
+  pill_xe = ew * 0.50 - pill_we * 0.5;
+  pill_ye = kcy_e + kr_e + eth + 4*ret;
+  gfx_setfont(1, "Arial", floor(max(7*ret, pill_he*0.45)), 'b');
+  ns_auto_e = btn_pill_interact(pill_me, pill_xe, pill_ye, pill_we, pill_he, slider8|0);
+  emb_widget_active |= pill_me[6];
+  ns_auto_e != (slider8|0) ? (
+    slider8 = ns_auto_e;
+    slider_automate(128);
+    atomic_set(dsp_dirty, 1);
+  );
+  btn_pill_draw(pill_xe, pill_ye, pill_we, pill_he, slider8|0, "AUTO", pill_me[0], led_r,led_g,led_b);
+
+  !emb_widget_active ? gfx_ext_flags |= 0x200;
+
+) : (
+// ══════════════════════════════════════════════════════════
+// FLOATING MODE — SSL-Style Dynamics
+// ══════════════════════════════════════════════════════════
+  W = gfx_w; H = gfx_h;
+  gfx_set(bg_r, bg_g, bg_b, 1); gfx_rect(0, 0, W, H);
+
+  hdr_h = 26 * ret;
+
+  // ── Header ─────────────────────────────────────────────
+  gfx_set(hdr_r, hdr_g, hdr_b, 1); gfx_rect(0, 0, W, hdr_h);
+  gfx_set(ac_r*0.3, ac_g*0.3, ac_b*0.3, 1); gfx_rect(0, hdr_h - ret, W, ret);
+
+  gfx_set(ac_r, ac_g, ac_b, 1); gfx_setfont(1, "Arial", floor(14*ret), 'b');
+  gfx_x = 12*ret; gfx_y = 7*ret; gfx_drawstr("DDC");
+
+  gfx_set(dm_r, dm_g, dm_b, 0.6); gfx_setfont(1, "Arial", floor(10*ret));
+  gfx_x = 52*ret; gfx_y = 10*ret; gfx_drawstr("ReaKit");
+
+  // ── Body layout ────────────────────────────────────────
+  body_y = hdr_h;
+  body_h = H - hdr_h - 18*ret;
+
+  // GR meter column (right side)
+  gr_col_w = 56*ret;
+  gr_col_x = W - gr_col_w;
+
+  // Knob area (left side)
+  knob_area_w = gr_col_x - 8*ret;
+
+  // 3 rows of knobs
+  n_cols = 5;
+  sp = knob_area_w / n_cols;
+  kr = min(floor(sp * 0.28), floor(body_h * 0.14));
+  kr = max(12, kr);
+  kr2 = floor(kr * 0.85);
+  kr2 = max(10, kr2);
+
+  row1_cy = body_y + body_h * 0.20;
+  row2_cy = body_y + body_h * 0.48;
+  row3_cy = body_y + body_h * 0.76;
+
+  lbl_fh = max(8*ret, kr*0.32);
+  val_fh = max(9*ret, kr*0.36);
+
+  // ── ROW 1: THRESH, RATIO, ATTACK, HOLD, REL ──────────
+  // THRESH
+  kcx = sp * 0.5 + 4*ret;
+  nv = ssl_knob_interact(km+0*KS, kcx, row1_cy, kr, slider1, -60, 0, -20, 0);
+  nv != slider1 ? ( slider1 = nv; slider_automate(1); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row1_cy, kr, slider1, -60, 0, 0, (km+0*KS)[0], knb_gr,knb_gg,knb_gb, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("THRESH",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row1_cy-kr-th-2*ret; gfx_drawstr("THRESH");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-12*ret; gfx_y=row1_cy+kr+2*ret;
+  gfx_drawnumber(slider1,1); gfx_drawstr(" dB");
+
+  // RATIO
+  kcx = sp * 1.5 + 4*ret;
+  nv = ssl_knob_interact(km+1*KS, kcx, row1_cy, kr, slider2, 0, 50, 20, 0);
+  nv != slider2 ? ( slider2 = nv; slider_automate(2); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row1_cy, kr, slider2, 0, 50, 0, (km+1*KS)[0], knb_gr,knb_gg,knb_gb, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("RATIO",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row1_cy-kr-th-2*ret; gfx_drawstr("RATIO");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-8*ret; gfx_y=row1_cy+kr+2*ret;
+  slider2 >= 1 ? ( gfx_drawnumber(slider2,1); gfx_drawstr(":1"); )
+               : ( gfx_drawstr("1:"); gfx_drawnumber(1/max(0.001,slider2),1); );
+
+  // ATTACK
+  kcx = sp * 2.5 + 4*ret;
+  nv = ssl_knob_interact(km+2*KS, kcx, row1_cy, kr, slider3, 0, 500, 20, 0);
+  nv != slider3 ? ( slider3 = nv; slider_automate(4); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row1_cy, kr, slider3, 0, 500, 0, (km+2*KS)[0], knb_gr,knb_gg,knb_gb, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("ATTACK",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row1_cy-kr-th-2*ret; gfx_drawstr("ATTACK");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-10*ret; gfx_y=row1_cy+kr+2*ret;
+  gfx_drawnumber(slider3,0); gfx_drawstr(" ms");
+
+  // HOLD
+  kcx = sp * 3.5 + 4*ret;
+  nv = ssl_knob_interact(km+3*KS, kcx, row1_cy, kr, slider4, 0, 500, 0.5, 0);
+  nv != slider4 ? ( slider4 = nv; slider_automate(8); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row1_cy, kr, slider4, 0, 500, 0, (km+3*KS)[0], knb_gr,knb_gg,knb_gb, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("HOLD",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row1_cy-kr-th-2*ret; gfx_drawstr("HOLD");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-10*ret; gfx_y=row1_cy+kr+2*ret;
+  gfx_drawnumber(slider4,1); gfx_drawstr(" ms");
+
+  // REL
+  kcx = sp * 4.5 + 4*ret;
+  nv = ssl_knob_interact(km+4*KS, kcx, row1_cy, kr, slider5, 0, 1000, 200, 0);
+  nv != slider5 ? ( slider5 = nv; slider_automate(16); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row1_cy, kr, slider5, 0, 1000, 0, (km+4*KS)[0], knb_gr,knb_gg,knb_gb, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("REL",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row1_cy-kr-th-2*ret; gfx_drawstr("REL");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-10*ret; gfx_y=row1_cy+kr+2*ret;
+  gfx_drawnumber(slider5,0); gfx_drawstr(" ms");
+
+  // ── ROW 2: KNEE, MIX, SC HPF, LINK, LOOKAHEAD ─────────
+  // KNEE
+  kcx = sp * 0.5 + 4*ret;
+  nv = ssl_knob_interact(km+7*KS, kcx, row2_cy, kr2, slider11, 0, 20, 0, 0);
+  nv != slider11 ? ( slider11 = nv; slider_automate(1024); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row2_cy, kr2, slider11, 0, 20, 0, (km+7*KS)[0], knb_r,knb_g,knb_b, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("KNEE",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row2_cy-kr2-th-2*ret; gfx_drawstr("KNEE");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-8*ret; gfx_y=row2_cy+kr2+2*ret;
+  gfx_drawnumber(slider11,1); gfx_drawstr(" dB");
+
+  // MIX
+  kcx = sp * 1.5 + 4*ret;
+  nv = ssl_knob_interact(km+8*KS, kcx, row2_cy, kr2, slider12, 0, 100, 100, 0);
+  nv != slider12 ? ( slider12 = nv; slider_automate(2048); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row2_cy, kr2, slider12, 0, 100, 0, (km+8*KS)[0], knb_r,knb_g,knb_b, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("MIX",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row2_cy-kr2-th-2*ret; gfx_drawstr("MIX");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-6*ret; gfx_y=row2_cy+kr2+2*ret;
+  gfx_drawnumber(slider12,0); gfx_drawstr("%");
+
+  // SC HPF
+  kcx = sp * 2.5 + 4*ret;
+  nv = ssl_knob_interact(km+9*KS, kcx, row2_cy, kr2, slider13, 0, 500, 0, 0);
+  nv != slider13 ? ( slider13 = nv; slider_automate(4096); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row2_cy, kr2, slider13, 0, 500, 0, (km+9*KS)[0], knb_r,knb_g,knb_b, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("SC HPF",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row2_cy-kr2-th-2*ret; gfx_drawstr("SC HPF");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-10*ret; gfx_y=row2_cy+kr2+2*ret;
+  slider13 > 0 ? ( gfx_drawnumber(slider13,0); gfx_drawstr(" Hz"); ) : gfx_drawstr("OFF");
+
+  // LINK
+  kcx = sp * 3.5 + 4*ret;
+  nv = ssl_knob_interact(km+10*KS, kcx, row2_cy, kr2, slider14, 0, 100, 100, 0);
+  nv != slider14 ? ( slider14 = nv; slider_automate(8192); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row2_cy, kr2, slider14, 0, 100, 0, (km+10*KS)[0], knb_r,knb_g,knb_b, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("LINK",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row2_cy-kr2-th-2*ret; gfx_drawstr("LINK");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-6*ret; gfx_y=row2_cy+kr2+2*ret;
+  gfx_drawnumber(slider14,0); gfx_drawstr("%");
+
+  // LOOKAHEAD
+  kcx = sp * 4.5 + 4*ret;
+  nv = ssl_knob_interact(km+11*KS, kcx, row2_cy, kr2, slider16, 0, 5, 0, 0);
+  nv != slider16 ? ( slider16 = nv; slider_automate(32768); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row2_cy, kr2, slider16, 0, 5, 0, (km+11*KS)[0], knb_r,knb_g,knb_b, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("L.AHEAD",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row2_cy-kr2-th-2*ret; gfx_drawstr("L.AHEAD");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-8*ret; gfx_y=row2_cy+kr2+2*ret;
+  slider16 > 0 ? ( gfx_drawnumber(slider16,1); gfx_drawstr(" ms"); ) : gfx_drawstr("OFF");
+
+  // ── ROW 3: RMS, OUTPUT, FEED, AUTO, OS ─────────────────
+  // RMS
+  kcx = sp * 0.5 + 4*ret;
+  nv = ssl_knob_interact(km+5*KS, kcx, row3_cy, kr2, slider6, 0, 1000, 0, 0);
+  nv != slider6 ? ( slider6 = nv; slider_automate(32); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row3_cy, kr2, slider6, 0, 1000, 0, (km+5*KS)[0], knb_r,knb_g,knb_b, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("RMS",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row3_cy-kr2-th-2*ret; gfx_drawstr("RMS");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-10*ret; gfx_y=row3_cy+kr2+2*ret;
+  gfx_drawnumber(slider6,0); gfx_drawstr(" ms");
+
+  // OUTPUT
+  kcx = sp * 1.5 + 4*ret;
+  nv = ssl_knob_interact(km+6*KS, kcx, row3_cy, kr2, slider9, -120, 60, 0, 0);
+  nv != slider9 ? ( slider9 = nv; slider_automate(256); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,kcx, row3_cy, kr2, slider9, -120, 60, 1, (km+6*KS)[0], knb_wr,knb_wg,knb_wb, 0, bg_r,bg_g,bg_b);
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("OUTPUT",tw,th); gfx_x=kcx-tw*0.5; gfx_y=row3_cy-kr2-th-2*ret; gfx_drawstr("OUTPUT");
+  gfx_set(dm_r,dm_g,dm_b,0.7); gfx_setfont(1,"Arial",val_fh);
+  gfx_x=kcx-10*ret; gfx_y=row3_cy+kr2+2*ret;
+  gfx_drawnumber(slider9,0); gfx_drawstr(" dB");
+
+  // FEED segment (3-way: FF / FB / SC)
+  seg_x = sp * 2.2 + 4*ret;
+  seg_y = row3_cy - 10*ret;
+  seg_w = floor(sp * 0.48);
+  seg_h = 20*ret;
+  seg_m = bm + 0 * BS;
+
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("FEED",tw,th); gfx_x=seg_x+(seg_w*3+4*ret)*0.5-tw*0.5; gfx_y=seg_y-th-2*ret; gfx_drawstr("FEED");
+
+  nv_feed = btn_segment_interact(seg_m, seg_x, seg_y, seg_w, seg_h, 3, 2*ret, slider7|0);
+  nv_feed != (slider7|0) ? (
+    slider7 = nv_feed;
+    slider_automate(64);
+    atomic_set(dsp_dirty, 1);
+  );
+  gfx_setfont(1, "Arial", floor(8*ret), 'b');
+  si = 0;
+  loop(3,
+    sx = seg_x + si * (seg_w + 2*ret);
+    slbl = si==0 ? "FF" : si==1 ? "FB" : "SC";
+    btn_segment_draw(sx, seg_y, seg_w, seg_h, si, slider7|0, slbl, seg_m[0], ac_r,ac_g,ac_b);
+    si += 1;
+  );
+
+  // AUTO pill
+  pill_m = bm + 1 * BS;
+  pill_w = 44*ret;
+  pill_h = 18*ret;
+  pill_x = seg_x + (seg_w + 2*ret) * 3 + 6*ret;
+  pill_y = row3_cy - 16*ret;
+
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("MAKEUP",tw,th); gfx_x=pill_x+pill_w*0.5-tw*0.5; gfx_y=pill_y-th-2*ret; gfx_drawstr("MAKEUP");
+
+  gfx_setfont(1, "Arial", floor(8*ret), 'b');
+  ns_auto = btn_pill_interact(pill_m, pill_x, pill_y, pill_w, pill_h, slider8|0);
+  ns_auto != (slider8|0) ? (
+    slider8 = ns_auto;
+    slider_automate(128);
+    atomic_set(dsp_dirty, 1);
+  );
+  btn_pill_draw(pill_x, pill_y, pill_w, pill_h, slider8|0, "AUTO", pill_m[0], led_r,led_g,led_b);
+
+  // OS pill (below AUTO)
+  pill_os_y = pill_y + pill_h + 6*ret;
+  gfx_set(txt_r,txt_g,txt_b,0.85); gfx_setfont(1,"Arial",lbl_fh,'b');
+  gfx_measurestr("OVSMP",tw,th);
+  // Reuse pill_m+BS for OS state — need a 3rd button slot
+  // Use inline toggle instead
+  os_pill_x = pill_x;
+  os_pill_w = pill_w;
+  os_pill_h = pill_h;
+  gfx_setfont(1, "Arial", floor(8*ret), 'b');
+  // Simple clickable rect for OS toggle
+  os_hov = (mx >= os_pill_x && mx < os_pill_x + os_pill_w && my >= pill_os_y && my < pill_os_y + os_pill_h);
+  os_hov && lmb_down ? (
+    slider15 = 1 - slider15;
+    slider_automate(16384);
+    atomic_set(dsp_dirty, 1);
+  );
+  slider15 ? (
+    gfx_set(led_r*0.8, led_g*0.8, led_b*0.8, 0.9);
+  ) : (
+    gfx_set(0.18, 0.18, 0.20, 0.7);
+  );
+  gfx_rect(os_pill_x, pill_os_y, os_pill_w, os_pill_h);
+  // rounded corners (fake with border)
+  gfx_set(0.10, 0.10, 0.12, 0.5);
+  gfx_rect(os_pill_x, pill_os_y, 1, os_pill_h);
+  gfx_rect(os_pill_x + os_pill_w - 1, pill_os_y, 1, os_pill_h);
+  // label
+  slider15 ? gfx_set(0.05,0.05,0.07,1) : gfx_set(0.65,0.65,0.67,0.6);
+  gfx_setfont(1, "Arial", floor(8*ret), 'b');
+  gfx_measurestr("OS 2x", tw, th);
+  gfx_x = os_pill_x + os_pill_w*0.5 - tw*0.5;
+  gfx_y = pill_os_y + (os_pill_h - th) * 0.5;
+  gfx_drawstr("OS 2x");
+
+  // ── GR LED Ladder (right column) ───────────────────────
+  gr_disp += (slider10 - gr_disp) * 0.25;
+  gr_db = max(-30, min(0, gr_disp));
+
+  gr_pad = 6*ret;
+  gr_x = gr_col_x + gr_pad;
+  gr_top = body_y + 18*ret;
+  gr_bot = body_y + body_h - 8*ret;
+  gr_w = gr_col_w - gr_pad * 2;
+  n_segs = 16;
+  seg_gap = 2*ret;
+  seg_ht = floor((gr_bot - gr_top - seg_gap * (n_segs - 1)) / n_segs);
+  seg_ht = max(2, seg_ht);
+
+  gfx_set(txt_r, txt_g, txt_b, 0.7); gfx_setfont(1, "Arial", floor(9*ret), 'b');
+  gfx_measurestr("GR", tw, th);
+  gfx_x = gr_x + gr_w*0.5 - tw*0.5; gfx_y = gr_top - th - 2*ret;
+  gfx_drawstr("GR");
+
+  gfx_set(ac_r*0.2, ac_g*0.2, ac_b*0.2, 0.5);
+  gfx_line(gr_col_x, body_y + 4*ret, gr_col_x, body_y + body_h - 4*ret);
+
+  si = 0;
+  loop(n_segs,
+    sy = gr_bot - (si + 1) * (seg_ht + seg_gap);
+    db_at_seg = -30 * (si + 1) / n_segs;
+
+    gr_db <= db_at_seg ? (
+      si < 6 ? (
+        gfx_set(0.25, 0.72, 0.30, 0.90);
+      ) : si < 11 ? (
+        gfx_set(led_r, led_g, led_b, 0.90);
+      ) : (
+        gfx_set(0.90, 0.22, 0.15, 0.90);
+      );
+    ) : (
+      gfx_set(0.08, 0.08, 0.10, 0.6);
+    );
+    gfx_rect(gr_x, sy, gr_w, seg_ht);
+    si += 1;
+  );
+
+  gfx_set(led_r, led_g, led_b, 0.8);
+  gfx_setfont(1, "Arial", max(8*ret, 9*ret));
+  gfx_x = gr_x; gfx_y = gr_bot + 2*ret;
+  gfx_drawnumber(gr_disp, 1);
+
+  // ── Legend ─────────────────────────────────────────────
+  leg_y = H - 14*ret;
+  gfx_set(dm_r, dm_g, dm_b, 0.4);
+  gfx_setfont(1, "Arial", floor(8*ret));
+  gfx_x = 8*ret; gfx_y = leg_y;
+  gfx_drawstr("EON DDC");
+  gfx_set(dm_r, dm_g, dm_b, 0.25);
+  gfx_x = 80*ret;
+  gfx_drawstr("Ctrl+drag fine \xB7 Dbl-click reset");
+
+); // end floating

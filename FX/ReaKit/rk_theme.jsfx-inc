@@ -1,0 +1,956 @@
+// rk_theme.jsfx-inc — unified EON theme include (picker + widget colour driver).
+// (c) EON Studios. ONE import gives a plugin: the shared theme picker (chip +
+// dropdown), the semantic-band colour reader, a per-ROLE knob-hue resolver, and
+// rk_theme_apply() which re-skins the shared button/slider libraries from the
+// live theme band. Supersedes rk_theme_picker.jsfx-inc (which now just imports
+// this file, so existing importers keep working).
+//
+// USAGE (per plugin):
+//   @init   import libs/rk_theme.jsfx-inc          // (or the bare name for the Effects/ deploy)
+//   @gfx    rk_theme_apply();                       // FIRST thing each frame — maps band -> widget globals
+//           ... rkth_input(...) / rkth_draw_chip / rkth_overlay_draw as before ...
+//   knobs:  rk_role_col(role, on, fr,fg,fb); rk_knob_draw(sk_kp, ..., sk_kbr,sk_kbg,sk_kbb, ...);
+//
+// When the bridge is idle (gmem[GS_THEME_ID]==0) rk_theme_apply() restores the
+// libraries' native defaults, so plugins look byte-identical to pre-theme.
+//
+// PER-INSTANCE OPT-OUT ("NATIVE"): the dropdown's first row is NATIVE — picking
+// it sets `rkth_local_off = 1` for THIS instance only: rkth_setcol / rk_role_col
+// / rk_theme_apply all fall back to native colours while the rest of the suite
+// stays themed. Picking any theme (row, chip-click cycle, or hover-wheel)
+// clears it. Hosts should gate their OWN palette overrides on rkth_active()
+// (not on gmem[GS_THEME_ID] alone) and PERSIST rkth_local_off per instance —
+// hidden-slider pattern: after the chip call, `sliderN != rkth_local_off ?
+// (sliderN = rkth_local_off; slider_automate(2^(N-1)));` and restore it in
+// @slider (`rkth_local_off = sliderN;`).
+
+@init
+
+GS_THEME_ID   = 2649;   // 0 = bridge idle -> picker uses its dark fallback colours
+GS_THEME_BASE = 2650;   // 8 semantic colours x3 floats (0 BG..7 BORDER)
+GS_THEME_REQ  = 2674;   // picker -> bridge: requested theme index 1..RKTH_N
+GS_THEME_CUR  = 2675;   // bridge -> picker: active theme index (label/highlight)
+GS_THEME_KNOB_P = 2676; // primary (hero) knob style index
+GS_THEME_KNOB_S = 2677; // secondary (utility) knob style index
+GS_THEME_ROLE_BASE = 2678; // 6 roles x3 floats (per-theme knob hues) 2678..2695
+GS_THEME_KNOB_REQ  = 2696; // picker -> bridge: requested knob style (+1)
+// ── VU-face SYNC broadcast (appearance cluster ">ALL" latch) ──
+// A latched instance writes REQ = face+1 into its OWN gmem segment; the bridge
+// relay (rk_lua_core core.relay_vu_fx_segments) writes VU_P = req and bumps
+// VU_GEN in EVERY curated FX segment (core.THEME_FX_SEGMENTS), then clears the
+// REQ. Followers poll rkth_vu_follow() each frame and adopt regardless of
+// their own latch (Drum Strip ">ALL" semantics: siblings follow the
+// broadcaster). NO ExtState persistence by design — the broadcast is a
+// follow-me EVENT; each instance persists its own face on its slider.
+// SLOTS 2752..2754 verified free 2026-08-11: the 2674..2699 theme gap is FULL
+// (2696 KNOB_REQ, 2697 GS_DM_PAINT, 2698 GS_DM_OVERLAY, 2699 GS_TOOLBAR_OPEN)
+// and EON_StepSeq owns 2700+ (ALIVE 2700, ANYSOLO 2702, MUTE 2710..2725, SOLO
+// 2730..2745, PICKER_REQ/SEL 2750/2751, ROSTER 2760..2999) with the
+// KIT_GMEM_AUDIO scratch bus at 3000+. The 2752..2759 hole between the picker
+// mailbox and the roster is claimed by NOTHING: bundle-wide + EON-tree grep,
+// swing_gmem_bridge_protocol.md §3 band map, gmem_regions_supplement.tsv and
+// EON/.Extension/src/gmem/*.h all clean. Mirrors rk_lua_core.lua core.GMEM.
+GS_THEME_VU_REQ = 2752;  // JSFX -> bridge: 0 = none; else picked face index + 1
+GS_THEME_VU_P   = 2753;  // bridge -> JSFX: broadcast face index + 1 (0 = never)
+GS_THEME_VU_GEN = 2754;  // bridge -> JSFX: bump-on-publish generation counter
+RKTH_N   = 14;          // theme count (EON/Dark/Light/REAPER + REAPER Panel/Color/SSL/Neve/API/Tube/Ableton/FL/Pro Tools/PT Light)
+RKTH_VIS = 8;           // dropdown rows shown at once; the rest scroll (wheel over the open
+                        // panel; scrollbar thumb shows). Hover-wheel on the chip cycles all.
+
+// ── UI SCALE ─────────────────────────────────────────────────────────────
+// Hosts draw at gfx_ext_retina (ChannelTool `ret = max(1, gfx_ext_retina)`,
+// ExpressBus `rk_sc`) and pass the cluster a SCALED origin — but every size in
+// here used to be a fixed 1x pixel count, so on a HiDPI/zoomed window the whole
+// appearance row rendered at HALF the size of the plugin around it. That is the
+// "theme text is hard to read" report (user, 2026-08-12, GainKit screenshot).
+//
+// Set this to the host's scale factor BEFORE calling rkth_cluster/_hdr:
+//   rkth_scale = ret;   rkth_cluster_hdr(100*ret, 5*ret, 1, zm_theme);
+//
+// DEFAULT 1 IS LOAD-BEARING: it makes every not-yet-migrated host render
+// byte-identically to before, so this lib change can go in on its own and the
+// 11 importers migrate one at a time (feedback_shared_lib_edits).
+// ⛔NOT `rkth_sc` — that name is TAKEN by the theme dropdown's scroll offset
+// (rkth_input :143). EEL2 is case-insensitive, so `rkth_SC` would collide too.
+rkth_scale = 1;
+
+// ── BASE SIZES — the 1x design sizes, all in ONE place ───────────────────
+// ⚠️These were scattered literals (7 / 9 / 10 / 15 / 14). Centralised 2026-08-12
+// and RAISED, because the scale work above fixed only HiDPI: on a standard-DPI
+// display gfx_ext_retina is 1, so rkth_scale is 1 and nothing grew. The user
+// measured exactly that — "it's just brighter not bigger" — which means the
+// defaults themselves were the problem. 7px bold captions are tiny on any
+// display. Previous values kept in the comments so a revert is one edit.
+//
+// ⭐TUNE HERE. Every font and box in the cluster derives from these times
+// rkth_scale, so raising a number changes the whole cluster coherently — and a
+// future user "UI scale" control just folds another multiplier into rkth_scale
+// without touching any of this.
+RKTH_F_CAP  = 9;    // caption column ("THEME", "VU SYNC", "LOCK")   was 7
+RKTH_F_CHIP = 11;   // chip value text + the header toggle           was 9
+RKTH_F_LIST = 12;   // open dropdown rows                            was 10
+RKTH_H_CHIP = 18;   // chip height                                   was 15
+RKTH_H_ROW  = 17;   // dropdown row height                           was 14
+
+// The three REAPER entries map to the TK Workbench derivation modes
+// (balanced / panel / color), exposed as separate list entries (matches TK).
+function rkth_name(i) (
+  i==0?"EON":i==1?"Dark":i==2?"Light":i==3?"REAPER":i==4?"REAPER Pnl":i==5?"REAPER Clr":
+  i==6?"SSL":i==7?"Neve":i==8?"API":i==9?"Tube":i==10?"Ableton":i==11?"FL Studio":i==12?"Pro Tools":"PT Light";
+);
+// ── LOCK ("keep this instance's look while the suite's theme moves on") ────
+// A third appearance mode alongside FOLLOW and NATIVE. It cannot work by
+// "just not following": the palette lives in ONE shared gmem band that the
+// bridge OVERWRITES on every theme change, and all 14 plugins read that band
+// live — so after a switch there is nothing left to keep. LOCK therefore takes
+// a SNAPSHOT of the whole look at the moment it is engaged and reads from that
+// copy afterwards.
+//
+// ⛔MEMORY IS HANDED IN BY THE HOST, never claimed here. Every importing plugin
+// assigns `freemem = <literal>` in its own @init (0 / 440 / 500 / 1100000 —
+// measured across all 14 on 2026-08-12) and imports sit ABOVE @init, so this
+// file's @init runs FIRST: a `freemem` claim made here would be wiped by the
+// host's next line and the same addresses handed out twice. Same idiom as
+// delay-utils.jsfx-inc — the host owns allocation:
+//     @init  ... freemem = 500;  freemem = rkth_lock_mem(freemem);
+// A host that never calls it leaves rkth_lk_ok = 0 and simply gets NO lock —
+// ⛔the guard must be an explicit flag, NOT "is the pointer zero", because
+// address 0 is a legitimate buffer here (3BandEQ/Gate/Limiter all use freemem = 0).
+RKTH_LK_N   = 45;   // 0..23 semantic colours, 24..41 role hues, 42/43 knob styles, 44 theme id
+RKTH_LK_ROLE = 24;
+RKTH_LK_KP   = 42;
+RKTH_LK_KS   = 43;
+RKTH_LK_TID  = 44;
+rkth_lk_ok = 0;     // host handed us a buffer? (re-established by the host's
+                    // own @init call to rkth_lock_mem, so re-zeroing is safe)
+// ⛔rkth_locked is deliberately NOT initialised here. It is a SERIALIZED value,
+// and a sample-rate change re-runs @init WITHOUT re-running @serialize — an
+// unconditional `rkth_locked = 0` would silently drop the lock the moment the
+// user changed sample rate, with the snapshot still sitting in memory unused.
+// Plain EEL2 globals default to 0, which is the correct first-load state.
+// Same reasoning that keeps rkth_sync_on out of @init (see the note at the
+// bottom of this file). The buffer CONTENTS survive an @init rerun too: the
+// host recomputes the identical freemem offsets, and nothing memsets them.
+
+// Live look -> snapshot. LOCK and NATIVE are mutually exclusive modes, so this
+// is only ever called while themed.
+function rkth_lock_snap() local(_i) (
+  rkth_lk_ok ? (
+    _i = 0; loop(24, rkth_lk_buf[_i] = gmem[GS_THEME_BASE + _i]; _i += 1; );
+    _i = 0; loop(18, rkth_lk_buf[RKTH_LK_ROLE + _i] = gmem[GS_THEME_ROLE_BASE + _i]; _i += 1; );
+    rkth_lk_buf[RKTH_LK_KP]  = gmem[GS_THEME_KNOB_P];
+    rkth_lk_buf[RKTH_LK_KS]  = gmem[GS_THEME_KNOB_S];
+    rkth_lk_buf[RKTH_LK_TID] = gmem[GS_THEME_CUR];
+  );
+);
+
+// ⭐⭐THE ACCESSOR EVERY HOST MUST USE INSTEAD OF gmem[GS_THEME_BASE + i].
+// Returns band offset i (0..23 = 8 semantic colours x3) from whichever look is
+// in force — the frozen snapshot when locked, the live band otherwise.
+// ⚠️⚠️Several plugins read the band DIRECTLY (ChannelTool's setcolor_band /
+// gk_frame_bg, and its own btn_*/sld_* mapping — it never calls
+// rk_theme_apply()). Those raw reads are invisible to LOCK, so a locked
+// instance kept re-skinning: lock froze only the cluster's own chrome while
+// the whole plugin face followed the suite. Route every such read through
+// here. Pair with rkth_active() in place of a raw `gmem[GS_THEME_ID] > 0`.
+function rkth_band(i) (
+  (rkth_locked && rkth_lk_ok) ? rkth_lk_buf[i] : gmem[GS_THEME_BASE + i];
+);
+
+// Host hook: hand the cluster its snapshot buffer. Returns the new freemem, so
+// the host writes `freemem = rkth_lock_mem(freemem);` exactly like delay_init.
+function rkth_lock_mem(mem) (
+  rkth_lk_buf = mem; rkth_lk_ok = 1;
+  mem + RKTH_LK_N;
+);
+
+// Host hook, called from @serialize so a locked look survives a project
+// reload. ⚠️APPEND-GUARDED: an old project's blob simply ends before this, and
+// file_avail(0) == 0 leaves the instance unlocked, which is the right default.
+// ⛔Do not move this ahead of the host's own file_var lines — the blob is
+// positional, and reordering silently reassigns every field after it.
+function rkth_lock_serialize() (
+  rkth_lk_ok ? (
+    file_avail(0) != 0 ? (
+      file_var(0, rkth_locked);
+      file_mem(0, rkth_lk_buf, RKTH_LK_N);
+    );
+  );
+);
+
+// Colour resolver. Precedence: LOCKED (frozen snapshot) -> themed (live band)
+// -> the caller's native fallback. ⭐Locked deliberately outranks "bridge idle":
+// if the bridge stops, a locked instance KEEPS its look rather than snapping
+// back to native — that is what makes lock mean frozen, full stop.
+function rkth_setcol(slot, fr, fg, fb, a) (
+  rkth_locked && rkth_lk_ok ? (
+    gfx_r = rkth_lk_buf[slot*3]; gfx_g = rkth_lk_buf[slot*3 + 1]; gfx_b = rkth_lk_buf[slot*3 + 2];
+  ) : gmem[GS_THEME_ID] > 0 && !rkth_local_off ? (
+    gfx_r = gmem[GS_THEME_BASE + slot*3]; gfx_g = gmem[GS_THEME_BASE + slot*3 + 1]; gfx_b = gmem[GS_THEME_BASE + slot*3 + 2];
+  ) : ( gfx_r = fr; gfx_g = fg; gfx_b = fb; );
+  gfx_a = a;
+);
+// Theme index for the chip label / list highlight. A locked instance reports
+// the theme it was FROZEN on, not whatever the suite moved to.
+function rkth_cur() local(_t) (
+  _t = (rkth_locked && rkth_lk_ok) ? rkth_lk_buf[RKTH_LK_TID] : gmem[GS_THEME_CUR];
+  (_t >= 1 && _t <= RKTH_N) ? (_t | 0) : 1;
+);
+// ONE gate for hosts: a themed look is in force. True when locked (the frozen
+// snapshot IS a themed look), or when the band is live and this instance has
+// not opted out. Gate plugin-side palette overrides on this, not on
+// gmem[GS_THEME_ID] alone.
+function rkth_active() ( (rkth_locked && rkth_lk_ok) || (gmem[GS_THEME_ID] > 0 && !rkth_local_off); );
+
+// Resolve a knob's colour into sk_kbr/sk_kbg/sk_kbb for rk_knob_draw. Under a
+// live theme an ON knob takes the theme's per-ROLE hue (role band at
+// GS_THEME_ROLE_BASE); bridge idle -> the plugin's own (fr,fg,fb); OFF -> grey.
+// Shared copy of the resolver that Swing/Drum Strip/StepSeq each carry inline.
+function rk_role_col(role, on, fr, fg, fb) (
+  on ? (
+    rkth_locked && rkth_lk_ok ? (
+      sk_kbr = rkth_lk_buf[RKTH_LK_ROLE + role*3];
+      sk_kbg = rkth_lk_buf[RKTH_LK_ROLE + role*3 + 1];
+      sk_kbb = rkth_lk_buf[RKTH_LK_ROLE + role*3 + 2];
+    ) : gmem[GS_THEME_ID] > 0 && !rkth_local_off ? (
+      sk_kbr = gmem[GS_THEME_ROLE_BASE + role*3];
+      sk_kbg = gmem[GS_THEME_ROLE_BASE + role*3 + 1];
+      sk_kbb = gmem[GS_THEME_ROLE_BASE + role*3 + 2];
+    ) : ( sk_kbr = fr; sk_kbg = fg; sk_kbb = fb; );
+  ) : ( sk_kbr = 0.30; sk_kbg = 0.35; sk_kbb = 0.40; );
+);
+
+// Re-skin the shared button/slider libraries from the live theme band. Call
+// ONCE at the top of @gfx, BEFORE drawing any btn_*/sld_* widget. Writes the
+// libraries' module globals directly (not via their setters) so it does not
+// depend on import order. Buttons take the PANEL surface (+/- a touch for
+// hover/recess); slider fill takes ACCENT/ACCENT2; slider track a panel recess.
+// Small detail (borders, knurls, thumb caps, on-accent label ink) stays at the
+// library defaults — it reads on any background.
+function rk_theme_apply() local(pr, pg, pb, a1r, a1g, a1b, a2r, a2g, a2b, _on) (
+  // First call: capture the libraries' native @init defaults so theme-off and
+  // the per-instance NATIVE opt-out can RESTORE them (a themed write used to
+  // stick forever once the bridge went idle).
+  !rkth_nat_saved ? (
+    rkth_nat_saved = 1;
+    rkth_nat_bb_r = btn_body_r;    rkth_nat_bb_g = btn_body_g;    rkth_nat_bb_b = btn_body_b;
+    rkth_nat_bh_r = btn_body_hi_r; rkth_nat_bh_g = btn_body_hi_g; rkth_nat_bh_b = btn_body_hi_b;
+    rkth_nat_ho_r = btn_housing_r; rkth_nat_ho_g = btn_housing_g; rkth_nat_ho_b = btn_housing_b;
+    rkth_nat_tk_r = sld_track_r;   rkth_nat_tk_g = sld_track_g;   rkth_nat_tk_b = sld_track_b;
+    rkth_nat_a1_r = sld_ac_r;      rkth_nat_a1_g = sld_ac_g;      rkth_nat_a1_b = sld_ac_b;
+    rkth_nat_a2_r = sld_ac2_r;     rkth_nat_a2_g = sld_ac2_g;     rkth_nat_a2_b = sld_ac2_b;
+  );
+  // Source the three colours this function needs (PANEL, ACCENT, ACCENT2) from
+  // whichever look is in force, THEN apply them once. Two sources, one body:
+  // gmem[] and the snapshot buffer cannot alias in EEL2, so the fetch has to
+  // branch — but duplicating the derivation maths below is how the locked and
+  // themed looks would drift apart.
+  _on = 0;
+  rkth_locked && rkth_lk_ok ? (
+    _on = 1;
+    pr  = rkth_lk_buf[1*3]; pg  = rkth_lk_buf[1*3 + 1]; pb  = rkth_lk_buf[1*3 + 2];   // PANEL
+    a1r = rkth_lk_buf[4*3]; a1g = rkth_lk_buf[4*3 + 1]; a1b = rkth_lk_buf[4*3 + 2];   // ACCENT
+    a2r = rkth_lk_buf[5*3]; a2g = rkth_lk_buf[5*3 + 1]; a2b = rkth_lk_buf[5*3 + 2];   // ACCENT2
+  ) : gmem[GS_THEME_ID] > 0 && !rkth_local_off ? (
+    _on = 1;
+    pr  = gmem[GS_THEME_BASE + 1*3]; pg  = gmem[GS_THEME_BASE + 1*3 + 1]; pb  = gmem[GS_THEME_BASE + 1*3 + 2];
+    a1r = gmem[GS_THEME_BASE + 4*3]; a1g = gmem[GS_THEME_BASE + 4*3 + 1]; a1b = gmem[GS_THEME_BASE + 4*3 + 2];
+    a2r = gmem[GS_THEME_BASE + 5*3]; a2g = gmem[GS_THEME_BASE + 5*3 + 1]; a2b = gmem[GS_THEME_BASE + 5*3 + 2];
+  );
+  _on ? (
+    // Buttons
+    btn_body_r = pr; btn_body_g = pg; btn_body_b = pb;
+    btn_body_hi_r = min(1, pr + 0.06); btn_body_hi_g = min(1, pg + 0.06); btn_body_hi_b = min(1, pb + 0.06);
+    btn_housing_r = max(0, pr - 0.06); btn_housing_g = max(0, pg - 0.06); btn_housing_b = max(0, pb - 0.06);
+    // Sliders: track = a panel recess; fill = theme accents.
+    sld_track_r = max(0, pr - 0.06); sld_track_g = max(0, pg - 0.06); sld_track_b = max(0, pb - 0.06);
+    sld_ac_r  = a1r; sld_ac_g  = a1g; sld_ac_b  = a1b;
+    sld_ac2_r = a2r; sld_ac2_g = a2g; sld_ac2_b = a2b;
+  ) : (
+    // Idle or opted out: hand the libraries their native defaults back.
+    btn_body_r = rkth_nat_bb_r;    btn_body_g = rkth_nat_bb_g;    btn_body_b = rkth_nat_bb_b;
+    btn_body_hi_r = rkth_nat_bh_r; btn_body_hi_g = rkth_nat_bh_g; btn_body_hi_b = rkth_nat_bh_b;
+    btn_housing_r = rkth_nat_ho_r; btn_housing_g = rkth_nat_ho_g; btn_housing_b = rkth_nat_ho_b;
+    sld_track_r = rkth_nat_tk_r;   sld_track_g = rkth_nat_tk_g;   sld_track_b = rkth_nat_tk_b;
+    sld_ac_r = rkth_nat_a1_r;      sld_ac_g = rkth_nat_a1_g;      sld_ac_b = rkth_nat_a1_b;
+    sld_ac2_r = rkth_nat_a2_r;     sld_ac2_g = rkth_nat_a2_g;     sld_ac2_b = rkth_nat_a2_b;
+  );
+);
+
+// EARLY: handle ALL interaction (chip click/cycle/hover-wheel + dropdown row-click +
+// wheel-scroll). Stores geometry + mouse for the draws. NO drawing. Returns 1 if consumed.
+// Dropdown item space: 0 = NATIVE (per-instance opt-out, no gmem write),
+// 1..RKTH_N = themes (item index == theme index). Chip click / hover-wheel
+// cycle THEMES only and clear the opt-out (they re-sync the instance).
+function rkth_input(x, y, w, h, mx, my, lmb, rmb, whl, rowh)
+local(hit, k, ry, consumed) (
+  rkth_cv = rkth_cur();
+  rkth_x = x; rkth_y = y; rkth_w = w; rkth_h = h;
+  rkth_ddx = x; rkth_ddw = max(w, 72*rkth_scale); rkth_ddy = y + h + 2*rkth_scale; rkth_rh = rowh; rkth_ddh = RKTH_VIS * rowh;
+  rkth_mx = mx; rkth_my = my;
+  rkth_sc = max(0, min(rkth_sc, RKTH_N + 1 - RKTH_VIS));
+  consumed = 0;
+  hit = mx >= x && mx < x + w && my >= y && my < y + h;
+  hit ? (
+    lmb ? ( rkth_local_off = 0; gmem[GS_THEME_REQ] = (rkth_cv % RKTH_N) + 1; rkth_open = 0; consumed = 1; );
+    rmb ? ( rkth_open = 1 - rkth_open; rkth_sc = 0; consumed = 1; );
+    whl != 0 ? ( rkth_local_off = 0; gmem[GS_THEME_REQ] = ((rkth_cv - 1 + (whl > 0 ? 1 : -1) + RKTH_N) % RKTH_N) + 1; consumed = 1; );
+  );
+  rkth_open && !consumed ? (
+    (mx >= rkth_ddx && mx < rkth_ddx + rkth_ddw && my >= rkth_ddy && my < rkth_ddy + rkth_ddh && whl != 0) ? (
+      rkth_sc = max(0, min(rkth_sc - (whl > 0 ? 1 : -1), RKTH_N + 1 - RKTH_VIS)); consumed = 1;
+    );
+    lmb ? (
+      k = 0;
+      loop(RKTH_VIS,
+        ry = rkth_ddy + k * rowh;
+        (mx >= rkth_ddx && mx < rkth_ddx + rkth_ddw && my >= ry && my < ry + rowh) ? (
+          // Either choice ends a LOCK: NATIVE and "frozen on a theme" are
+          // mutually exclusive modes, and picking a theme is by definition
+          // asking to follow one again.
+          (rkth_sc + k) == 0 ? ( rkth_local_off = 1; rkth_locked = 0; )
+                             : ( rkth_local_off = 0; rkth_locked = 0; gmem[GS_THEME_REQ] = rkth_sc + k; );
+        );
+        k += 1;
+      );
+      rkth_open = 0; consumed = 1;   // any click closes (swallowed)
+    );
+  );
+  consumed;
+);
+
+// Draw the chip where the host draws its chrome (uses geometry stored by rkth_input).
+// Padding and the caret derive from fontsz via _k (fontsz/9) instead of fixed
+// pixels, so the chip scales with whatever size the caller asks for and stays
+// EXACTLY as it was at the historical fontsz 9 (_k = 1). That is what lets the
+// scaled cluster and an unmigrated pattern-A host share this one drawer.
+function rkth_draw_chip(fontsz) local(_k) (
+  _k = fontsz / 9;
+  rkth_setcol(1, 0.16, 0.18, 0.22, 1); gfx_rect(rkth_x, rkth_y, rkth_w, rkth_h);
+  rkth_setcol(7, 0.32, 0.35, 0.42, 1); gfx_rect(rkth_x, rkth_y, rkth_w, rkth_h, 0);
+  gfx_setfont(1, "Arial", fontsz|0, 'b');
+  rkth_setcol(2, 0.85, 0.87, 0.90, 1);
+  gfx_x = rkth_x + 5*_k; gfx_y = rkth_y + (rkth_h - fontsz) * 0.5;
+  gfx_drawstr(rkth_local_off ? "NATIVE" : rkth_name(rkth_cv - 1));
+  gfx_x = rkth_x + rkth_w - 10*_k; gfx_y = rkth_y + rkth_h * 0.5 - 2*_k;
+  gfx_lineto(rkth_x + rkth_w - 6*_k, rkth_y + rkth_h * 0.5 + 2*_k, 0); gfx_lineto(rkth_x + rkth_w - 2*_k, rkth_y + rkth_h * 0.5 - 2*_k, 0);
+  // NOTE: deliberately NO gfx_setfont(0) here — hosts (e.g. Swing's "THRU"/EMBED
+  // buttons) draw their labels relying on the font left set by the toolbar; resetting
+  // it to the default broke their rendering. Leave "Arial fontsz bold" set, as the
+  // old inline chips did.
+);
+
+// Convenience for pattern A: input + draw the chip in one call (chip drawn early).
+function rkth_chip(x, y, w, h, mx, my, lmb, rmb, whl, rowh, fontsz)
+local(c) (
+  c = rkth_input(x, y, w, h, mx, my, lmb, rmb, whl, rowh);
+  rkth_draw_chip(fontsz);
+  c;
+);
+
+// LAST in @gfx: draw the open dropdown panel on top.
+function rkth_overlay_draw()
+local(k, idx, ry) (
+  rkth_open ? (
+    gfx_set(0, 0, 0, 0.35); gfx_rect(rkth_ddx + 2*rkth_scale, rkth_ddy + 3*rkth_scale, rkth_ddw, rkth_ddh);   // shadow
+    rkth_setcol(1, 0.14, 0.16, 0.20, 1); gfx_rect(rkth_ddx, rkth_ddy, rkth_ddw, rkth_ddh);
+    rkth_setcol(7, 0.34, 0.37, 0.44, 1); gfx_rect(rkth_ddx, rkth_ddy, rkth_ddw, rkth_ddh, 0);
+    gfx_setfont(1, "Arial", (RKTH_F_LIST*rkth_scale)|0, 'b');
+    // Item space: 0 = NATIVE (opt-out), 1..RKTH_N = themes. "Current" mark
+    // follows the opt-out: NATIVE row when off, else the active theme row.
+    k = 0;
+    loop(RKTH_VIS,
+      idx = rkth_sc + k; ry = rkth_ddy + k * rkth_rh;
+      (rkth_mx >= rkth_ddx && rkth_mx < rkth_ddx + rkth_ddw && rkth_my >= ry && rkth_my < ry + rkth_rh) ? (
+        gfx_set(0.10, 0.30, 0.40, 1); gfx_rect(rkth_ddx + 1, ry, rkth_ddw - 2, rkth_rh);   // hover row
+        gfx_set(0.95, 0.97, 1.0, 1);
+      ) : (
+        (rkth_local_off ? idx == 0 : idx == rkth_cv) ? gfx_set(0.30, 0.72, 0.92, 1) : rkth_setcol(3, 0.72, 0.74, 0.78, 1);
+      );
+      gfx_x = rkth_ddx + 10*rkth_scale; gfx_y = ry + 3*rkth_scale;
+      gfx_drawstr(idx == 0 ? "NATIVE" : rkth_name(idx - 1));
+      (rkth_local_off ? idx == 0 : idx == rkth_cv) ? (
+        gfx_set(0.30, 0.72, 0.92, 1); gfx_circle(rkth_ddx + 5*rkth_scale, (ry + rkth_rh * 0.5) | 0, 2*rkth_scale, 1, 1);
+      );
+      k += 1;
+    );
+    RKTH_N + 1 > RKTH_VIS ? (   // scrollbar thumb (over RKTH_N+1 items incl. NATIVE)
+      gfx_set(0.45, 0.70, 0.90, 0.8);
+      gfx_rect(rkth_ddx + rkth_ddw - 3*rkth_scale, rkth_ddy + (rkth_ddh * rkth_sc / (RKTH_N + 1)) | 0, 2*rkth_scale, max(6*rkth_scale, (rkth_ddh * RKTH_VIS / (RKTH_N + 1)) | 0));
+    );
+    gfx_setfont(0);
+  );
+);
+
+// ═════════════════════════════════════════════════════════════════════════
+//  APPEARANCE CLUSTER — THEME · KNOB · VU · SYNC chip row + dropdowns.
+//  Generalized from 1175's local "dd75" block (Drum Strip header parity —
+//  the KNOB/VU lists match its ds_dd_lbl; panel visuals kept verbatim).
+//
+//  USAGE (host):
+//    @gfx, floating branch, AFTER painting the header surface:
+//      rkth_cluster(x, y, 1, sliderN);      // N = the per-instance VU-face slider
+//      rkth_vu_pick >= 0 ? (                // apply the cluster's VU pick
+//        rkth_vu_pick != (sliderN | 0) ? ( sliderN = rkth_vu_pick; slider_automate(sliderN); );
+//        rkth_vu_pick = -1;
+//      );
+//    every frame (BOTH embedded + floating), near the top of @gfx:
+//      rkth_vu_f = rkth_vu_follow(sliderN);
+//      rkth_vu_f >= 0 ? ( sliderN = rkth_vu_f; slider_automate(sliderN); );
+//    LAST in @gfx:  rkth_cluster_overlay();  // open panels draw on top
+//  slider_automate: VARIABLE form (slider_automate(sliderN)) — hard house
+//  rule, no bitmasks. Hosts that mirror the slider into a working global
+//  (1175's zm_theme) must set the working global FIRST in both spots.
+//
+//  Interaction runs INSIDE rkth_cluster EARLY (open-panel swallow first, then
+//  chips), consuming via the house globals mx/my/lmb_down/rmb_down/
+//  frame_wheel; rkth_consumed = 1 when anything here ate the input. Floating
+//  only — both entry points bit-test (gfx_ext_flags & 1) and no-op embedded.
+//  EEL2 gotcha: helpers are defined BEFORE their callers on purpose — a
+//  forward function reference silently kills the whole file.
+//
+//  LAYOUT (changed 2026-08-12 — user: "make it drop down not across"): the
+//  chips STACK VERTICALLY in a panel that drops from under the toggle, one
+//  chip per line with its caption in a left column. Previously they flowed
+//  horizontally along the header and wrapped to a second line on narrow hosts
+//  (StereoWidth and 4BandEQ go down to 200px against ~265px of chips) — that
+//  wrap machinery is gone, since a vertical stack cannot overflow sideways.
+//  ⚠️The panel is painted in rkth_cluster_overlay(), NOT where it is declared:
+//  it hangs over host content drawn after the header, so painting it inline
+//  would put it underneath. Interaction still runs early, in rkth_cluster.
+//    rkth_cl_h     — height the cluster occupies IN THE HEADER: now always the
+//                    toggle height, since the panel floats over content.
+//    rkth_cl_hdr_w — rkth_cluster_hdr's toggle width.
+//  Both are last-floating-frame values: the cluster no-ops embedded, so an
+//  embedded pass leaves them untouched rather than zeroing them. No host reads
+//  either today (grep-verified across all 12 importers, 2026-08-12) — they are
+//  kept for hosts that may want to reflow around the toggle.
+// ═════════════════════════════════════════════════════════════════════════
+
+// How many VU faces the host's meter has. rk_vu's @init publishes
+// RKVU_THEMES (20); a host still on vu_kbsg never sets it, so the global reads
+// 0 and the cluster keeps the old eleven. Read at RUNTIME on purpose: rk_theme
+// cannot call into rk_vu, because the importers migrate one at a time and a
+// call to a function that is not imported is a whole-file compile error.
+function rkth_vu_n() ( RKVU_THEMES > 0 ? RKVU_THEMES : 11; );
+
+// The face map: a project saved on vu_kbsg stores a face index 0..10 with no
+// version stamp. On rk_vu the same number is a different face. A migrating
+// host calls this ONCE, on load, when its serialize version predates rk_vu,
+// and stores the result. Chosen by LOOK from vu_kbsg's colour tables (face,
+// ink, red zone, accent), not by name:
+//   Classic  navy frame, pale yellow face, black ink      -> Cream
+//   Knight   black, dark grey face, white ink, cyan needle -> Dark Studio
+//   Purple   dark purple face, lavender ink                -> Midnight
+//   Moss     dark muted green                              -> Olive
+//   Moo      light grey-blue face, dark ink                -> Modern White
+//   Warm     amber face, brown needle                      -> Vintage Amber
+//   Ivory    ivory face, warm ink, red                     -> Ivory
+//   Trooper  near-black face, light ink, red zone          -> Blackface
+//   Ultimate flat mid grey                                 -> Ableton
+//   Mooncake near-black, coloured accent                   -> Black & Gold
+//   Black    black, white ink, blue hold                   -> API
+// Anything out of range (including an rk_vu index passed by mistake) comes
+// back unchanged, so calling it twice is harmless.
+function rkth_vu_face_migrate(old) (
+  old = old | 0;
+  old == 0 ? 0 : old == 1 ? 1 : old == 2 ? 5 : old == 3 ? 7 : old == 4 ? 3 :
+  old == 5 ? 6 : old == 6 ? 8 : old == 7 ? 9 : old == 8 ? 13 : old == 9 ? 2 :
+  old == 10 ? 12 : old;
+);
+
+// Dropdown / chip label. kind 2 = VU face (rows = the meter's faces, no AUTO —
+// the host slider stays a direct index; see rkth_vu_n), kind 3 = knob style
+// over the FULL 20-style dispatcher (row -> id skips the mem-only bb=9: id =
+// row<=8 ? row : row+1; ids 19/20 = Pultec Cream / Neve Alt). Strings via
+// strcpy(#buf).
+//
+// The rk_vu names below MIRROR rk_vu_theme_name in rk_vu.jsfx-inc and must
+// stay in step with it (same reason as rkth_vu_n: no call across the import).
+// The vu_kbsg names go when the last vu_kbsg importer migrates.
+function rkth_cl_lbl(kind, r) (
+  kind == 2 ? (
+    RKVU_THEMES > 0 ? strcpy(#rkth_ddl,
+      r == 0  ? "Cream"         : r == 1  ? "Dark Studio"   : r == 2  ? "Black & Gold" :
+      r == 3  ? "Modern White"  : r == 4  ? "Broadcast"     : r == 5  ? "Midnight"     :
+      r == 6  ? "Vintage Amber" : r == 7  ? "Olive"         : r == 8  ? "Ivory"        :
+      r == 9  ? "Blackface"     : r == 10 ? "SSL"           : r == 11 ? "Neve"         :
+      r == 12 ? "API"           : r == 13 ? "Ableton"       : r == 14 ? "FL Studio"    :
+      r == 15 ? "Red"           : r == 16 ? "Yellow"        : r == 17 ? "Orange"       :
+      r == 18 ? "Emerald"       : "Cobalt")
+    : strcpy(#rkth_ddl,
+      r == 0 ? "Classic" : r == 1 ? "Knight"   : r == 2 ? "Purple"   :
+      r == 3 ? "Moss"    : r == 4 ? "Moo"      : r == 5 ? "Warm"     :
+      r == 6 ? "Ivory"   : r == 7 ? "Trooper"  : r == 8 ? "Ultimate" :
+      r == 9 ? "Mooncake" : "Black");
+  ) : (
+    strcpy(#rkth_ddl,
+      r == 0  ? "Default"   : r == 1  ? "SSL"     : r == 2  ? "Vari-Mu"   :
+      r == 3  ? "API"       : r == 4  ? "Witti"   : r == 5  ? "Neve"      :
+      r == 6  ? "Joanny"    : r == 7  ? "MPC"     : r == 8  ? "Jog"       :
+      r == 9  ? "Spice"     : r == 10 ? "Encoder" : r == 11 ? "Pultec"    :
+      r == 12 ? "Ableton"   : r == 13 ? "FL"      : r == 14 ? "Pro Tools" :
+      r == 15 ? "FabFilter" : r == 16 ? "Serum"   : r == 17 ? "Roland"    :
+      r == 18 ? "Pultec Cream" : "Neve Alt");
+  );
+);
+// Row that carries the "current" mark: VU = the host's face (stashed in
+// rkth_cl_vu by rkth_cluster); KNOB = published primary style mapped back to
+// its row (id<=8 ? id : id-1).
+function rkth_cl_currow() (
+  rkth_dd_kind == 2 ? rkth_cl_vu
+                    : ((gmem[GS_THEME_KNOB_P] | 0) <= 8 ? (gmem[GS_THEME_KNOB_P] | 0)
+                                                        : (gmem[GS_THEME_KNOB_P] | 0) - 1);
+);
+// Open at (ax, ay): width measured from the widest label (font set FIRST —
+// gfx_measurestr fails silently under a stale font), clamped into the window.
+// Rows that FIT the window show; the rest scroll (wheel over the open panel).
+// Opens centered on the current pick so it's reachable immediately.
+function rkth_cl_openat(kind, n, ax, ay, rh) local(_di, _dw, _dh) (
+  rkth_dd_open = 1; rkth_dd_kind = kind; rkth_dd_n = n;
+  rkth_dd_x = ax; rkth_dd_y = ay; rkth_dd_rh = rh;
+  gfx_setfont(1, "Arial", (RKTH_F_CHIP*rkth_scale)|0, 'b');
+  rkth_dd_w = 0; _di = 0;
+  loop(n,
+    rkth_cl_lbl(kind, _di);
+    gfx_measurestr(#rkth_ddl, _dw, _dh);
+    _dw > rkth_dd_w ? rkth_dd_w = _dw;
+    _di += 1;
+  );
+  rkth_dd_w = (rkth_dd_w + 24*rkth_scale)|0;
+  rkth_dd_vis = max(3, min(n, ((gfx_h - 6*rkth_scale) / rh) | 0));
+  rkth_dd_h = rkth_dd_vis * rh + 2;
+  rkth_dd_sc = max(0, min(rkth_cl_currow() - ((rkth_dd_vis * 0.5) | 0), n - rkth_dd_vis));
+  rkth_dd_x + rkth_dd_w > gfx_w - 2 ? rkth_dd_x = max(0, gfx_w - 2 - rkth_dd_w);
+  rkth_dd_y + rkth_dd_h > gfx_h - 2 ? rkth_dd_y = max(0, gfx_h - 2 - rkth_dd_h);
+);
+// Small value chip in the rkth_draw_chip style (theme-aware via rkth_setcol).
+// Cluster-only drawer (call sites are both inside rkth_cluster), so it scales
+// off rkth_scale directly rather than off a passed font size.
+function rkth_cl_chipdraw(cx, cy, cw, ch, lbl_str) local(_f) (
+  _f = (RKTH_F_CHIP*rkth_scale)|0;
+  rkth_setcol(1, 0.16, 0.18, 0.22, 1); gfx_rect(cx, cy, cw, ch);
+  rkth_setcol(7, 0.32, 0.35, 0.42, 1); gfx_rect(cx, cy, cw, ch, 0);
+  gfx_setfont(1, "Arial", _f, 'b');
+  rkth_setcol(2, 0.85, 0.87, 0.90, 1);
+  gfx_x = cx + 5*rkth_scale; gfx_y = cy + (ch - _f) * 0.5; gfx_drawstr(lbl_str);
+  gfx_x = cx + cw - 10*rkth_scale; gfx_y = cy + ch * 0.5 - 2*rkth_scale;
+  gfx_lineto(cx + cw - 6*rkth_scale, cy + ch * 0.5 + 2*rkth_scale, 0); gfx_lineto(cx + cw - 2*rkth_scale, cy + ch * 0.5 - 2*rkth_scale, 0);
+);
+// (rkth_cl_flow — the horizontal wrap cursor — was deleted 2026-08-12 when the
+// cluster became a DROPPED PANEL. It existed only to flow chips along the
+// header and wrap them onto a second line on narrow hosts; a vertical stack
+// cannot overflow horizontally, so the whole mechanism went with it. Its state
+// globals rkth_cl_x0/cx/cy/row/py went too. The one rule it enforced still
+// stands and is now enforced by rkth_clp_*: hit test, dropdown anchor and draw
+// must all read the SAME geometry, or a click lands on a rect the user cannot
+// see.)
+
+// The cluster row: interaction FIRST (open-panel swallow, then the chips),
+// then the micro category labels + chip faces. (x, y) = the chip row's
+// top-left; labels sit 9px above; chips are 15px tall, dropdown row height 14.
+// has_vu = 0 hides the VU AND SYNC chips (SYNC's only job in this build is the
+// VU-face broadcast — a lit-able chip with nothing to broadcast would lie).
+// cur_vu = the host's CURRENT face (its slider); the cluster never writes the
+// slider itself — picks surface on rkth_vu_pick for the host to apply.
+function rkth_cluster(x, y, has_vu, cur_vu)
+local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid, _ch, _rh,
+      _capw, _pad, _gap, _cw, _lkw) (
+  // Chip height and dropdown row height, scaled once and reused by EVERY hit
+  // test, dropdown anchor and draw below — a chip whose hit rect and drawn rect
+  // disagree is the bug this function's comments keep warning about, and two
+  // independent "15 * rkth_scale" expressions is exactly how they drift apart.
+  _ch = (RKTH_H_CHIP*rkth_scale)|0;
+  _rh = (RKTH_H_ROW*rkth_scale)|0;
+  !(gfx_ext_flags & 1) ? (
+    rkth_cl_vu = cur_vu | 0;
+    rkth_consumed = 0;
+    // Being CALLED is the signal to paint the panel this frame. The 12 direct
+    // importers gate this call on their OWN toggle (1175's th75_open, etc.);
+    // rkth_cluster_hdr() gates it on rkth_cl_open. Either way, reaching here
+    // means "show it", and NOT reaching here means "don't".
+    //
+    // ⚠️This is deliberately NOT rkth_cl_open. That flag is rkth_cluster_hdr()'s
+    // PERSISTENT expanded-state, published for hosts to read (see its header),
+    // and the overlay cannot clear it without breaking the hdr toggle. A
+    // per-frame flag the overlay CONSUMES is what makes collapse work for
+    // direct callers: they simply stop calling us, and nothing re-raises it.
+    // (Raising rkth_cl_open here instead latched the panel permanently open —
+    // it showed, but no host could ever close it again.)
+    rkth_cl_paint = 1;
+
+    // ── EARLY: an OPEN panel swallows the click/wheel before host widgets ──
+    rkth_dd_open ? (
+      // Re-fit + re-clamp each frame (window can resize while open); rows
+      // beyond the fit SCROLL — wheel over the panel scrolls, rkth style.
+      rkth_dd_vis = max(3, min(rkth_dd_n, ((gfx_h - 6) / rkth_dd_rh) | 0));
+      rkth_dd_h = rkth_dd_vis * rkth_dd_rh + 2;
+      rkth_dd_x + rkth_dd_w > gfx_w - 2 ? rkth_dd_x = max(0, gfx_w - 2 - rkth_dd_w);
+      rkth_dd_y + rkth_dd_h > gfx_h - 2 ? rkth_dd_y = max(0, gfx_h - 2 - rkth_dd_h);
+      rkth_dd_sc = max(0, min(rkth_dd_sc, rkth_dd_n - rkth_dd_vis));
+      rkth_dd_in = mx >= rkth_dd_x && mx < rkth_dd_x + rkth_dd_w && my >= rkth_dd_y && my < rkth_dd_y + rkth_dd_h;
+      rkth_dd_hrow = rkth_dd_in ? rkth_dd_sc + (((my - rkth_dd_y - 1) / rkth_dd_rh) | 0) : -1;
+      (rkth_dd_hrow >= rkth_dd_n || rkth_dd_hrow >= rkth_dd_sc + rkth_dd_vis) ? rkth_dd_hrow = -1;
+      rkth_dd_in && frame_wheel != 0 ? (
+        rkth_dd_sc = max(0, min(rkth_dd_sc - (frame_wheel > 0 ? 1 : -1), rkth_dd_n - rkth_dd_vis));
+        frame_wheel = 0; rkth_consumed = 1;
+      );
+      lmb_down ? (
+        rkth_dd_in && rkth_dd_hrow >= 0 ? (
+          rkth_dd_kind == 2 ? (
+            // VU pick -> the HOST applies it to its own slider (see usage
+            // comment above); latched -> broadcast so siblings follow live.
+            rkth_vu_pick = rkth_dd_hrow; rkth_cl_vu = rkth_dd_hrow;
+            rkth_sync_on ? ( gmem[GS_THEME_VU_REQ] = rkth_dd_hrow + 1; );
+          ) : (
+            gmem[GS_THEME_KNOB_REQ] = (rkth_dd_hrow <= 8 ? rkth_dd_hrow : rkth_dd_hrow + 1) + 1;
+          );
+        );
+        rkth_dd_open = 0; lmb_down = 0; rkth_consumed = 1;   // any click closes (swallowed)
+      );
+    );
+
+    // ── Geometry: chips measured against their labels each frame (font FIRST —
+    // gfx_measurestr fails silently under a stale font). The widest of them
+    // sets ONE column width for the whole stack, so the panel reads as a single
+    // control rather than a ragged edge. Every position below (hit tests,
+    // dropdown anchors, and the overlay's draws) derives from the rkth_clp_*
+    // globals: a chip whose hit rect and drawn rect disagree is the bug. ──
+    gfx_setfont(1, "Arial", (RKTH_F_CHIP*rkth_scale)|0, 'b');
+    strcpy(#rkth_clt, rkth_local_off ? "NATIVE" : rkth_name(rkth_cur() - 1));
+    gfx_measurestr(#rkth_clt, _tw, _th);
+    thw = _tw + 18*rkth_scale;
+    rkth_cl_lbl(3, (gmem[GS_THEME_KNOB_P] | 0) <= 8 ? (gmem[GS_THEME_KNOB_P] | 0)
+                                                    : (gmem[GS_THEME_KNOB_P] | 0) - 1);
+    gfx_measurestr(#rkth_ddl, _tw, _th);
+    knw = _tw + 14*rkth_scale;
+    vuw = 0; syw = 0;   // EEL2 locals survive the call — clear for has_vu = 0
+    has_vu ? (
+      rkth_cl_lbl(2, rkth_cl_vu);
+      gfx_measurestr(#rkth_ddl, _tw, _th);
+      vuw = _tw + 14*rkth_scale;
+      gfx_measurestr(">ALL", _tw, _th);
+      syw = _tw + 14*rkth_scale;
+    );
+    // Measured while the 9px chip font is still set (below, the font drops to
+    // 7px for the caption column — gfx_measurestr silently returns garbage
+    // under the wrong font, so the order here is load-bearing). "LOCKED" and
+    // "FOLLOW" swap in the same chip, so the column must fit the wider one or
+    // the label spills past its border the moment you engage it.
+    _lkw = 0;
+    rkth_lk_ok ? (
+      gfx_measurestr("LOCKED", _tw, _th); _lkw = _tw;
+      gfx_measurestr("FOLLOW", _tw, _th); _lkw = max(_lkw, _tw) + 14*rkth_scale;
+    );
+    // ── DROPPED PANEL geometry (user 2026-08-12: "make it drop down not
+    // across"). The chips used to FLOW horizontally along the header, which put
+    // them on a collision course with each host's right-hand chrome and forced
+    // the wrap-to-a-second-line machinery. Now they stack: one chip per line in
+    // a panel hanging under the toggle, captions in a left column so the panel
+    // stays short and the chip column reads as one control.
+    // ⚠️The panel is DRAWN in rkth_cluster_overlay(), not here — it hangs over
+    // the host's content, and everything the host paints after its header would
+    // cover it. Interaction stays here (early, before host widgets); only the
+    // paint is deferred. All 12 importers already call the overlay last.
+    gfx_setfont(1, "Arial", (RKTH_F_CAP*rkth_scale)|0, 'b');
+    gfx_measurestr("VU SYNC", _tw, _th);   // widest caption sets the left column
+    _capw = _tw + 6*rkth_scale;
+    _pad  = 6*rkth_scale;
+    _gap  = 4*rkth_scale;
+    _cw = max(thw, knw); has_vu ? ( _cw = max(_cw, max(vuw, syw)); ); _cw = max(_cw, _lkw);
+    // LOCK gets its own row, last, because it governs the WHOLE look rather
+    // than any one chip. It is HIDDEN outright on a host that never called
+    // rkth_lock_mem() — no buffer, no lock, and a dead control would be worse
+    // than an absent one.
+    rkth_clp_lockrow = rkth_lk_ok ? (has_vu ? 4 : 2) : -1;
+    rkth_clp_rows  = (has_vu ? 4 : 2) + (rkth_lk_ok ? 1 : 0);
+    rkth_clp_pitch = _ch + _gap;
+    rkth_clp_w = _pad + _capw + _cw + _pad;
+    rkth_clp_h = _pad + rkth_clp_rows*_ch + (rkth_clp_rows - 1)*_gap + _pad;
+    rkth_clp_x = x; rkth_clp_y = y;
+    // Clamp into the window, same rule the dropdowns use.
+    rkth_clp_x + rkth_clp_w > gfx_w - 2*rkth_scale ? rkth_clp_x = max(0, gfx_w - 2*rkth_scale - rkth_clp_w);
+    rkth_clp_y + rkth_clp_h > gfx_h - 2*rkth_scale ? rkth_clp_y = max(0, gfx_h - 2*rkth_scale - rkth_clp_h);
+    rkth_clp_capx = rkth_clp_x + _pad;
+    rkth_clp_cx   = rkth_clp_x + _pad + _capw;
+    rkth_clp_cw   = _cw;
+    rkth_clp_r0   = rkth_clp_y + _pad;
+    rkth_clp_ch   = _ch;
+    rkth_clp_vu   = has_vu;
+    // One x/width for every chip; rows step by pitch. Hit tests, dropdown
+    // anchors and the overlay's draws ALL derive from these same globals, so a
+    // hit rect can never drift from the rect the user sees.
+    thx = rkth_clp_cx; thy = rkth_clp_r0;
+    knx = rkth_clp_cx; kny = rkth_clp_r0 + rkth_clp_pitch;
+    vux = rkth_clp_cx; vuy = rkth_clp_r0 + 2*rkth_clp_pitch;
+    syx = rkth_clp_cx; syy = rkth_clp_r0 + 3*rkth_clp_pitch;
+    thw = _cw; knw = _cw; vuw = _cw; syw = _cw;
+    rkth_cl_h = _ch;   // the header itself now only ever holds the toggle
+
+    // ── THEME chip: existing picker, interaction EARLY (rkth pattern). It
+    // stores (thx, thy) as the chip geometry, so rkth_draw_chip (now called
+    // from the overlay) and the theme list anchor both follow the panel. ──
+    // ⭐While LOCKED the THEME and KNOB chips are INERT — they show the frozen
+    // values and changing them would contradict the lock. Input is zeroed
+    // rather than the call skipped, because rkth_input is also what STORES the
+    // chip geometry the overlay draws from; skipping it would leave the THEME
+    // chip painting at last frame's coordinates.
+    rkth_input(thx, thy, thw, _ch, mx, my,
+               rkth_locked ? 0 : lmb_down, rkth_locked ? 0 : rmb_down,
+               rkth_locked ? 0 : frame_wheel, _rh) ? (
+      lmb_down = 0; frame_wheel = 0; rkth_consumed = 1;
+    );
+    // ── KNOB chip: click opens the list; hover-wheel cycles the suite style
+    // via GS_THEME_KNOB_REQ (skips the mem-only bb=9, wraps) ──
+    !rkth_locked && lmb_down && mx >= knx && mx < knx + knw && my >= kny && my < kny + _ch ? (
+      rkth_cl_openat(3, 20, knx, kny + _ch + 2*rkth_scale, _rh); lmb_down = 0; rkth_consumed = 1;
+    );
+    !rkth_locked && frame_wheel != 0 && mx >= knx && mx < knx + knw && my >= kny && my < kny + _ch ? (
+      kid = gmem[GS_THEME_KNOB_P] | 0;
+      kid = frame_wheel > 0
+        ? (kid >= 20 ? 0 : (kid == 8 || kid == 9) ? 10 : kid + 1)
+        : (kid <= 0 ? 20 : (kid == 10 || kid == 9) ? 8 : kid - 1);
+      gmem[GS_THEME_KNOB_REQ] = kid + 1;
+      frame_wheel = 0; rkth_consumed = 1;
+    );
+    has_vu ? (
+      // ── VU chip: click opens the face list; hover-wheel cycles -> pick ──
+      lmb_down && mx >= vux && mx < vux + vuw && my >= vuy && my < vuy + _ch ? (
+        rkth_cl_openat(2, rkth_vu_n(), vux, vuy + _ch + 2*rkth_scale, _rh); lmb_down = 0; rkth_consumed = 1;
+      );
+      frame_wheel != 0 && mx >= vux && mx < vux + vuw && my >= vuy && my < vuy + _ch ? (
+        rkth_vu_pick = (rkth_cl_vu + (frame_wheel > 0 ? 1 : -1) + rkth_vu_n()) % rkth_vu_n();
+        rkth_cl_vu = rkth_vu_pick;
+        rkth_sync_on ? ( gmem[GS_THEME_VU_REQ] = rkth_vu_pick + 1; );
+        frame_wheel = 0; rkth_consumed = 1;
+      );
+      // ── SYNC chip: LATCHING toggle (Drum Strip ">ALL"). While engaged,
+      // every face change on THIS instance broadcasts so siblings follow
+      // live; toggling it ON also broadcasts the current face immediately. ──
+      lmb_down && mx >= syx && mx < syx + syw && my >= syy && my < syy + _ch ? (
+        rkth_sync_on = rkth_sync_on ? 0 : 1;
+        rkth_sync_on ? ( gmem[GS_THEME_VU_REQ] = rkth_cl_vu + 1; );
+        lmb_down = 0; rkth_consumed = 1;
+      );
+    );
+
+    // ── LOCK chip: freeze / unfreeze this instance's whole look. ──
+    // Engaging SNAPSHOTS first, then sets the flag: the copy has to be taken
+    // while the live band still holds the look being frozen. Lock and NATIVE
+    // are mutually exclusive modes, so engaging one clears the other —
+    // "frozen on a theme" and "ignore theming" cannot both be true.
+    // ⛔Unlocking deliberately does NOT restore anything: the instance simply
+    // resumes reading the live band, which is whatever the suite is on now.
+    rkth_clp_lockrow >= 0 && lmb_down &&
+      mx >= rkth_clp_cx && mx < rkth_clp_cx + rkth_clp_cw &&
+      my >= rkth_clp_r0 + rkth_clp_lockrow*rkth_clp_pitch &&
+      my <  rkth_clp_r0 + rkth_clp_lockrow*rkth_clp_pitch + _ch ? (
+      rkth_locked ? ( rkth_locked = 0; )
+                  : ( rkth_lock_snap(); rkth_locked = 1; rkth_local_off = 0; );
+      lmb_down = 0; rkth_consumed = 1;
+    );
+
+    // ── Swallow ANY input still unclaimed inside the panel rect. ──
+    // The horizontal row sat in empty header space, so a click on the gaps
+    // between chips harmlessly hit nothing. The dropped panel OVERLAPS the
+    // host's controls, so that same click would now fall straight through to
+    // whatever knob or button is underneath it — press the panel background,
+    // move a fader you cannot see. Consuming the whole rect is what makes the
+    // panel behave like a panel. Runs LAST so the chips get first refusal.
+    (lmb_down || rmb_down || frame_wheel != 0) &&
+      mx >= rkth_clp_x && mx < rkth_clp_x + rkth_clp_w &&
+      my >= rkth_clp_y && my < rkth_clp_y + rkth_clp_h ? (
+      lmb_down = 0; rmb_down = 0; frame_wheel = 0; rkth_consumed = 1;
+    );
+
+    // NO DRAWING HERE — the panel hangs over host content, so every chip and
+    // caption is painted by rkth_cluster_overlay() at the end of the frame.
+    // This function's job is now geometry + interaction only.
+  );
+);
+
+// COLLAPSIBLE variant (Drum Strip / 1175 header model): draws a "▸EON" /
+// "▾EON" toggle at (x, y) and reveals the chip row to its right only while
+// open; closing also shuts any open dropdown. Hosts that reflow their layout
+// can read rkth_cl_open (1 = expanded) and rkth_cl_hdr_w (toggle width), and
+// may persist the state in a hidden slider. Prefer this over the bare
+// rkth_cluster unless the host gates the row itself (1175 does).
+// NOTE: defined AFTER rkth_cluster — EEL2 resolves calls at definition time,
+// so a forward reference here would silently kill the whole file.
+function rkth_cluster_hdr(x, y, has_vu, cur_vu)
+local(_tw, _th, bw, bh, hov) (
+  !(gfx_ext_flags & 1) ? (
+    gfx_setfont(1, "Arial", (RKTH_F_CHIP*rkth_scale)|0, 'b');
+    strcpy(#rkth_tg, rkth_cl_open ? "▾THEME" : "▸THEME");
+    gfx_measurestr(#rkth_tg, _tw, _th);
+    bw = _tw + 10*rkth_scale; bh = (RKTH_H_CHIP*rkth_scale)|0;
+    rkth_cl_hdr_w = bw;
+    hov = mx >= x && mx < x + bw && my >= y && my < y + bh;
+    rkth_setcol(1, 0.16, 0.18, 0.22, 1); gfx_rect(x, y, bw, bh);
+    rkth_setcol(7, 0.32, 0.35, 0.42, 1); gfx_rect(x, y, bw, bh, 0);
+    hov ? gfx_set(0.95, 0.97, 1.0, 1) : rkth_setcol(2, 0.85, 0.87, 0.90, 1);
+    gfx_x = x + 5*rkth_scale; gfx_y = y + 3*rkth_scale; gfx_drawstr(#rkth_tg);
+    // Toggle resolved BEFORE the row draws and the click consumed, so a
+    // collapse can never also register as a chip click. Closing drops both
+    // dropdown layers.
+    lmb_down && hov ? (
+      rkth_cl_open = rkth_cl_open ? 0 : 1;
+      !rkth_cl_open ? ( rkth_dd_open = 0; rkth_open = 0; );
+      lmb_down = 0;
+    );
+    // Open: the panel DROPS from directly under the toggle (x, y + bh + 2) and
+    // is painted in the overlay pass. It used to open to the RIGHT (x + bw + 4)
+    // as a horizontal row along the header — changed 2026-08-12 on user request
+    // ("make it drop down not across"), which also retired the wrap-to-a-second
+    // -line machinery the horizontal row needed on narrow hosts.
+    // Closed: only the toggle is on screen.
+    rkth_cl_open ? rkth_cluster(x, y + bh + 2*rkth_scale, has_vu, cur_vu) : ( rkth_cl_h = bh; );
+  );
+);
+
+
+// Every-frame poll (BOTH embedded + floating): a sibling's broadcast landed?
+// Returns the face index to adopt, or -1. Followers adopt REGARDLESS of their
+// own latch state (Drum Strip semantics). The GEN-seen guard is seeded at
+// @init (below) so a late-loading instance never adopts a stale broadcast.
+// ⭐A LOCKED instance follows NOTHING — not the theme, not a sibling's ">ALL".
+// That is the single rule that makes lock mean what it says, and it is why the
+// generation counter is still consumed below before bailing: swallowing the
+// broadcast keeps rkth_vu_gen_seen current, so UNLOCKING later does not make
+// the instance suddenly adopt a broadcast it slept through.
+function rkth_vu_follow(cur_vu) local(_g, _p) (
+  _g = gmem[GS_THEME_VU_GEN];
+  _g != rkth_vu_gen_seen ? (
+    rkth_vu_gen_seen = _g;
+    // Clamp to THIS host's face count: while the fleet is mixed, a migrated
+    // sibling can broadcast a face past eleven, and vu_kbsg's tables end there.
+    _p = min(gmem[GS_THEME_VU_P], rkth_vu_n());
+    (!rkth_locked && _p >= 1 && (_p - 1) != (cur_vu | 0)) ? _p - 1 : -1;
+  ) : -1;
+);
+
+// LAST in @gfx: the open KNOB/VU panel (dd75 visuals verbatim) + the theme
+// list (rkth_overlay_draw). Floating only — embedded passes must not draw
+// from this instance's shared open state (bit-test, house rule).
+function rkth_cluster_overlay() local(_k, _idx, _ry, _f7, _f9, _cy) (
+  !(gfx_ext_flags & 1) ? (
+    // ── The DROPPED appearance panel. Its geometry was computed by
+    // rkth_cluster earlier this frame; it is painted here because it hangs over
+    // host content that is drawn after the header. Painted BEFORE the two
+    // dropdown layers so an open THEME/KNOB/VU list lands on top of it. ──
+    rkth_cl_paint ? (
+      _f7 = (RKTH_F_CAP*rkth_scale)|0; _f9 = (RKTH_F_CHIP*rkth_scale)|0;
+      gfx_set(0, 0, 0, 0.35); gfx_rect(rkth_clp_x + 2*rkth_scale, rkth_clp_y + 3*rkth_scale, rkth_clp_w, rkth_clp_h);
+      rkth_setcol(1, 0.14, 0.16, 0.20, 1); gfx_rect(rkth_clp_x, rkth_clp_y, rkth_clp_w, rkth_clp_h);
+      rkth_setcol(7, 0.34, 0.37, 0.44, 1); gfx_rect(rkth_clp_x, rkth_clp_y, rkth_clp_w, rkth_clp_h, 0);
+      // Captions in the left column, vertically centred on their row.
+      // CONTRAST: these were slot-3 ink at alpha 0.65 — a dark grey at
+      // two-thirds opacity ON A DARK PANEL, the least readable text in the
+      // whole cluster and half of the user's "theme text is hard to read"
+      // report (2026-08-12). Now full alpha in a lighter ink; still visibly
+      // secondary to the chip values, but legible.
+      gfx_setfont(1, "Arial", _f7, 'b');
+      rkth_setcol(3, 0.62, 0.65, 0.70, 1);
+      _cy = (rkth_clp_ch - _f7) * 0.5;
+      gfx_x = rkth_clp_capx; gfx_y = rkth_clp_r0 + _cy; gfx_drawstr("THEME");
+      gfx_x = rkth_clp_capx; gfx_y = rkth_clp_r0 + rkth_clp_pitch + _cy; gfx_drawstr("KNOB");
+      rkth_clp_vu ? (
+        gfx_x = rkth_clp_capx; gfx_y = rkth_clp_r0 + 2*rkth_clp_pitch + _cy; gfx_drawstr("VU");
+        // "VU SYNC", not a bare "SYNC": the chip face reads ">ALL", which with
+        // an unqualified caption promises to broadcast the WHOLE appearance
+        // cluster. It does not — it broadcasts the VU FACE only (THEME and KNOB
+        // are already global, read from the shared band by every plugin every
+        // frame, so they need no sync control at all). Reverts to "SYNC" when
+        // the NATIVE flag joins the broadcast — Spec_Appearance_Sync_Broadcast.
+        gfx_x = rkth_clp_capx; gfx_y = rkth_clp_r0 + 3*rkth_clp_pitch + _cy; gfx_drawstr("VU SYNC");
+      );
+      // Chip faces. THEME reads its rect from the globals rkth_input stored.
+      rkth_draw_chip(_f9);
+      rkth_cl_lbl(3, (gmem[GS_THEME_KNOB_P] | 0) <= 8 ? (gmem[GS_THEME_KNOB_P] | 0)
+                                                      : (gmem[GS_THEME_KNOB_P] | 0) - 1);
+      rkth_cl_chipdraw(rkth_clp_cx, rkth_clp_r0 + rkth_clp_pitch, rkth_clp_cw, rkth_clp_ch, #rkth_ddl);
+      rkth_clp_vu ? (
+        rkth_cl_lbl(2, rkth_cl_vu);
+        rkth_cl_chipdraw(rkth_clp_cx, rkth_clp_r0 + 2*rkth_clp_pitch, rkth_clp_cw, rkth_clp_ch, #rkth_ddl);
+        // SYNC chip: lit (theme ACCENT / amber fallback, dark label ink) while
+        // latched — the Drum Strip ">ALL" look adapted to the chip style.
+        _ry = rkth_clp_r0 + 3*rkth_clp_pitch;
+        rkth_sync_on ? ( rkth_setcol(4, 0.95, 0.65, 0.15, 0.9); )
+                     : ( rkth_setcol(1, 0.16, 0.18, 0.22, 1); );
+        gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch);
+        rkth_setcol(7, 0.32, 0.35, 0.42, 1); gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch, 0);
+        gfx_setfont(1, "Arial", _f9, 'b');
+        rkth_sync_on ? gfx_set(0.10, 0.10, 0.12, 1) : rkth_setcol(2, 0.85, 0.87, 0.90, 1);
+        gfx_x = rkth_clp_cx + 5*rkth_scale; gfx_y = _ry + (rkth_clp_ch - _f9) * 0.5; gfx_drawstr(">ALL");
+      );
+      // ── LOCK row: same lit-chip language as >ALL, so "engaged" reads the
+      // same way everywhere in the panel. Absent entirely when the host never
+      // handed us a snapshot buffer (rkth_clp_lockrow < 0).
+      rkth_clp_lockrow >= 0 ? (
+        _ry = rkth_clp_r0 + rkth_clp_lockrow*rkth_clp_pitch;
+        gfx_setfont(1, "Arial", _f7, 'b');
+        rkth_setcol(3, 0.62, 0.65, 0.70, 1);
+        gfx_x = rkth_clp_capx; gfx_y = _ry + _cy; gfx_drawstr("LOCK");
+        rkth_locked ? ( rkth_setcol(4, 0.95, 0.65, 0.15, 0.9); )
+                    : ( rkth_setcol(1, 0.16, 0.18, 0.22, 1); );
+        gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch);
+        rkth_setcol(7, 0.32, 0.35, 0.42, 1); gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch, 0);
+        gfx_setfont(1, "Arial", _f9, 'b');
+        rkth_locked ? gfx_set(0.10, 0.10, 0.12, 1) : rkth_setcol(2, 0.85, 0.87, 0.90, 1);
+        gfx_x = rkth_clp_cx + 5*rkth_scale; gfx_y = _ry + (rkth_clp_ch - _f9) * 0.5;
+        gfx_drawstr(rkth_locked ? "LOCKED" : "FOLLOW");
+      );
+    );
+    // CONSUME: rkth_cluster re-raises this next frame only if the host still
+    // calls it. Cleared whether or not we painted, and inside the same
+    // !(gfx_ext_flags & 1) guard that rkth_cluster sets it under, so embedded
+    // passes neither paint nor clear.
+    rkth_cl_paint = 0;
+    rkth_overlay_draw();
+    rkth_dd_open ? (
+      gfx_set(0, 0, 0, 0.35); gfx_rect(rkth_dd_x + 2*rkth_scale, rkth_dd_y + 3*rkth_scale, rkth_dd_w, rkth_dd_h);   // shadow
+      rkth_setcol(1, 0.14, 0.16, 0.20, 1); gfx_rect(rkth_dd_x, rkth_dd_y, rkth_dd_w, rkth_dd_h);
+      rkth_setcol(7, 0.34, 0.37, 0.44, 1); gfx_rect(rkth_dd_x, rkth_dd_y, rkth_dd_w, rkth_dd_h, 0);
+      gfx_setfont(1, "Arial", (RKTH_F_CHIP*rkth_scale)|0, 'b');
+      _k = 0;
+      loop(rkth_dd_vis,
+        _idx = rkth_dd_sc + _k;
+        _ry = rkth_dd_y + 1 + _k * rkth_dd_rh;
+        _idx == rkth_dd_hrow ? (
+          gfx_set(0.10, 0.30, 0.40, 1); gfx_rect(rkth_dd_x + 1, _ry, rkth_dd_w - 2, rkth_dd_rh);   // hover row
+          gfx_set(0.95, 0.97, 1.0, 1);
+        ) : (
+          _idx == rkth_cl_currow() ? gfx_set(0.30, 0.72, 0.92, 1) : rkth_setcol(3, 0.72, 0.74, 0.78, 1);
+        );
+        rkth_cl_lbl(rkth_dd_kind, _idx);
+        gfx_x = rkth_dd_x + 10*rkth_scale; gfx_y = _ry + 2*rkth_scale; gfx_drawstr(#rkth_ddl);
+        _idx == rkth_cl_currow() ? ( gfx_set(0.30, 0.72, 0.92, 1); gfx_circle(rkth_dd_x + 5*rkth_scale, (_ry + rkth_dd_rh * 0.5) | 0, 2*rkth_scale, 1, 1); );
+        _k += 1;
+      );
+      rkth_dd_n > rkth_dd_vis ? (   // scrollbar thumb (rkth style)
+        gfx_set(0.45, 0.70, 0.90, 0.8);
+        gfx_rect(rkth_dd_x + rkth_dd_w - 3*rkth_scale, rkth_dd_y + (rkth_dd_h * rkth_dd_sc / rkth_dd_n) | 0, 2*rkth_scale,
+                 max(6*rkth_scale, (rkth_dd_h * rkth_dd_vis / rkth_dd_n) | 0));
+      );
+      gfx_setfont(0);
+    );
+  );
+);
+
+// Cluster @init: only the sentinels need explicit values (plain EEL2 globals
+// default to 0, which is the right idle state for rkth_dd_open / rkth_sync_on
+// — and NOT re-zeroing those here keeps an engaged SYNC latch alive across a
+// sample-rate-change @init rerun). rkth_vu_gen_seen seeds to the CURRENT
+// generation so a freshly loaded instance ignores broadcasts that happened
+// before it existed (its serialized face wins; only future syncs are adopted).
+rkth_vu_pick = -1;
+rkth_dd_hrow = -1;
+rkth_vu_gen_seen = gmem[GS_THEME_VU_GEN];
+rkth_cl_open = 0;      // collapsible header starts closed (rkth_cluster_hdr)
+rkth_cl_paint = 0;     // per-frame "panel was requested"; set by rkth_cluster,
+                       // consumed by rkth_cluster_overlay. NEVER persistent —
+                       // that is exactly what rkth_cl_open is for.
+rkth_cl_hdr_w = 0;     // toggle width, for hosts that reflow around it
+rkth_cl_h = 15;        // toggle height until a frame measures otherwise; the
+                       // dropped panel's geometry (rkth_clp_*) is frame scratch
+                       // and needs no seed — every frame recomputes it in full

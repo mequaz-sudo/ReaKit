@@ -106,6 +106,14 @@ Apply EON sizes to this project). Run it again to open the panel; closing
 the panel never stops it. Needs js_ReaScriptAPI; the panel needs ReaImGui,
 both from ReaTeam Extensions. MIT.
 
+## Free FX
+
+Also free here: **ReaKit Free FX**, four classic REAPER effects with EON
+Studios interfaces — **Saturation**, **3-Band EQ** and **DDC** (Digital Drum
+Compressor) by LOSER, and a **De-Esser** on Liteon's. Install it from the
+ReaPack browser. The DSP keeps its authors' original terms; see
+`FX/LICENSE.md`.
+
 ## Use in your JSFX
 
 The library installs to `Effects/ReaKit/Library/`. From your own plugin:

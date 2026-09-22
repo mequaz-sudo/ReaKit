@@ -1,0 +1,149 @@
+// rk_playstate.jsfx-inc — Play-State Awareness for ReaKit Plugins
+// Part of the ReaKit framework by EON Studios
+// ═══════════════════════════════════════════════════════════════════
+// Provides play_state detection and optional auto-bypass/tail behavior.
+//
+// USAGE:
+//   @init:    rk_ps_init(tail_ms);
+//              — tail_ms: how long DSP continues after stop (0 = instant bypass)
+//              — use -1 for infinite tail (never auto-bypass)
+//
+//   @block:   rk_ps_update_block();
+//              — call ONCE per @block: decodes play_state (a block-rate
+//                variable), edge flags, and the want-active decision
+//   @sample:  rk_ps_tick();
+//              — call ONCE at the top of @sample, before any DSP
+//              — tail countdown only; sets rk_ps_active
+//   (legacy)  rk_ps_update();  — @sample-only shim, block work every sample
+//
+//   @sample:  if (rk_ps_active) { ...your DSP... }
+//              — wrap your DSP in this check for auto-bypass
+//
+//   @gfx:    (optional) read rk_ps_playing / rk_ps_stopped for UI state
+//
+// ENABLE TOGGLES (controlled via options menu):
+//   rk_ps_en_play  = 1  — process during playback (default on)
+//   rk_ps_en_rec   = 1  — process during recording (default on)
+//   rk_ps_en_stop  = 1  — process when stopped (default on)
+//   These are toggled by the gear menu in rk_gmem_link.jsfx-inc.
+//   Persist via @serialize in each plugin (3 file_var calls).
+//
+// PLAY STATES (REAPER built-in):
+//   play_state: 0=stopped, 1=playing, 2=paused, 5=recording, 6=rec paused
+//
+// ═══════════════════════════════════════════════════════════════════
+
+@init
+
+function rk_ps_init(tail_ms)
+(
+  rk_ps_playing   = 0;
+  rk_ps_recording = 0;
+  rk_ps_stopped   = 1;
+  rk_ps_paused    = 0;
+  rk_ps_active    = 1;    // DSP active by default
+  rk_ps_want_active = 1;  // block-rate decision (rk_ps_update_block)
+
+  // Enable toggles (all on by default; menu can disable)
+  // Only set defaults on first load — @serialize restores saved values
+  !rk_ps_inited ? (
+    rk_ps_en_play  = 1;
+    rk_ps_en_rec   = 1;
+    rk_ps_en_stop  = 1;
+    rk_ps_inited   = 1;
+  );
+
+  // Tail: how many samples to keep processing after transport stops
+  // -1 = never auto-bypass (infinite tail effects like reverb)
+  //  0 = bypass immediately on stop
+  // >0 = fade out over N ms
+  rk_ps_tail_ms     = tail_ms;
+  rk_ps_tail_samps  = tail_ms > 0 ? (tail_ms * srate / 1000) | 0 : 0;
+  rk_ps_tail_count  = 0;
+
+  // Previous state for edge detection
+  rk_ps_prev_state  = -1;
+
+  // Edge flags (true for one @sample block on transition)
+  rk_ps_just_started  = 0;
+  rk_ps_just_stopped  = 0;
+  rk_ps_just_paused   = 0;
+);
+
+
+// Block-invariant half of the old rk_ps_update(). play_state cannot change
+// between the samples of one block, so decode/edge/want-active runs once per
+// @block instead of once per sample. Edge flags now hold for a whole block
+// (no caller reads them — verified across the bundle).
+function rk_ps_update_block()
+  local(ps, was_active)
+(
+  ps = play_state;
+
+  // Decode state flags
+  rk_ps_playing   = (ps == 1);
+  rk_ps_recording = (ps == 5);
+  rk_ps_stopped   = (ps == 0 || ps == 2 || ps == 6);
+  rk_ps_paused    = (ps == 2 || ps == 6);
+
+  // Edge detection
+  rk_ps_just_started = 0;
+  rk_ps_just_stopped = 0;
+  rk_ps_just_paused  = 0;
+
+  ps != rk_ps_prev_state ? (
+    was_active = (rk_ps_prev_state == 1 || rk_ps_prev_state == 5);
+
+    // Transition: stopped/paused → playing/recording
+    (ps == 1 || ps == 5) && !was_active ? (
+      rk_ps_just_started = 1;
+      rk_ps_tail_count = 0;
+    );
+
+    // Transition: playing/recording → stopped/paused
+    (ps == 0 || ps == 2 || ps == 6) && was_active ? (
+      rk_ps_just_stopped = 1;
+      rk_ps_tail_count = rk_ps_tail_samps;
+    );
+
+    // Transition: anything → paused
+    (ps == 2 || ps == 6) ? rk_ps_just_paused = 1;
+
+    rk_ps_prev_state = ps;
+  );
+
+  // Determine if DSP should be active based on enable toggles
+  rk_ps_want_active = 0;
+  rk_ps_playing   && rk_ps_en_play  ? rk_ps_want_active = 1;
+  rk_ps_recording && rk_ps_en_rec   ? rk_ps_want_active = 1;
+  rk_ps_stopped   && rk_ps_en_stop  ? rk_ps_want_active = 1;
+);
+
+// Per-sample half: tail countdown only. Call ONCE at the top of @sample.
+function rk_ps_tick()
+(
+  rk_ps_tail_ms < 0 ? (
+    // Infinite tail mode: just use enable toggles directly
+    rk_ps_active = rk_ps_want_active;
+  ) : (
+    // Finite tail mode: enable toggles + tail countdown
+    rk_ps_want_active ? (
+      rk_ps_active = 1;
+      rk_ps_tail_count = 0;
+    ) : rk_ps_tail_count > 0 ? (
+      // Tail still counting down (smooth finish after state change)
+      rk_ps_active = 1;
+      rk_ps_tail_count -= 1;
+    ) : (
+      rk_ps_active = 0;
+    );
+  );
+);
+
+// DEPRECATED shim — identical behaviour to the pre-split version.
+// New code: rk_ps_update_block() in @block + rk_ps_tick() in @sample.
+function rk_ps_update()
+(
+  rk_ps_update_block();
+  rk_ps_tick();
+);

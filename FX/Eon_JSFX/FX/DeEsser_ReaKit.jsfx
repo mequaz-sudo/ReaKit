@@ -1,0 +1,852 @@
+desc:EON: De-Esser
+// EON Studios ReaKit — De-Esser
+// DSP: Liteon LR2 crossover + peak compressor (ported)
+// Version: 1.0.1
+
+slider1:-20<-60,0,0.1>-Threshold (dB)
+slider2:7500<2000,16000,1>-Frequency (Hz)
+slider3:1.5<0.1,3.1,0.1>-Bandwidth (oct)
+slider4:4<1,20,0.1>-Ratio
+slider5:0<0,2,1>-Time {Fast,Medium,Slow}
+slider6:0<0,1,1>-Target {Bandpass,Hipass}
+slider7:1.0<0,5,0.1>-Lookahead (ms)
+slider8:0<0,1,1>-Monitor {Off,On}
+slider9:0<-24,24,0.1>-Output Gain (dB)
+slider10:0<0,16,1>-Link Group {Off,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+options:gfx_hz=60
+options:no_meter
+options:gmem=ReaKitDeEsser
+
+import ../../ReaKit/utils_kbsg.jsfx-inc
+import ../../ReaKit/knobs_kbsg.jsfx-inc
+import ../../ReaKit/buttons_kbsg.jsfx-inc
+import ../../ReaKit/meters_kbsg.jsfx-inc
+import ../../ReaKit/rk_playstate.jsfx-inc
+import ../../ReaKit/rk_gmem_link.jsfx-inc
+import ../../ReaKit/rk_theme.jsfx-inc
+
+@init
+gfx_ext_retina = 1;
+
+// Render the embedded UI without REAPER's frame/title-bar decoration
+// (REAPER 7.45+, gfx_ext_flags 0x100). Must be set in @init, not @gfx.
+gfx_ext_flags |= 0x100 | 0x400; // +0x400: no MCP hover tooltip (7.79+; older ignores)
+
+cDenorm = pow(10,-30);
+
+KS = 16; BS = 8;
+LA_MAX = 2048;  // ~46ms @ 44.1k, power-of-2 for fast masking
+
+// ── Memory layout ──────────────────────────────────────────────────────────
+freemem = 0;
+km = freemem; freemem += 6 * KS;   // 6 knob slots
+bm = freemem; freemem += 3 * BS;   // 3 button slots
+la_buf_l = freemem; freemem += LA_MAX;
+la_buf_r = freemem; freemem += LA_MAX;
+meter_init(freemem); freemem += 1380;
+
+// ── FFT spectrum analyzer memory ──────────────────────────────────────────
+fft_size = 1024;
+fft_half  = fft_size / 2;
+fft_buf_out = freemem; freemem += fft_size;       // real-only buffer for fft_real() — output
+fft_buf_in  = freemem; freemem += fft_size;       // real-only buffer for fft_real() — input
+fft_window  = freemem; freemem += fft_size;        // Blackman-Harris window coefficients
+ring_buf_out = freemem; freemem += fft_size;       // circular capture — output signal
+ring_buf_in  = freemem; freemem += fft_size;       // circular capture — input signal
+spec_mag_out = freemem; freemem += fft_half + 1;   // 513 smoothed magnitude bins — output
+spec_mag_in  = freemem; freemem += fft_half + 1;   // 513 smoothed magnitude bins — input
+ring_wr = 0;
+
+// Precompute Blackman-Harris window (trig allowed in @init)
+i = 0;
+loop(fft_size,
+  w = 2 * $pi * i / (fft_size - 1);
+  fft_window[i] = 0.35875 - 0.48829 * cos(w) + 0.14128 * cos(2 * w) - 0.01168 * cos(3 * w);
+  i += 1;
+);
+memset(spec_mag_out, 0, fft_half + 1);
+memset(spec_mag_in,  0, fft_half + 1);
+memset(ring_buf_out, 0, fft_size);
+memset(ring_buf_in,  0, fft_size);
+
+// Filter state: Direct Form II transposed, 2 delay vars per filter per channel
+// s0 = first crossover (always used)
+// s1 = second crossover (bandpass mode only)
+// "d" prefix = delayed signal path
+s0_lp_l_xm0 = s0_lp_l_xm1 = 0;
+s0_hp_l_xm0 = s0_hp_l_xm1 = 0;
+s0_lp_r_xm0 = s0_lp_r_xm1 = 0;
+s0_hp_r_xm0 = s0_hp_r_xm1 = 0;
+s1_lp_l_xm0 = s1_lp_l_xm1 = 0;
+s1_hp_l_xm0 = s1_hp_l_xm1 = 0;
+s1_lp_r_xm0 = s1_lp_r_xm1 = 0;
+s1_hp_r_xm0 = s1_hp_r_xm1 = 0;
+ds0_lp_l_xm0 = ds0_lp_l_xm1 = 0;
+ds0_hp_l_xm0 = ds0_hp_l_xm1 = 0;
+ds0_lp_r_xm0 = ds0_lp_r_xm1 = 0;
+ds0_hp_r_xm0 = ds0_hp_r_xm1 = 0;
+ds1_lp_l_xm0 = ds1_lp_l_xm1 = 0;
+ds1_hp_l_xm0 = ds1_hp_l_xm1 = 0;
+ds1_lp_r_xm0 = ds1_lp_r_xm1 = 0;
+ds1_hp_r_xm0 = ds1_hp_r_xm1 = 0;
+
+la_write = 0; la_len = 0;
+envl = 0; cgainl = 1; gain_smooth = 1.0;
+gr_peak = 1.0;       // per-block peak of gain_smooth (reset each @block)
+gr_db_out = 0;
+gr_disp = 0;         // display-smoothed GR value for @gfx (fast attack, slow release)
+dsp_dirty = 0;
+ext_gr_meter = 0;
+ext_tail_size = -1;  // infinite tail — prevent REAPER cutting audio on transport stop
+
+rk_ps_init(200);
+rk_link_init(10, 10, freemem); freemem += 64;
+rk_link_exclude(10);
+
+// ── LR2 coefficient calculation ─────────────────────────────────────────────
+// Sets lr2_b1, lr2_b2, lr2_a0lp/hp, lr2_a1lp/hp, lr2_a2lp/hp
+function calc_lr2(fc)
+  local(fpi, wc, wc2, wc22, k, k2, k22, wck2, tmpk)
+(
+  fpi   = $pi * fc;
+  wc    = 2 * fpi;
+  wc2   = wc * wc;
+  wc22  = 2 * wc2;
+  k     = wc / tan(fpi / srate);
+  k2    = k * k;
+  k22   = 2 * k2;
+  wck2  = 2 * wc * k;
+  tmpk  = k2 + wc2 + wck2;
+  lr2_b1   = (-k22 + wc22) / tmpk;
+  lr2_b2   = (-wck2 + k2 + wc2) / tmpk;
+  lr2_a0lp = wc2 / tmpk;
+  lr2_a1lp = wc22 / tmpk;
+  lr2_a2lp = wc2 / tmpk;
+  lr2_a0hp = k2 / tmpk;
+  lr2_a1hp = -k22 / tmpk;
+  lr2_a2hp = k2 / tmpk;
+);
+
+function recalc_dsp()
+  local(fh, fl, att_ms, rel_ms, sr_ratio)
+(
+  // Time constants (Liteon preset table)
+  slider5 == 0 ? ( att_ms = 0.003;  rel_ms = 50;  );
+  slider5 == 1 ? ( att_ms = 0.030;  rel_ms = 100; );
+  slider5 == 2 ? ( att_ms = 0.100;  rel_ms = 200; );
+
+  att = pow(10, -0.002 - 3.97772619 * (att_ms / 100));
+  rel = pow(10, -3.11  - 1.8698     * (rel_ms / 100));
+  // Scale to sample rate (Liteon coefficients designed for 44.1kHz)
+  sr_ratio = 44100 / srate;
+  att = 1 - pow(1 - att, sr_ratio);
+  rel = 1 - pow(1 - rel, sr_ratio);
+  gs_alpha = 1 - pow(1 - 0.1, sr_ratio);
+
+  // Threshold and ratio
+  thr = pow(10, 2 * (slider1 / 80 + 1) - 2);
+  rat = (slider4 - 1) / 19;
+
+  // Output gain
+  outgain = pow(10, slider9 / 20);
+
+  // Lookahead
+  la_len = min(floor(slider7 * 0.001 * srate + 0.5), LA_MAX - 1);
+
+  // Crossover coefficients
+  // Bandpass: two crossovers — fl (low edge of band), fh (high edge)
+  // Hipass:   one crossover at fc
+  slider6 == 0 ? (
+    fh = min(slider2 + slider2 * slider3 / 2, 20000);
+    calc_lr2(fh);
+    tgt_b1_s1  = lr2_b1;   tgt_b2_s1  = lr2_b2;
+    tgt_a0s1lp = lr2_a0lp; tgt_a1s1lp = lr2_a1lp; tgt_a2s1lp = lr2_a2lp;
+    tgt_a0s1hp = lr2_a0hp; tgt_a1s1hp = lr2_a1hp; tgt_a2s1hp = lr2_a2hp;
+    fl = slider2 - slider2 * slider3 / 4;
+    calc_lr2(fl);
+  ) : (
+    calc_lr2(slider2);
+  );
+  tgt_b1_s0  = lr2_b1;   tgt_b2_s0  = lr2_b2;
+  tgt_a0s0lp = lr2_a0lp; tgt_a1s0lp = lr2_a1lp; tgt_a2s0lp = lr2_a2lp;
+  tgt_a0s0hp = lr2_a0hp; tgt_a1s0hp = lr2_a1hp; tgt_a2s0hp = lr2_a2hp;
+);
+
+// ── Fix: clear lookahead buffer to prevent stale audio on project reload ──
+i = 0; loop(LA_MAX, la_buf_l[i] = 0; la_buf_r[i] = 0; i += 1; );
+
+// ── Fix: prime interpolation sources so @block doesn't ramp from 0 ────────
+recalc_dsp();
+src_b1_s0  = tgt_b1_s0;  src_b2_s0  = tgt_b2_s0;
+src_a0s0lp = tgt_a0s0lp; src_a1s0lp = tgt_a1s0lp; src_a2s0lp = tgt_a2s0lp;
+src_a0s0hp = tgt_a0s0hp; src_a1s0hp = tgt_a1s0hp; src_a2s0hp = tgt_a2s0hp;
+src_b1_s1  = tgt_b1_s1;  src_b2_s1  = tgt_b2_s1;
+src_a0s1lp = tgt_a0s1lp; src_a1s1lp = tgt_a1s1lp; src_a2s1lp = tgt_a2s1lp;
+src_a0s1hp = tgt_a0s1hp; src_a1s1hp = tgt_a1s1hp; src_a2s1hp = tgt_a2s1hp;
+
+// Prime current coeffs so @sample has valid values before the first @block
+b1_s0  = src_b1_s0;  b2_s0  = src_b2_s0;
+a0s0lp = src_a0s0lp; a1s0lp = src_a1s0lp; a2s0lp = src_a2s0lp;
+a0s0hp = src_a0s0hp; a1s0hp = src_a1s0hp; a2s0hp = src_a2s0hp;
+b1_s1  = src_b1_s1;  b2_s1  = src_b2_s1;
+a0s1lp = src_a0s1lp; a1s1lp = src_a1s1lp; a2s1lp = src_a2s1lp;
+a0s1hp = src_a0s1hp; a1s1hp = src_a1s1hp; a2s1hp = src_a2s1hp;
+
+// Zero all deltas — no interpolation needed on first block
+d_b1_s0=d_b2_s0=d_a0s0lp=d_a1s0lp=d_a2s0lp=d_a0s0hp=d_a1s0hp=d_a2s0hp=0;
+d_b1_s1=d_b2_s1=d_a0s1lp=d_a1s1lp=d_a2s1lp=d_a0s1hp=d_a1s1hp=d_a2s1hp=0;
+
+@slider
+recalc_dsp();
+rk_link_on_slider();
+
+@block
+atomic_get(dsp_dirty) ? ( recalc_dsp(); atomic_set(dsp_dirty, 0); );
+rk_link_pull() ? ( recalc_dsp(); );
+
+// PDC only in @block
+pdc_delay = la_len; pdc_bot_ch = 0; pdc_top_ch = 2;
+
+// Interpolate all LR2 coefficients across block (Liteon pattern — no coeff math in @sample)
+samplesblock > 0 ? (
+  d_b1_s0 = (tgt_b1_s0 - src_b1_s0) / samplesblock; b1_s0 = src_b1_s0; src_b1_s0 = tgt_b1_s0;
+  d_b2_s0 = (tgt_b2_s0 - src_b2_s0) / samplesblock; b2_s0 = src_b2_s0; src_b2_s0 = tgt_b2_s0;
+  d_a0s0lp = (tgt_a0s0lp - src_a0s0lp) / samplesblock; a0s0lp = src_a0s0lp; src_a0s0lp = tgt_a0s0lp;
+  d_a1s0lp = (tgt_a1s0lp - src_a1s0lp) / samplesblock; a1s0lp = src_a1s0lp; src_a1s0lp = tgt_a1s0lp;
+  d_a2s0lp = (tgt_a2s0lp - src_a2s0lp) / samplesblock; a2s0lp = src_a2s0lp; src_a2s0lp = tgt_a2s0lp;
+  d_a0s0hp = (tgt_a0s0hp - src_a0s0hp) / samplesblock; a0s0hp = src_a0s0hp; src_a0s0hp = tgt_a0s0hp;
+  d_a1s0hp = (tgt_a1s0hp - src_a1s0hp) / samplesblock; a1s0hp = src_a1s0hp; src_a1s0hp = tgt_a1s0hp;
+  d_a2s0hp = (tgt_a2s0hp - src_a2s0hp) / samplesblock; a2s0hp = src_a2s0hp; src_a2s0hp = tgt_a2s0hp;
+  slider6 == 0 ? (
+    d_b1_s1 = (tgt_b1_s1 - src_b1_s1) / samplesblock; b1_s1 = src_b1_s1; src_b1_s1 = tgt_b1_s1;
+    d_b2_s1 = (tgt_b2_s1 - src_b2_s1) / samplesblock; b2_s1 = src_b2_s1; src_b2_s1 = tgt_b2_s1;
+    d_a0s1lp = (tgt_a0s1lp - src_a0s1lp) / samplesblock; a0s1lp = src_a0s1lp; src_a0s1lp = tgt_a0s1lp;
+    d_a1s1lp = (tgt_a1s1lp - src_a1s1lp) / samplesblock; a1s1lp = src_a1s1lp; src_a1s1lp = tgt_a1s1lp;
+    d_a2s1lp = (tgt_a2s1lp - src_a2s1lp) / samplesblock; a2s1lp = src_a2s1lp; src_a2s1lp = tgt_a2s1lp;
+    d_a0s1hp = (tgt_a0s1hp - src_a0s1hp) / samplesblock; a0s1hp = src_a0s1hp; src_a0s1hp = tgt_a0s1hp;
+    d_a1s1hp = (tgt_a1s1hp - src_a1s1hp) / samplesblock; a1s1hp = src_a1s1hp; src_a1s1hp = tgt_a1s1hp;
+    d_a2s1hp = (tgt_a2s1hp - src_a2s1hp) / samplesblock; a2s1hp = src_a2s1hp; src_a2s1hp = tgt_a2s1hp;
+  );
+);
+
+// Capture gr_db_out from peak gain_smooth seen last block, then reset for next block
+gr_db_out    = -20 * log10(max(gr_peak, 0.000000001));
+ext_gr_meter = min(0, gr_db_out);
+gr_peak      = 1.0;  // reset — @sample will accumulate max(gain_smooth) into this
+rk_ps_update_block();  // block-rate play-state decode (rk_playstate.jsfx-inc)
+
+@sample
+rk_ps_tick();
+rk_ps_active ? (
+
+  // ── FFT ring buffer: capture INPUT before any DSP ─────────────────────────
+  ring_buf_in[ring_wr] = (spl0 + spl1) * 0.5;
+
+  // ── Lookahead: write live, read delayed ───────────────────────────────────
+  la_buf_l[la_write] = spl0;
+  la_buf_r[la_write] = spl1;
+  la_read = (la_write - la_len + LA_MAX) & (LA_MAX - 1);
+  dl = la_buf_l[la_read];
+  dr = la_buf_r[la_read];
+  la_write = (la_write + 1) & (LA_MAX - 1);
+
+  // ── Step coefficient interpolation ───────────────────────────────────────
+  b1_s0 += d_b1_s0; b2_s0 += d_b2_s0;
+  a0s0lp += d_a0s0lp; a1s0lp += d_a1s0lp; a2s0lp += d_a2s0lp;
+  a0s0hp += d_a0s0hp; a1s0hp += d_a1s0hp; a2s0hp += d_a2s0hp;
+
+  // ── s0 on LIVE signal (sidechain detection path) ──────────────────────────
+  inp_l = spl0 + cDenorm; inp_r = spl1 + cDenorm;
+  s0_lp_l_out = a0s0lp * inp_l + s0_lp_l_xm0;
+  s0_lp_l_xm0 = a1s0lp * inp_l - b1_s0 * s0_lp_l_out + s0_lp_l_xm1;
+  s0_lp_l_xm1 = a2s0lp * inp_l - b2_s0 * s0_lp_l_out;
+  s0_hp_l_out = a0s0hp * inp_l + s0_hp_l_xm0;
+  s0_hp_l_xm0 = a1s0hp * inp_l - b1_s0 * s0_hp_l_out + s0_hp_l_xm1;
+  s0_hp_l_xm1 = a2s0hp * inp_l - b2_s0 * s0_hp_l_out;
+  s0_hp_l_out *= -1;
+  s0_lp_r_out = a0s0lp * inp_r + s0_lp_r_xm0;
+  s0_lp_r_xm0 = a1s0lp * inp_r - b1_s0 * s0_lp_r_out + s0_lp_r_xm1;
+  s0_lp_r_xm1 = a2s0lp * inp_r - b2_s0 * s0_lp_r_out;
+  s0_hp_r_out = a0s0hp * inp_r + s0_hp_r_xm0;
+  s0_hp_r_xm0 = a1s0hp * inp_r - b1_s0 * s0_hp_r_out + s0_hp_r_xm1;
+  s0_hp_r_xm1 = a2s0hp * inp_r - b2_s0 * s0_hp_r_out;
+  s0_hp_r_out *= -1;
+
+  // ── s1 on LIVE signal (bandpass detection path) ───────────────────────────
+  slider6 == 0 ? (
+    b1_s1 += d_b1_s1; b2_s1 += d_b2_s1;
+    a0s1lp += d_a0s1lp; a1s1lp += d_a1s1lp; a2s1lp += d_a2s1lp;
+    a0s1hp += d_a0s1hp; a1s1hp += d_a1s1hp; a2s1hp += d_a2s1hp;
+    s1_lp_l_out = a0s1lp * s0_hp_l_out + s1_lp_l_xm0;
+    s1_lp_l_xm0 = a1s1lp * s0_hp_l_out - b1_s1 * s1_lp_l_out + s1_lp_l_xm1;
+    s1_lp_l_xm1 = a2s1lp * s0_hp_l_out - b2_s1 * s1_lp_l_out;
+    s1_hp_l_out = a0s1hp * s0_hp_l_out + s1_hp_l_xm0;
+    s1_hp_l_xm0 = a1s1hp * s0_hp_l_out - b1_s1 * s1_hp_l_out + s1_hp_l_xm1;
+    s1_hp_l_xm1 = a2s1hp * s0_hp_l_out - b2_s1 * s1_hp_l_out;
+    s1_hp_l_out *= -1;
+    s1_lp_r_out = a0s1lp * s0_hp_r_out + s1_lp_r_xm0;
+    s1_lp_r_xm0 = a1s1lp * s0_hp_r_out - b1_s1 * s1_lp_r_out + s1_lp_r_xm1;
+    s1_lp_r_xm1 = a2s1lp * s0_hp_r_out - b2_s1 * s1_lp_r_out;
+    s1_hp_r_out = a0s1hp * s0_hp_r_out + s1_hp_r_xm0;
+    s1_hp_r_xm0 = a1s1hp * s0_hp_r_out - b1_s1 * s1_hp_r_out + s1_hp_r_xm1;
+    s1_hp_r_xm1 = a2s1hp * s0_hp_r_out - b2_s1 * s1_hp_r_out;
+    s1_hp_r_out *= -1;
+    cband_l = s1_lp_l_out;
+    cband_r = s1_lp_r_out;
+  ) : (
+    cband_l = s0_hp_l_out;
+    cband_r = s0_hp_r_out;
+  );
+
+  // ── Peak detector: max of both channels ───────────────────────────────────
+  dtl = max(abs(cband_l), abs(cband_r));
+  dtl > envl ? envl += att * (dtl - envl) : envl *= (1 - rel);
+  envl < cDenorm ? envl = 0;
+
+  // ── Gain computer ─────────────────────────────────────────────────────────
+  envl > thr ? (
+    cgainl = 1 + rat * ((envl / thr) - 1);
+  ) : (
+    cgainl = 1;
+  );
+
+  // Smooth gain to prevent zipper noise
+  gain_smooth += (cgainl - gain_smooth) * gs_alpha;
+  // Track peak for GR meter (captured in @block, resets each block)
+  gain_smooth > gr_peak ? gr_peak = gain_smooth;
+
+  // ── Apply to DELAYED signal ───────────────────────────────────────────────
+  slider8 == 1 ? (
+    // SC MONITOR: output the detected band from live signal
+    spl0 = max(-1, min(1, cband_l / gain_smooth * outgain));
+    spl1 = max(-1, min(1, cband_r / gain_smooth * outgain));
+  ) : (
+    // Normal output: run same crossover on delayed signal, recombine
+    dinp_l = dl + cDenorm; dinp_r = dr + cDenorm;
+    ds0_lp_l = a0s0lp * dinp_l + ds0_lp_l_xm0;
+    ds0_lp_l_xm0 = a1s0lp * dinp_l - b1_s0 * ds0_lp_l + ds0_lp_l_xm1;
+    ds0_lp_l_xm1 = a2s0lp * dinp_l - b2_s0 * ds0_lp_l;
+    ds0_hp_l = a0s0hp * dinp_l + ds0_hp_l_xm0;
+    ds0_hp_l_xm0 = a1s0hp * dinp_l - b1_s0 * ds0_hp_l + ds0_hp_l_xm1;
+    ds0_hp_l_xm1 = a2s0hp * dinp_l - b2_s0 * ds0_hp_l;
+    ds0_hp_l *= -1;
+    ds0_lp_r = a0s0lp * dinp_r + ds0_lp_r_xm0;
+    ds0_lp_r_xm0 = a1s0lp * dinp_r - b1_s0 * ds0_lp_r + ds0_lp_r_xm1;
+    ds0_lp_r_xm1 = a2s0lp * dinp_r - b2_s0 * ds0_lp_r;
+    ds0_hp_r = a0s0hp * dinp_r + ds0_hp_r_xm0;
+    ds0_hp_r_xm0 = a1s0hp * dinp_r - b1_s0 * ds0_hp_r + ds0_hp_r_xm1;
+    ds0_hp_r_xm1 = a2s0hp * dinp_r - b2_s0 * ds0_hp_r;
+    ds0_hp_r *= -1;
+    slider6 == 0 ? (
+      // Bandpass: low + compressed_band + high
+      ds1_lp_l = a0s1lp * ds0_hp_l + ds1_lp_l_xm0;
+      ds1_lp_l_xm0 = a1s1lp * ds0_hp_l - b1_s1 * ds1_lp_l + ds1_lp_l_xm1;
+      ds1_lp_l_xm1 = a2s1lp * ds0_hp_l - b2_s1 * ds1_lp_l;
+      ds1_hp_l = a0s1hp * ds0_hp_l + ds1_hp_l_xm0;
+      ds1_hp_l_xm0 = a1s1hp * ds0_hp_l - b1_s1 * ds1_hp_l + ds1_hp_l_xm1;
+      ds1_hp_l_xm1 = a2s1hp * ds0_hp_l - b2_s1 * ds1_hp_l;
+      ds1_hp_l *= -1;
+      ds1_lp_r = a0s1lp * ds0_hp_r + ds1_lp_r_xm0;
+      ds1_lp_r_xm0 = a1s1lp * ds0_hp_r - b1_s1 * ds1_lp_r + ds1_lp_r_xm1;
+      ds1_lp_r_xm1 = a2s1lp * ds0_hp_r - b2_s1 * ds1_lp_r;
+      ds1_hp_r = a0s1hp * ds0_hp_r + ds1_hp_r_xm0;
+      ds1_hp_r_xm0 = a1s1hp * ds0_hp_r - b1_s1 * ds1_hp_r + ds1_hp_r_xm1;
+      ds1_hp_r_xm1 = a2s1hp * ds0_hp_r - b2_s1 * ds1_hp_r;
+      ds1_hp_r *= -1;
+      spl0 = max(-1, min(1, (ds0_lp_l + ds1_lp_l / gain_smooth + ds1_hp_l) * outgain));
+      spl1 = max(-1, min(1, (ds0_lp_r + ds1_lp_r / gain_smooth + ds1_hp_r) * outgain));
+    ) : (
+      // Hipass: low (unprocessed) + high (compressed)
+      spl0 = max(-1, min(1, (ds0_lp_l + ds0_hp_l / gain_smooth) * outgain));
+      spl1 = max(-1, min(1, (ds0_lp_r + ds0_hp_r / gain_smooth) * outgain));
+    );
+  );
+
+  // ── FFT ring buffer: capture OUTPUT after DSP ──────────────────────────
+  ring_buf_out[ring_wr] = (spl0 + spl1) * 0.5;
+  ring_wr = (ring_wr + 1) & (fft_size - 1);
+
+) : ( 0 );
+
+@gfx 540 520
+gfx_clear = 0x443D38;
+// EON theme: bridge mirrors the band into ReaKitDeEsser; follow the theme's bg +
+// knob STYLE. Per-function knob colours (green/gold/teal) stay semantic.
+rk_theme_apply();
+sk_kp = (gmem[GS_THEME_ID] > 0 && gmem[GS_THEME_KNOB_P] > 0) ? (gmem[GS_THEME_KNOB_P] | 0) : 1;
+gmem[GS_THEME_ID] > 0 ? (
+  _th_bg_r=gmem[GS_THEME_BASE]; _th_bg_g=gmem[GS_THEME_BASE+1]; _th_bg_b=gmem[GS_THEME_BASE+2];
+  _th_tx_r=gmem[GS_THEME_BASE+6]; _th_tx_g=gmem[GS_THEME_BASE+7]; _th_tx_b=gmem[GS_THEME_BASE+8]; // TEXT
+  _th_td_r=gmem[GS_THEME_BASE+9]; _th_td_g=gmem[GS_THEME_BASE+10]; _th_td_b=gmem[GS_THEME_BASE+11]; // TEXT_DIM
+) : (
+  _th_bg_r=0.22; _th_bg_g=0.24; _th_bg_b=0.27;
+  _th_tx_r=0.85; _th_tx_g=0.88; _th_tx_b=0.90;
+  _th_td_r=0.44; _th_td_g=0.49; _th_td_b=0.54;
+);
+// 0x200 (embedded click-through) is now armed conditionally inside the
+// embedded branch — only over dead zones — see below.
+
+// ── Frequency mapping helpers (from 4-Band EQ pattern) ────────────────────
+function f2x(f, ox, ow) ( ox + (log(max(f, 20)) - log(20)) / (log(22000) - log(20)) * ow; );
+function x2f(px, ox, ow) ( exp(log(20) + (px - ox) / ow * (log(22000) - log(20))); );
+function d2y_spec(db, oy, oh, dblo, dbhi) ( oy + oh * (1 - (db - dblo) / (dbhi - dblo)); );
+
+rk_link_key = gfx_getchar();  // required for mouse_cap modifier keys; feeds Esc-to-close
+mx = mouse_x; my = mouse_y;
+LMB       = mouse_cap & 1;
+CTRL      = mouse_cap & 4;   // fine control for knobs
+SHIFT     = mouse_cap & 8;
+lmb_down  = LMB && !prev_LMB;
+prev_LMB  = LMB;
+RMB = mouse_cap & 2; rmb_down = RMB && !prev_RMB; prev_RMB = RMB;
+frame_wheel = mouse_wheel / 120;
+mouse_wheel = 0;
+dt = 1/60;
+hv_speed = 11;
+tau = 2*$pi;
+ret = max(1, gfx_ext_retina);
+rk_link_menu_gate();
+
+// GR display ballistic: fast attack (~1 frame), slow release (~300ms at 60fps)
+gr_db_out < gr_disp ? gr_disp = gr_db_out : gr_disp += (0 - gr_disp) * 0.04;
+
+is_embedded = (gfx_ext_flags & 1);
+
+is_embedded ? (
+  gfx_ext_flags & 0x200 ? gfx_ext_flags -= 0x200;
+  emb_widget_active = 0;
+  // ── EMBEDDED ──────────────────────────────────────────────────────────────
+  w = gfx_w; h = gfx_h;
+  gfx_set(_th_bg_r, _th_bg_g, _th_bg_b, 1); gfx_rect(0, 0, w, h);
+  emb_cx = w * 0.35; emb_cy = h * 0.50;
+  emb_r  = max(10, min(w * 0.22, h * 0.40));
+  m = km;
+  nv = ssl_knob_interact(m, emb_cx, emb_cy, emb_r, slider1, -60, 0, -20, 0);
+  emb_widget_active |= m[6];
+  nv != slider1 ? ( slider1 = nv; slider_automate(1); atomic_set(dsp_dirty, 1); );
+  rk_role_col(4, 1, 0.20, 0.78, 0.35);  // THRESHOLD — dynamics role
+  rk_knob_draw(sk_kp,emb_cx, emb_cy, emb_r, slider1, -60, 0, 0, m[0], sk_kbr, sk_kbg, sk_kbb, 0, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_setfont(1, "Arial", max(7, floor(emb_r * 0.30)), 'b');
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_measurestr("THR", tw, th);
+  gfx_x = emb_cx - tw/2; gfx_y = emb_cy + emb_r + 3; gfx_drawstr("THR");
+  bar_x = w * 0.62; bar_y = h * 0.25; bar_w = w * 0.32; bar_h = h * 0.50;
+  gfx_set(0.10, 0.11, 0.13, 1); gfx_rect(bar_x, bar_y, bar_w, bar_h);
+  gr_frac = max(0, min(1, -gr_disp / 24));
+  gfx_set(0.90, 0.35, 0.15, 0.85); gfx_rect(bar_x, bar_y, bar_w * gr_frac, bar_h);
+  gfx_set(0.45, 0.48, 0.52, 1);
+  gfx_setfont(1, "Arial", max(7, floor(bar_h * 0.32)), 'b');
+  gfx_measurestr("GR", tw, th);
+  gfx_x = bar_x + (bar_w - tw)/2; gfx_y = bar_y + (bar_h - th)/2; gfx_drawstr("GR");
+  rk_link_draw_badge(w - 14*ret, h - 10*ret, 9*ret, 0.00, 0.70, 0.85, mx, my, lmb_down);
+  rk_link_on_gfx_change();
+
+  !emb_widget_active ? gfx_ext_flags |= 0x200;
+
+) : (
+  // ── FLOATING ──────────────────────────────────────────────────────────────
+  WIN_W = gfx_w; WIN_H = gfx_h;
+  gfx_set(_th_bg_r, _th_bg_g, _th_bg_b, 1); gfx_rect(0, 0, WIN_W, WIN_H);
+
+  // Header
+  hdr_h = 28*ret;
+  gfx_set(0.26, 0.28, 0.31, 1); gfx_rect(0, 0, WIN_W, hdr_h);
+  gfx_set(0.15, 0.16, 0.19, 1); gfx_rect(0, hdr_h - 1, WIN_W, 1);
+  gfx_setfont(1, "Arial", floor(13 * ret), 'b');
+  gfx_set(0.85, 0.88, 0.90, 1); gfx_x = 10*ret; gfx_y = 7*ret; gfx_drawstr("DE-ESSER");
+  gfx_setfont(1, "Arial", floor(11 * ret), 0);
+  gfx_set(0.38, 0.42, 0.47, 1); gfx_x = 108*ret; gfx_y = 9*ret; gfx_drawstr("ReaKit");
+
+  // ▸EON appearance cluster (shared lib): THEME · KNOB chips, no VU/SYNC
+  // (has_vu = 0). Interaction runs INSIDE rkth_cluster FIRST — an open
+  // panel swallows the click/wheel before the gear/badge or body widgets.
+  rkth_cluster_hdr(170*ret, 10*ret, 0, 0);
+
+  // State LED + status text
+  led_x = WIN_W - 100*ret; led_y = hdr_h / 2;
+  gr_disp < -0.3 ? (
+    gfx_set(0.90, 0.35, 0.15, 1); gfx_circle(led_x, led_y, 4*ret, 1);
+    gfx_set(1.0, 0.55, 0.30, 0.28); gfx_circle(led_x, led_y, 8*ret, 0);
+    gfx_set(0.55, 0.60, 0.65, 1);
+    gfx_setfont(1, "Arial", floor(10 * ret), 0);
+    gfx_x = led_x + 9*ret; gfx_y = led_y - 5*ret; gfx_drawstr("DE-ESS");
+  ) : (
+    gfx_set(0.16, 0.48, 0.20, 0.65); gfx_circle(led_x, led_y, 4*ret, 1);
+    gfx_set(0.50, 0.55, 0.60, 1);
+    gfx_setfont(1, "Arial", floor(10 * ret), 0);
+    gfx_x = led_x + 9*ret; gfx_y = led_y - 5*ret; gfx_drawstr("IDLE");
+  );
+  rk_link_draw_gear(WIN_W - 42*ret, hdr_h/2, 8*ret, 0.00, 0.70, 0.85, mx, my, lmb_down);
+  rk_link_draw_badge(WIN_W - 18*ret, hdr_h/2, 8*ret, 0.00, 0.70, 0.85, mx, my, lmb_down);
+
+  // Layout
+  meter_w = 44*ret;
+  main_x = 6*ret; main_w = WIN_W - meter_w - 12*ret;
+  meter_x = main_x + main_w + 6*ret;
+
+  // ── FFT spectrum analyzer (dual: input + output, FabFilter Pro-DS style) ─
+  spec_x = main_x; spec_w = main_w;
+  spec_y = hdr_h + 4*ret;
+  spec_h = max(60*ret, min(floor((WIN_H - hdr_h - 16*ret) * 0.32), 130*ret));
+  spec_dblo = -80; spec_dbhi = 0;
+  num_bins = fft_half + 1;
+  bin_hz = srate / fft_size;
+  spec_decay = 0.82;  // ~90ms release at 60fps
+
+  // ── Compute OUTPUT FFT using fft_real() ────────────────────────────────
+  i = 0; rd = ring_wr;
+  loop(fft_size,
+    fft_buf_out[i] = ring_buf_out[rd] * fft_window[i];
+    rd = (rd + 1) & (fft_size - 1);
+    i += 1;
+  );
+  fft_real(fft_buf_out, fft_size);
+  fft_permute(fft_buf_out, fft_half);
+
+  // Extract magnitudes → spec_mag_out (fft_real packs: DC, [re,im]×(N/2-1), Nyquist)
+  // After fft_permute: pairs are [re,im] at indices i*2, i*2+1 for bin i (0..N/2)
+  i = 0;
+  loop(num_bins,
+    re = fft_buf_out[i * 2]; im = fft_buf_out[i * 2 + 1];
+    mag = sqrt(re * re + im * im) / fft_size;
+    db = mag > 0.0000000001 ? 20 * log10(mag) : -100;
+    db = max(spec_dblo, min(spec_dbhi, db));
+    old = spec_mag_out[i];
+    db > old ? spec_mag_out[i] = db : spec_mag_out[i] = db + (old - db) * spec_decay;
+    i += 1;
+  );
+
+  // ── Compute INPUT FFT using fft_real() ─────────────────────────────────
+  i = 0; rd = ring_wr;
+  loop(fft_size,
+    fft_buf_in[i] = ring_buf_in[rd] * fft_window[i];
+    rd = (rd + 1) & (fft_size - 1);
+    i += 1;
+  );
+  fft_real(fft_buf_in, fft_size);
+  fft_permute(fft_buf_in, fft_half);
+
+  i = 0;
+  loop(num_bins,
+    re = fft_buf_in[i * 2]; im = fft_buf_in[i * 2 + 1];
+    mag = sqrt(re * re + im * im) / fft_size;
+    db = mag > 0.0000000001 ? 20 * log10(mag) : -100;
+    db = max(spec_dblo, min(spec_dbhi, db));
+    old = spec_mag_in[i];
+    db > old ? spec_mag_in[i] = db : spec_mag_in[i] = db + (old - db) * spec_decay;
+    i += 1;
+  );
+
+  // ── Background ─────────────────────────────────────────────────────────
+  gfx_set(0.07, 0.08, 0.11, 1);
+  gfx_rect(spec_x, spec_y, spec_w, spec_h);
+
+  // Frequency grid (compact: 100, 500, 1k, 5k, 10k)
+  gfx_set(0.15, 0.17, 0.22, 0.3);
+  i = 0;
+  loop(5,
+    gf = (i == 0 ? 100 : i == 1 ? 500 : i == 2 ? 1000 : i == 3 ? 5000 : 10000);
+    gpx = f2x(gf, spec_x, spec_w);
+    gfx_line(gpx, spec_y, gpx, spec_y + spec_h);
+    gfx_setfont(1, "Arial", max(7, floor(min(spec_w * 0.016, 8) * ret)), 0);
+    gfx_set(0.32, 0.35, 0.40, 0.7);
+    gf >= 1000 ? sprintf(#fl, "%dk", gf / 1000) : sprintf(#fl, "%d", gf);
+    gfx_measurestr(#fl, tw, th);
+    gfx_x = gpx - tw / 2; gfx_y = spec_y + spec_h - th - 1; gfx_drawstr(#fl);
+    i += 1;
+  );
+
+  // 0 dB reference line
+  py0 = d2y_spec(0, spec_y, spec_h, spec_dblo, spec_dbhi);
+  gfx_set(0.22, 0.24, 0.30, 0.5); gfx_line(spec_x, py0, spec_x + spec_w, py0);
+
+  // Band overlay (gold, semi-transparent)
+  slider6 == 0 ? (
+    band_fl = max(20, slider2 - slider2 * slider3 / 4);
+    band_fh = min(22000, slider2 + slider2 * slider3 / 2);
+  ) : (
+    band_fl = max(20, slider2);
+    band_fh = 22000;
+  );
+  bx0 = max(spec_x, f2x(band_fl, spec_x, spec_w));
+  bx1 = min(spec_x + spec_w, f2x(band_fh, spec_x, spec_w));
+  gfx_set(0.85, 0.65, 0.15, 0.10);
+  gfx_rect(bx0, spec_y, bx1 - bx0, spec_h);
+  gfx_set(0.85, 0.65, 0.15, 0.35);
+  gfx_line(bx0, spec_y, bx0, spec_y + spec_h);
+  bx1 < spec_x + spec_w ? gfx_line(bx1, spec_y, bx1, spec_y + spec_h);
+
+  // ── Draw INPUT spectrum (ghost / dimmer — shows original signal) ───────
+  step = max(1, floor(spec_w / 280));
+
+  // Input filled area (very subtle warm grey)
+  gfx_set(0.55, 0.50, 0.45, 0.08);
+  px = spec_x;
+  while (px <= spec_x + spec_w) (
+    f = x2f(px, spec_x, spec_w);
+    bin = max(0, min(num_bins - 1, floor(f / bin_hz + 0.5)));
+    db = spec_mag_in[bin];
+    py = d2y_spec(db, spec_y, spec_h, spec_dblo, spec_dbhi);
+    py = max(spec_y, min(spec_y + spec_h, py));
+    gfx_line(px, py, px, spec_y + spec_h);
+    px += step;
+  );
+
+  // Input line (dim warm tone)
+  gfx_set(0.65, 0.55, 0.45, 0.35);
+  px = spec_x; first_spec = 1;
+  while (px <= spec_x + spec_w) (
+    f = x2f(px, spec_x, spec_w);
+    bin = max(0, min(num_bins - 1, floor(f / bin_hz + 0.5)));
+    db = spec_mag_in[bin];
+    py = d2y_spec(db, spec_y, spec_h, spec_dblo, spec_dbhi);
+    py = max(spec_y, min(spec_y + spec_h, py));
+    first_spec ? ( gfx_x = px; gfx_y = py; first_spec = 0; ) : gfx_lineto(px, py, 1);
+    px += step;
+  );
+
+  // ── Draw OUTPUT spectrum (bright — shows what comes out) ───────────────
+  // Output filled area (blue, brighter than input)
+  gfx_set(0.40, 0.65, 0.85, 0.12);
+  px = spec_x;
+  while (px <= spec_x + spec_w) (
+    f = x2f(px, spec_x, spec_w);
+    bin = max(0, min(num_bins - 1, floor(f / bin_hz + 0.5)));
+    db = spec_mag_out[bin];
+    py = d2y_spec(db, spec_y, spec_h, spec_dblo, spec_dbhi);
+    py = max(spec_y, min(spec_y + spec_h, py));
+    gfx_line(px, py, px, spec_y + spec_h);
+    px += step;
+  );
+
+  // Output line (bright blue)
+  gfx_set(0.50, 0.78, 0.95, 0.75);
+  px = spec_x; first_spec = 1;
+  while (px <= spec_x + spec_w) (
+    f = x2f(px, spec_x, spec_w);
+    bin = max(0, min(num_bins - 1, floor(f / bin_hz + 0.5)));
+    db = spec_mag_out[bin];
+    py = d2y_spec(db, spec_y, spec_h, spec_dblo, spec_dbhi);
+    py = max(spec_y, min(spec_y + spec_h, py));
+    first_spec ? ( gfx_x = px; gfx_y = py; first_spec = 0; ) : gfx_lineto(px, py, 1);
+    px += step;
+  );
+
+  // ── Spectrum legend (top-right corner) ─────────────────────────────────
+  gfx_setfont(1, "Arial", max(7, floor(min(spec_w * 0.016, 8) * ret)), 0);
+  // Input label
+  gfx_set(0.65, 0.55, 0.45, 0.55);
+  gfx_x = spec_x + spec_w - 72*ret; gfx_y = spec_y + 3*ret; gfx_drawstr("IN");
+  // Output label
+  gfx_set(0.50, 0.78, 0.95, 0.75);
+  gfx_x = spec_x + spec_w - 48*ret; gfx_y = spec_y + 3*ret; gfx_drawstr("OUT");
+
+  // Border
+  gfx_set(0.18, 0.20, 0.25, 0.6);
+  gfx_rect(spec_x, spec_y, spec_w, 1);
+  gfx_rect(spec_x, spec_y + spec_h - 1, spec_w, 1);
+  gfx_rect(spec_x, spec_y, 1, spec_h);
+  gfx_rect(spec_x + spec_w - 1, spec_y, 1, spec_h);
+
+  // ── GR meter strip ────────────────────────────────────────────────────────
+  strip_x = meter_x; strip_w = 16*ret;
+  strip_y = hdr_h + 6*ret; strip_h = WIN_H - strip_y - 18*ret;
+  gfx_set(0.10, 0.11, 0.13, 1); gfx_rect(strip_x, strip_y, strip_w, strip_h);
+  gr_frac   = max(0, min(1, -gr_disp / 24));
+  gr_fill_y = strip_y + strip_h * (1 - gr_frac);
+  gfx_set(0.90, 0.35, 0.15, 0.85); gfx_rect(strip_x, gr_fill_y, strip_w, strip_h * gr_frac);
+  gfx_set(0.32, 0.35, 0.40, 0.55);
+  db_tick = 6;
+  loop(4,
+    tick_y = strip_y + strip_h * (1 - db_tick / 24);
+    gfx_line(strip_x, tick_y, strip_x + strip_w, tick_y);
+    db_tick += 6;
+  );
+  gfx_setfont(1, "Arial", floor(8 * ret), 'b');
+  gfx_set(0.45, 0.48, 0.52, 1); gfx_measurestr("GR", tw, th);
+  gfx_x = strip_x + (strip_w - tw)/2; gfx_y = strip_y + strip_h + 2*ret; gfx_drawstr("GR");
+
+  // ── Knob/button area ──────────────────────────────────────────────────────
+  knob_y = spec_y + spec_h + 4*ret;
+  knob_h = WIN_H - knob_y - 16*ret;
+  row1_h  = floor(knob_h * 0.56);
+  row2_h  = knob_h - row1_h;
+  row1_cy = knob_y + floor(row1_h * 0.44);
+  row2_cy = knob_y + row1_h + floor(row2_h * 0.42);
+  r1_slot = main_w / 5;
+  r2_slot = main_w / 5;
+  kr1 = max(12, min(r1_slot * 0.34, row1_h * 0.40));
+  kr2 = max(10, min(r2_slot * 0.28, row2_h * 0.36));
+
+  // Row divider
+  gfx_set(0.14, 0.15, 0.18, 0.5);
+  gfx_line(main_x + 4*ret, knob_y + row1_h, main_x + main_w - 4*ret, knob_y + row1_h);
+
+  // ── ROW 1: THRESH  FREQ  BW  RATIO  LOOK ─────────────────────────────────
+
+  // K0 THRESHOLD (green)
+  k_cx = main_x + r1_slot * 0 + r1_slot / 2;
+  m = km + 0 * KS;
+  nv = ssl_knob_interact(m, k_cx, row1_cy, kr1, slider1, -60, 0, -20, 0);
+  nv != slider1 ? ( slider1 = nv; slider_automate(1); atomic_set(dsp_dirty, 1); );
+  rk_role_col(4, 1, 0.20, 0.78, 0.35);  // THRESHOLD — dynamics role
+  rk_knob_draw(sk_kp,k_cx, row1_cy, kr1, slider1, -60, 0, 0, m[0], sk_kbr, sk_kbg, sk_kbb, 0, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_setfont(1, "Arial", floor(max(8, kr1 * 0.32) * ret), 'b');
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_measurestr("THRESH", tw, th);
+  gfx_x = k_cx - tw/2; gfx_y = row1_cy + kr1 + 5*ret; gfx_drawstr("THRESH");
+  gfx_setfont(1, "Arial", floor(max(7, kr1 * 0.27) * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); sprintf(#val, "%.1f dB", slider1);
+  gfx_measurestr(#val, tw, th); gfx_x = k_cx - tw/2; gfx_y += th + 1; gfx_drawstr(#val);
+
+  // K1 FREQUENCY (gold)
+  k_cx = main_x + r1_slot * 1 + r1_slot / 2;
+  m = km + 1 * KS;
+  nv = ssl_knob_interact(m, k_cx, row1_cy, kr1, slider2, 2000, 16000, 7500, 0);
+  nv != slider2 ? ( slider2 = nv; slider_automate(2); atomic_set(dsp_dirty, 1); );
+  rk_knob_draw(sk_kp,k_cx, row1_cy, kr1, slider2, 2000, 16000, 0, m[0], 0.85, 0.65, 0.15, 0, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_setfont(1, "Arial", floor(max(8, kr1 * 0.32) * ret), 'b');
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_measurestr("FREQ", tw, th);
+  gfx_x = k_cx - tw/2; gfx_y = row1_cy + kr1 + 5*ret; gfx_drawstr("FREQ");
+  gfx_setfont(1, "Arial", floor(max(7, kr1 * 0.27) * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  slider2 >= 1000 ? sprintf(#val, "%.1f kHz", slider2/1000) : sprintf(#val, "%.0f Hz", slider2);
+  gfx_measurestr(#val, tw, th); gfx_x = k_cx - tw/2; gfx_y += th + 1; gfx_drawstr(#val);
+
+  // K2 BANDWIDTH (gold) — only shown/active in BP mode
+  k_cx = main_x + r1_slot * 2 + r1_slot / 2;
+  m = km + 2 * KS;
+  slider6 == 0 ? (
+    nv = ssl_knob_interact(m, k_cx, row1_cy, kr1, slider3, 0.1, 3.1, 1.5, 0);
+    nv != slider3 ? ( slider3 = nv; slider_automate(4); atomic_set(dsp_dirty, 1); );
+    rk_knob_draw(sk_kp,k_cx, row1_cy, kr1, slider3, 0.1, 3.1, 0, m[0], 0.85, 0.65, 0.15, 0, _th_bg_r, _th_bg_g, _th_bg_b);
+    gfx_setfont(1, "Arial", floor(max(8, kr1 * 0.32) * ret), 'b');
+    gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_measurestr("BW", tw, th);
+    gfx_x = k_cx - tw/2; gfx_y = row1_cy + kr1 + 5*ret; gfx_drawstr("BW");
+    gfx_setfont(1, "Arial", floor(max(7, kr1 * 0.27) * ret), 0);
+    gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); sprintf(#val, "%.1f oct", slider3);
+    gfx_measurestr(#val, tw, th); gfx_x = k_cx - tw/2; gfx_y += th + 1; gfx_drawstr(#val);
+  ) : (
+    // Greyed out in HP mode
+    rk_knob_draw(sk_kp,k_cx, row1_cy, kr1, slider3, 0.1, 3.1, 0, 0, 0.30, 0.32, 0.36, 0, _th_bg_r, _th_bg_g, _th_bg_b);
+    gfx_setfont(1, "Arial", floor(max(8, kr1 * 0.32) * ret), 'b');
+    gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_measurestr("BW", tw, th);
+    gfx_x = k_cx - tw/2; gfx_y = row1_cy + kr1 + 5*ret; gfx_drawstr("BW");
+  );
+
+  // K3 RATIO (teal)
+  k_cx = main_x + r1_slot * 3 + r1_slot / 2;
+  m = km + 3 * KS;
+  nv = ssl_knob_interact(m, k_cx, row1_cy, kr1, slider4, 1, 20, 4, 0);
+  nv != slider4 ? ( slider4 = nv; slider_automate(8); atomic_set(dsp_dirty, 1); );
+  rk_role_col(4, 1, 0.00, 0.70, 0.85);  // RATIO — dynamics role
+  rk_knob_draw(sk_kp,k_cx, row1_cy, kr1, slider4, 1, 20, 0, m[0], sk_kbr, sk_kbg, sk_kbb, 0, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_setfont(1, "Arial", floor(max(8, kr1 * 0.32) * ret), 'b');
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_measurestr("RATIO", tw, th);
+  gfx_x = k_cx - tw/2; gfx_y = row1_cy + kr1 + 5*ret; gfx_drawstr("RATIO");
+  gfx_setfont(1, "Arial", floor(max(7, kr1 * 0.27) * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); sprintf(#val, "%.0f:1", slider4);
+  gfx_measurestr(#val, tw, th); gfx_x = k_cx - tw/2; gfx_y += th + 1; gfx_drawstr(#val);
+
+  // K4 LOOKAHEAD (teal)
+  k_cx = main_x + r1_slot * 4 + r1_slot / 2;
+  m = km + 4 * KS;
+  nv = ssl_knob_interact(m, k_cx, row1_cy, kr1, slider7, 0, 5, 1.0, 0);
+  nv != slider7 ? ( slider7 = nv; slider_automate(64); atomic_set(dsp_dirty, 1); );
+  rk_role_col(5, 1, 0.00, 0.70, 0.85);  // LOOKAHEAD — time role
+  rk_knob_draw(sk_kp,k_cx, row1_cy, kr1, slider7, 0, 5, 0, m[0], sk_kbr, sk_kbg, sk_kbb, 0, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_setfont(1, "Arial", floor(max(8, kr1 * 0.32) * ret), 'b');
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_measurestr("LOOK", tw, th);
+  gfx_x = k_cx - tw/2; gfx_y = row1_cy + kr1 + 5*ret; gfx_drawstr("LOOK");
+  gfx_setfont(1, "Arial", floor(max(7, kr1 * 0.27) * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); sprintf(#val, "%.1f ms", slider7);
+  gfx_measurestr(#val, tw, th); gfx_x = k_cx - tw/2; gfx_y += th + 1; gfx_drawstr(#val);
+
+  // ── ROW 2: TIME(btn)  TARGET(btn)  MONITOR(btn)  OUT(knob)  [empty] ──────
+  btn_w = r2_slot * 0.76;
+  btn_h = row2_h * 0.38;
+  btn_y = row2_cy - btn_h / 2;
+
+  // B0 TIME — cycle through Fast / Med / Slow on click
+  b_x = main_x + r2_slot * 0 + (r2_slot - btn_w) / 2;
+  mb = bm;
+  nv = btn_rect_interact(mb, b_x, btn_y, btn_w, btn_h, 0);
+  nv ? ( slider5 = (slider5 + 1) % 3; slider_automate(16); atomic_set(dsp_dirty, 1); );
+  slider5 == 0 ? btn_lbl = "FAST" : slider5 == 1 ? btn_lbl = "MED" : btn_lbl = "SLOW";
+  btn_rect_draw(b_x, btn_y, btn_w, btn_h, slider5 > 0, btn_lbl, mb[0], 0.00, 0.70, 0.85);
+  gfx_setfont(1, "Arial", floor(max(7, btn_h * 0.28) * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_measurestr("TIME", tw2, th2);
+  gfx_x = b_x + (btn_w - tw2)/2; gfx_y = btn_y + btn_h + 3*ret; gfx_drawstr("TIME");
+
+  // B1 TARGET — Bandpass / Hipass
+  b_x = main_x + r2_slot * 1 + (r2_slot - btn_w) / 2;
+  mb = bm + BS;
+  nv = btn_rect_interact(mb, b_x, btn_y, btn_w, btn_h, slider6 == 1);
+  nv != (slider6 == 1) ? ( slider6 = nv ? 1 : 0; slider_automate(32); atomic_set(dsp_dirty, 1); );
+  btn_rect_draw(b_x, btn_y, btn_w, btn_h, slider6 == 1,
+                slider6 == 0 ? "BP" : "HP", mb[0], 0.85, 0.65, 0.15);
+  gfx_setfont(1, "Arial", floor(max(7, btn_h * 0.28) * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_measurestr("TARGET", tw2, th2);
+  gfx_x = b_x + (btn_w - tw2)/2; gfx_y = btn_y + btn_h + 3*ret; gfx_drawstr("TARGET");
+
+  // B2 MONITOR — SC listen
+  b_x = main_x + r2_slot * 2 + (r2_slot - btn_w) / 2;
+  mb = bm + 2 * BS;
+  nv = btn_rect_interact(mb, b_x, btn_y, btn_w, btn_h, slider8 == 1);
+  nv != (slider8 == 1) ? ( slider8 = nv ? 1 : 0; slider_automate(128); atomic_set(dsp_dirty, 1); );
+  btn_rect_draw(b_x, btn_y, btn_w, btn_h, slider8 == 1, "SC", mb[0], 0.90, 0.35, 0.15);
+  gfx_setfont(1, "Arial", floor(max(7, btn_h * 0.28) * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_measurestr("MONITOR", tw2, th2);
+  gfx_x = b_x + (btn_w - tw2)/2; gfx_y = btn_y + btn_h + 3*ret; gfx_drawstr("MONITOR");
+
+  // K5 OUTPUT GAIN (grey, bipolar)
+  k_cx = main_x + r2_slot * 3 + r2_slot / 2;
+  m = km + 5 * KS;
+  nv = ssl_knob_interact(m, k_cx, row2_cy, kr2, slider9, -24, 24, 0, 0);
+  nv != slider9 ? ( slider9 = nv; slider_automate(256); atomic_set(dsp_dirty, 1); );
+  rk_role_col(1, 1, 0.60, 0.62, 0.66);  // OUTPUT GAIN — gain role (true bipolar)
+  rk_knob_draw(sk_kp,k_cx, row2_cy, kr2, slider9, -24, 24, 1, m[0], sk_kbr, sk_kbg, sk_kbb, 0, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_setfont(1, "Arial", floor(max(7, kr2 * 0.32) * ret), 'b');
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_measurestr("OUT", tw, th);
+  gfx_x = k_cx - tw/2; gfx_y = row2_cy + kr2 + 5*ret; gfx_drawstr("OUT");
+  gfx_setfont(1, "Arial", floor(max(6, kr2 * 0.27) * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); sprintf(#val, "%.1f dB", slider9);
+  gfx_measurestr(#val, tw, th); gfx_x = k_cx - tw/2; gfx_y += th + 1; gfx_drawstr(#val);
+
+  // GR readout below meter
+  gr_disp < -0.3 ? (
+    gfx_setfont(1, "Arial", floor(9 * ret), 'b');
+    gfx_set(0.90, 0.38, 0.15, 0.90);
+    sprintf(#gr_str, "%.1f", gr_disp);
+    gfx_measurestr(#gr_str, tw, th);
+    gfx_x = strip_x + (strip_w - tw)/2; gfx_y = strip_y - th - 2*ret; gfx_drawstr(#gr_str);
+  );
+
+  // Legend
+  gfx_set(0.14, 0.15, 0.18, 0.5);
+  gfx_line(main_x + 4*ret, WIN_H - 14*ret, main_x + main_w - 4*ret, WIN_H - 14*ret);
+  gfx_setfont(1, "Arial", floor(8 * ret), 0);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_x = main_x + 8*ret; gfx_y = WIN_H - 11*ret;
+  gfx_drawstr("Drag = value  |  Ctrl = fine  |  Scroll = step  |  Dbl-click = reset");
+
+  rk_link_draw_menu(WIN_W - 220*ret, hdr_h + 4*ret, ret, 0.00, 0.70, 0.85, mx, my, lmb_down);
+
+);
+
+// Theme list + KNOB panel on top of everything (floating only — the
+// bit-test gate lives inside rkth_cluster_overlay)
+rkth_cluster_overlay();
+
+rk_link_on_gfx_change();
+
+@serialize
+file_var(0, rk_ps_en_play);
+file_var(0, rk_ps_en_rec);
+file_var(0, rk_ps_en_stop);
+file_var(0, rk_ps_inited);

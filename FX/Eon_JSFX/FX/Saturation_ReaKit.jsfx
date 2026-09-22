@@ -1,0 +1,421 @@
+// (C) 2006-2007, Michael Gruhn.
+// NO WARRANTY IS GRANTED. THIS PLUG-IN IS PROVIDED ON AN "AS IS" BASIS, WITHOUT
+// WARRANTY OF ANY KIND. NO LIABILITY IS GRANTED, INCLUDING, BUT NOT LIMITED TO,
+// ANY DIRECT OR INDIRECT,  SPECIAL,  INCIDENTAL OR CONSEQUENTIAL DAMAGE ARISING
+// OUT OF  THE  USE  OR INABILITY  TO  USE  THIS PLUG-IN,  COMPUTER FAILTURE  OF
+// MALFUNCTION INCLUDED.  THE USE OF THE SOURCE CODE,  EITHER  PARTIALLY  OR  IN
+// TOTAL, IS ONLY GRANTED,  IF USED IN THE SENSE OF THE AUTHOR'S INTENTION,  AND
+// USED WITH ACKNOWLEDGEMENT OF THE AUTHOR. FURTHERMORE IS THIS PLUG-IN A  THIRD
+// PARTY CONTRIBUTION,  EVEN IF INCLUDED IN REAPER(TM),  COCKOS INCORPORATED  OR
+// ITS AFFILIATES HAVE NOTHING TO DO WITH IT.  LAST BUT NOT LEAST, BY USING THIS
+// PLUG-IN YOU RELINQUISH YOUR CLAIM TO SUE IT'S AUTHOR, AS WELL AS THE CLAIM TO
+// ENTRUST SOMEBODY ELSE WITH DOING SO.
+//
+// GUI by EON Studios (ReaKit Libraries)
+// Version: 1.1.0
+desc:EON: Saturation
+//tags: processing amplitude gain saturation
+//author: LOSER
+
+import ../../ReaKit/utils_kbsg.jsfx-inc
+import ../../ReaKit/knobs_kbsg.jsfx-inc
+import ../../ReaKit/buttons_kbsg.jsfx-inc
+import ../../ReaKit/meters_kbsg.jsfx-inc
+import ../../ReaKit/rk_playstate.jsfx-inc
+import ../../ReaKit/rk_gmem_link.jsfx-inc
+import ../../ReaKit/rk_theme.jsfx-inc
+
+slider1:0<0,100,1>-Drive (%)
+slider2:1<0,1,1>-Drive Enable
+slider3:0<0,16,1{Off,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>-Link Group
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+options:gfx_hz=60 no_meter
+options:gmem=ReaKitSaturation
+
+@init
+ext_tail_size = -1;
+gfx_ext_retina = 1;
+// Render the embedded UI without REAPER's frame/title-bar decoration
+// (REAPER 7.45+, gfx_ext_flags 0x100). Must be set in @init, not @gfx.
+gfx_ext_flags |= 0x100 | 0x400; // +0x400: no MCP hover tooltip (7.79+; older ignores)
+
+KS = 16; BS = 8;
+tau = 2 * $pi;
+
+freemem = 500;
+km = freemem; freemem += KS * 1;
+bm = freemem; freemem += BS * 1;
+memset(km, 0, KS * 1);
+memset(bm, 0, BS * 1);
+meter_init(freemem); freemem += 1380;
+
+// Play-state awareness (infinite tail — saturation)
+rk_ps_init(-1);
+
+// Instance linking: group in slider3, sync sliders 1-2
+rk_link_init(3, 2, freemem);
+freemem += 64;
+
+function recalc_dsp() (
+  // GUI curve targets (always compute for transfer curve drawing)
+  slider1 > 0 ? (
+    foo_t     = slider1 / 200 * $pi;
+    inv_bar_t = 1.0 / sin(foo_t);
+  ) : (
+    foo_t = 0; inv_bar_t = 1;
+  );
+  sat_active = slider2 && (slider1 > 0);
+
+  // Per-sample smoothing targets
+  drive_t = slider1;
+  wet_t = sat_active ? 1.0 : 0.0;
+  srate > 0 ? sm_coeff = exp(-1 / (0.015 * srate));  // 15ms one-pole
+);
+
+recalc_dsp();
+drive_s = drive_t;
+wet_s = wet_t;
+dsp_dirty = 0;
+snap_params = 1;
+
+// Colors (constant)
+drv_cr = 0.72; drv_cg = 0.28; drv_cb = 0.15;
+drv_lr = 0.90; drv_lg = 0.45; drv_lb = 0.15;
+
+@serialize
+
+// Play-state enable toggles (persist across sessions)
+file_var(0, rk_ps_en_play);
+file_var(0, rk_ps_en_rec);
+file_var(0, rk_ps_en_stop);
+file_var(0, rk_ps_inited);
+
+@slider
+recalc_dsp();
+rk_link_on_slider();
+
+@block
+atomic_get(dsp_dirty) ? ( atomic_set(dsp_dirty, 0); recalc_dsp( ); );
+rk_link_pull() ? ( recalc_dsp(); );
+rk_ps_update_block();  // block-rate play-state decode (rk_playstate.jsfx-inc)
+
+@sample
+rk_ps_tick();
+
+// Snap smoothers to targets on first sample after state restore
+snap_params ? (
+  drive_s = drive_t;
+  wet_s = wet_t;
+  snap_params = 0;
+);
+
+// Per-sample parameter smoothing (15ms one-pole)
+drive_s += (drive_t - drive_s) * (1 - sm_coeff);
+wet_s   += (wet_t   - wet_s)   * (1 - sm_coeff);
+
+wet_s > 0.001 ? (
+  // Compute waveshaper params from smoothed drive (single-source eliminates zipper)
+  // sin(x) ≈ x*(1 - x²/6 + x⁴/120), accurate to <0.01% for |x| ≤ π/2
+  f = drive_s / 200 * $pi;
+  f > 0.001 ? (
+    f2 = f * f;
+    inv_f = 1.0 / (f * (1.0 - f2 * (0.16666667 - f2 * 0.00833333)));
+  ) : (
+    f = 0.001; inv_f = 1.0;
+  );
+
+  // sin(x*f)/sin(f) waveshaper — polynomial approx, no transcendentals
+  dry0 = spl0; dry1 = spl1;
+
+  y  = max(-1, min(1, spl0)) * f;
+  y2 = y * y;
+  sat0 = min(max(y * (1.0 - y2 * (0.16666667 - y2 * 0.00833333)) * inv_f, -1), 1);
+
+  y  = max(-1, min(1, spl1)) * f;
+  y2 = y * y;
+  sat1 = min(max(y * (1.0 - y2 * (0.16666667 - y2 * 0.00833333)) * inv_f, -1), 1);
+
+  // Crossfade (smooth bypass transitions)
+  spl0 = dry0 + (sat0 - dry0) * wet_s;
+  spl1 = dry1 + (sat1 - dry1) * wet_s;
+);
+rk_ps_active ? meter_process_sample(spl0, spl1);
+
+
+@gfx 220 320
+gfx_clear = 0x443D38;
+// EON theme: bridge mirrors the band into ReaKitSaturation; follow when live.
+rk_theme_apply();
+sk_kp = (gmem[GS_THEME_ID] > 0 && gmem[GS_THEME_KNOB_P] > 0) ? (gmem[GS_THEME_KNOB_P] | 0) : 1;
+gmem[GS_THEME_ID] > 0 ? (
+  drv_cr=gmem[GS_THEME_BASE+12]; drv_cg=gmem[GS_THEME_BASE+13]; drv_cb=gmem[GS_THEME_BASE+14]; // ACCENT
+  drv_lr=gmem[GS_THEME_BASE+15]; drv_lg=gmem[GS_THEME_BASE+16]; drv_lb=gmem[GS_THEME_BASE+17]; // ACCENT2
+  _th_bg_r=gmem[GS_THEME_BASE]; _th_bg_g=gmem[GS_THEME_BASE+1]; _th_bg_b=gmem[GS_THEME_BASE+2]; // BG
+  _th_tx_r=gmem[GS_THEME_BASE+6]; _th_tx_g=gmem[GS_THEME_BASE+7]; _th_tx_b=gmem[GS_THEME_BASE+8]; // TEXT
+  _th_td_r=gmem[GS_THEME_BASE+9]; _th_td_g=gmem[GS_THEME_BASE+10]; _th_td_b=gmem[GS_THEME_BASE+11]; // TEXT_DIM
+) : (
+  drv_cr=0.72; drv_cg=0.28; drv_cb=0.15; drv_lr=0.90; drv_lg=0.45; drv_lb=0.15;
+  _th_bg_r=0.27; _th_bg_g=0.24; _th_bg_b=0.22;
+  _th_tx_r=0.92; _th_tx_g=0.90; _th_tx_b=0.85;   // native title cream
+  _th_td_r=0.55; _th_td_g=0.55; _th_td_b=0.58;   // native dim grey
+);
+// 0x200 (embedded click-through) is now armed conditionally inside the
+// embedded branch — only over dead zones — see below.
+
+// ═══════════════════════════════════════════════════════════════════════
+// FRAME STATE
+// ═══════════════════════════════════════════════════════════════════════
+rk_link_key = gfx_getchar();
+mx = mouse_x; my = mouse_y;
+LMB = mouse_cap & 1; RMB = mouse_cap & 2;
+CTRL = mouse_cap & 4; SHIFT = mouse_cap & 8;
+lmb_down = LMB && !prev_LMB;
+rmb_down = RMB && !prev_RMB;
+frame_wheel = mouse_wheel / 120; mouse_wheel = 0;
+timer = time_precise();
+
+dt = min(timer - frame_last_timer, 0.05);
+frame_last_timer = timer;
+hv_speed = 11;
+ret = max(1, gfx_ext_retina);
+rk_link_menu_gate();
+
+// Background
+gfx_set(_th_bg_r, _th_bg_g, _th_bg_b, 1);
+gfx_rect(0, 0, gfx_w, gfx_h);
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// SHARED: draw transfer curve into a given square region
+// ═══════════════════════════════════════════════════════════════════════
+function draw_curve(ox, oy, s) (
+  // Background
+  gfx_set(0.12, 0.15, 0.20, 1);
+  gfx_rect(ox, oy, s, s);
+
+  // Grid crosshairs
+  ccx = ox + s * 0.5; ccy = oy + s * 0.5;
+  gfx_set(0.28, 0.32, 0.38, 0.6);
+  gfx_line(ccx, oy, ccx, oy + s);
+  gfx_line(ox, ccy, ox + s, ccy);
+
+  // Axis labels
+  gfx_set(0.40, 0.44, 0.50, 1);
+  gfx_setfont(1, "Arial", max(7, floor(min(s * 0.08, 10) * ret)));
+  gfx_measurestr("IN", tw, th);
+  gfx_x = ox + s - tw - 2 * ret; gfx_y = ccy + 2 * ret; gfx_drawstr("IN");
+  gfx_measurestr("OUT", tw, th);
+  gfx_x = ccx + 2 * ret; gfx_y = oy + 2 * ret; gfx_drawstr("OUT");
+
+  // Curve
+  sat_active ? (
+    gfx_set(0.90, 0.55, 0.15, 1);
+    cv_step = 2.0 / max(s, 1);
+    x = -1; first = 1;
+    while (
+      y = -sin(max(min(x, 1), -1) * foo_t) * inv_bar_t;
+      px = ox + (x + 1) * 0.5 * s;
+      py = oy + (y + 1) * 0.5 * s;
+      first ? ( gfx_x = px; gfx_y = py; first = 0; )
+            : ( gfx_lineto(px, py, 1); );
+      (x += cv_step) <= 1;
+    );
+  ) : (
+    gfx_set(0.40, 0.44, 0.50, 0.6);
+    gfx_x = ox; gfx_y = oy + s;
+    gfx_lineto(ox + s, oy, 1);
+  );
+
+  // Border
+  gfx_set(0.28, 0.32, 0.38, 0.8);
+  gfx_rect(ox, oy, s, 1);
+  gfx_rect(ox, oy + s - 1, s, 1);
+  gfx_rect(ox, oy, 1, s);
+  gfx_rect(ox + s - 1, oy, 1, s);
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// MODE: embedded (MCP/TCP) vs standalone
+// ═══════════════════════════════════════════════════════════════════════
+gfx_ext_flags & 1 ? (
+
+// ╔═══════════════════════════════════════════════════════════════════════╗
+// ║  EMBEDDED — DRIVE knob centered                                      ║
+// ╚═══════════════════════════════════════════════════════════════════════╝
+
+  gfx_ext_flags & 0x200 ? gfx_ext_flags -= 0x200;
+  emb_widget_active = 0;
+
+  mcp_cx = gfx_w * 0.5;
+
+  // ── Knob ──
+  mcp_r = min(gfx_w * 0.36, gfx_h * 0.36);
+  mcp_r = max(mcp_r, 12 * ret);
+  mcp_led_r = max(3 * ret, min(mcp_r * 0.22, 6 * ret));
+  mcp_lbl_font = max(7 * ret, floor(min(gfx_w * 0.14, gfx_h * 0.06) * ret));
+  mcp_val_font = max(7 * ret, floor(min(gfx_w * 0.11, gfx_h * 0.05) * ret));
+  mcp_lbl_gap = max(5 * ret, gfx_h * 0.03);
+  mcp_content_h = mcp_r * 2 + mcp_lbl_gap + mcp_lbl_font + 2 * ret + mcp_val_font;
+  mcp_cy = (gfx_h - mcp_content_h) * 0.5 + mcp_r;
+
+  mcp_lbl_cy = mcp_cy + mcp_r + mcp_lbl_gap;
+  mcp_val_cy = mcp_lbl_cy + mcp_lbl_font + 2 * ret;
+
+  m = km; mb0 = bm;
+
+  nv = ssl_knob_interact(m, mcp_cx, mcp_cy, mcp_r, slider1, 0, 100, 0, 101);
+  emb_widget_active |= m[6];
+  nv = floor(nv + 0.5); nv = clamp(nv, 0, 100);
+  nv != slider1 ? ( slider1 = nv; slider_automate(1); atomic_set(dsp_dirty, 1); );
+  rk_role_col(0, 1, drv_cr, drv_cg, drv_cb);  // DRIVE — drive role
+  rk_knob_draw(sk_kp,mcp_cx, mcp_cy, mcp_r, slider1, 0, 100, 0, m[0], sk_kbr, sk_kbg, sk_kbb, 11, _th_bg_r, _th_bg_g, _th_bg_b);
+
+  gfx_setfont(1, "Arial", mcp_lbl_font, 'b');
+  gfx_measurestr("DRIVE", tw, th);
+  lbl_x = mcp_cx - tw/2; lbl_y = mcp_lbl_cy;
+  led_x = lbl_x - mcp_led_r - 5 * ret; led_y = lbl_y + th * 0.5;
+  nv = btn_led_interact(mb0, led_x, led_y, mcp_led_r, slider2);
+  emb_widget_active |= mb0[6];
+  nv != slider2 ? ( slider2 = nv; slider_automate(2); atomic_set(dsp_dirty, 1); );
+  btn_led_draw(led_x, led_y, mcp_led_r, slider2, "", mb0[0], drv_lr, drv_lg, drv_lb, 0);
+  slider2 ? gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_x = lbl_x; gfx_y = lbl_y; gfx_drawstr("DRIVE");
+
+  sprintf(#e1, "%.0f%%", slider1);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", mcp_val_font);
+  gfx_measurestr(#e1, tw, th); gfx_x = mcp_cx - tw/2; gfx_y = mcp_val_cy; gfx_drawstr(#e1);
+
+  // ── Link badge (top-right corner, right-click for menu) ──
+  rk_link_draw_badge(gfx_w - 16 * ret, 2 * ret, 12 * ret, drv_lr, drv_lg, drv_lb, mx, my, lmb_down);
+
+  !emb_widget_active ? gfx_ext_flags |= 0x200;
+
+
+) : (
+
+// ╔═══════════════════════════════════════════════════════════════════════╗
+// ║  STANDALONE — vertical: header, knob, curve, legend + meter strip    ║
+// ╚═══════════════════════════════════════════════════════════════════════╝
+
+  hdr_h = 34 * ret;
+  legend_h = 20 * ret;
+  mtr_w = 44 * ret;
+  body_w = gfx_w - mtr_w;
+  body_h = gfx_h - hdr_h - legend_h;
+
+  // Split body vertically: top = knob zone, bottom = curve zone
+  knob_zone_h = body_h * 0.48;
+  curve_zone_h = body_h - knob_zone_h;
+  body_cx = body_w * 0.5;
+
+  knob_r = min(body_w * 0.18, knob_zone_h * 0.34);
+  knob_r = max(knob_r, 22 * ret);
+  knob_cy = hdr_h + knob_zone_h * 0.42;
+
+  lbl_font = max(8, floor(knob_r * 0.32 * ret));
+  val_font = max(8, floor(knob_r * 0.26 * ret));
+  lbl_gap = knob_r * 1.45;
+  lbl_val_gap = lbl_font + 4 * ret;
+
+  // ── Title bar ──────────────────────────────────────────────────────
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1);
+  gfx_setfont(1, "Arial", floor(max(11, floor(hdr_h * 0.48)) * ret), 'b');
+  gfx_x = 10 * ret; gfx_y = (hdr_h - 14 * ret) * 0.5 + ret;
+  gfx_drawstr("SATURATION");
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_setfont(1, "Arial", floor(max(9, floor(hdr_h * 0.34)) * ret));
+  gfx_x += 8 * ret; gfx_drawstr("LOSER / EON Studios");
+  // Appearance cluster (THEME · KNOB) — collapsed to a "▸THEME" chip; the row
+  // wraps to a second line on this narrow window. Interaction runs inside, so
+  // an open panel swallows the click before the gear/knob see it.
+  rkth_cluster_hdr(10 * ret, hdr_h + 4 * ret, 0, 0);
+
+  // ── Gear + Link badge (header right) ──
+  rk_gear_r = max(5 * ret, hdr_h * 0.20);
+  rk_gear_x = body_w - rk_gear_r - 8 * ret;
+  rk_gear_y = hdr_h / 2;
+  rk_link_draw_gear(rk_gear_x, rk_gear_y, rk_gear_r, drv_lr, drv_lg, drv_lb, mx, my, lmb_down);
+  rk_badge_sz = max(9 * ret, hdr_h * 0.36);
+  rk_link_draw_badge(rk_gear_x - rk_badge_sz - 5 * ret, rk_gear_y - rk_badge_sz / 2, rk_badge_sz, drv_lr, drv_lg, drv_lb, mx, my, lmb_down);
+
+  gfx_set(0.15, 0.18, 0.22, 1);
+  gfx_line(0, hdr_h - 1, gfx_w, hdr_h - 1);
+
+  // ── Section header + LED ───────────────────────────────────────────
+  sh_y = hdr_h + 5 * ret;
+  sh_font = max(9, floor(min(body_w * 0.05, 13) * ret));
+  led_r_hdr = max(3, sh_font * 0.35);
+  gfx_setfont(1, "Arial", sh_font, 'b');
+
+  mb0 = bm;
+  gfx_measurestr("DRIVE", tw, th); sh_cx = body_cx;
+  led_cx = sh_cx - tw/2 - led_r_hdr - 5 * ret; led_cy = sh_y + th * 0.5;
+  nv = btn_led_interact(mb0, led_cx, led_cy, led_r_hdr, slider2);
+  nv != slider2 ? ( slider2 = nv; slider_automate(2); atomic_set(dsp_dirty, 1); );
+  btn_led_draw(led_cx, led_cy, led_r_hdr, slider2, "", mb0[0], drv_lr, drv_lg, drv_lb, 0);
+  slider2 ? gfx_set(drv_lr, drv_lg, drv_lb, 0.90) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 0.75);
+  gfx_x = sh_cx - tw/2; gfx_y = sh_y; gfx_drawstr("DRIVE");
+
+  // Accent bar
+  gfx_setfont(1, "Arial", sh_font); gfx_measurestr("X", tw, th);
+  bar_y = sh_y + th + 3 * ret;
+  slider2 ? gfx_set(drv_lr, drv_lg, drv_lb, 0.45) : gfx_set(0.20, 0.20, 0.22, 0.30);
+  gfx_rect(body_cx - body_w * 0.25, bar_y, body_w * 0.50, 2 * ret);
+
+  // Meter divider
+  gfx_set(0.18, 0.18, 0.20, 0.5);
+  gfx_line(body_w, hdr_h + 2 * ret, body_w, gfx_h - legend_h - 2 * ret);
+
+  // ── DRIVE knob ─────────────────────────────────────────────────────
+  cx = body_cx; m = km;
+  nv = ssl_knob_interact(m, cx, knob_cy, knob_r, slider1, 0, 100, 0, 101);
+  nv = floor(nv + 0.5); nv = clamp(nv, 0, 100);
+  nv != slider1 ? ( slider1 = nv; slider_automate(1); atomic_set(dsp_dirty, 1); );
+  rk_role_col(0, 1, drv_cr, drv_cg, drv_cb);  // DRIVE — drive role
+  rk_knob_draw(sk_kp,cx, knob_cy, knob_r, slider1, 0, 100, 0, m[0], sk_kbr, sk_kbg, sk_kbb, 11, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_setfont(1, "Arial", lbl_font, 'b');
+  gfx_measurestr("AMOUNT", tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap; gfx_drawstr("AMOUNT");
+  sprintf(#dv, "%.0f%%", slider1);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", val_font);
+  gfx_measurestr(#dv, tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap + lbl_val_gap; gfx_drawstr(#dv);
+
+  // ── Horizontal divider between knob and curve ──
+  div_y = hdr_h + knob_zone_h;
+  gfx_set(0.18, 0.18, 0.20, 0.4);
+  gfx_line(6 * ret, div_y, body_w - 6 * ret, div_y);
+
+  // ── Transfer curve ─────────────────────────────────────────────────
+  cv_pad = 10 * ret;
+  cv_s = min(body_w - cv_pad * 2, curve_zone_h - cv_pad * 2);
+  cv_ox = body_cx - cv_s / 2;
+  cv_oy = div_y + (curve_zone_h - cv_s) * 0.5;
+  draw_curve(cv_ox, cv_oy, cv_s);
+
+  // ── Meter ──────────────────────────────────────────────────────────
+  mtr_x = body_w + 5 * ret; mtr_y = hdr_h + 8 * ret;
+  mtr_h = gfx_h - hdr_h - legend_h - 16 * ret;
+  mtr_bar_w = mtr_w - 18 * ret;
+  mtr_led_bar_draw(mtr_x, mtr_y, mtr_bar_w, mtr_h, mtr_peak_l, mtr_peak_r, -60, 0);
+
+  // ── Legend ─────────────────────────────────────────────────────────
+  gfx_set(0.18, 0.18, 0.20, 1);
+  gfx_line(0, gfx_h - legend_h, gfx_w, gfx_h - legend_h);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 0.85);
+  gfx_setfont(1, "Arial", floor(max(8, floor(legend_h * 0.52)) * ret));
+  gfx_x = 8 * ret; gfx_y = gfx_h - legend_h + 4 * ret;
+  gfx_drawstr("Drag = value  |  Ctrl = fine  |  Scroll = adjust  |  Dbl-click = reset  |  LED = bypass");
+);
+
+// ── Options menu overlay ──
+rk_link_draw_menu(rk_gear_x - 165 * ret, rk_gear_y + rk_gear_r + 4 * ret, ret,
+                  drv_lr, drv_lg, drv_lb, mx, my, lmb_down);
+
+rkth_cluster_overlay();   // open THEME/KNOB panels draw on top (floating only)
+rk_link_on_gfx_change();
+prev_LMB = LMB;
+prev_RMB = RMB;

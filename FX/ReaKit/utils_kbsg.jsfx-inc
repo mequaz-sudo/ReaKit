@@ -1,0 +1,53 @@
+@init
+// utils_kbsg.jsfx-inc — Shared Utility Functions for EON Studios ReaKit Libraries
+// ═══════════════════════════════════════════════════════════════════════════
+// Import this FIRST in any main JSFX that uses knobs, buttons, or meters.
+//
+//   import utils_kbsg.jsfx-inc
+//   import knobs_kbsg.jsfx-inc
+//   import buttons_kbsg.jsfx-inc
+//   import meters_kbsg.jsfx-inc
+//   ...etc
+//
+// JSFX spec: functions must be at top level, NOT inside () blocks.
+// Redefining identical functions is harmless — last definition wins.
+
+function clamp(x, lo, hi) ( min(max(x, lo), hi); );
+function lerp(a, b, t) ( a + (b - a) * t; );
+function dist(x1, y1, x2, y2) ( sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)); );
+function sign_of(x) ( x < 0 ? -1 : x > 0 ? 1 : 0; );
+
+function _hex_nib(c) (
+  c >= '0' && c <= '9' ? c - '0' :
+  c >= 'a' && c <= 'f' ? c - 'a' + 10 :
+  c >= 'A' && c <= 'F' ? c - 'A' + 10 : 0;
+);
+
+function hex_to_rgba(hex, ptr)
+  local(_ofs, c0, c1) (
+  _ofs = str_getchar(hex, 0) == '#' ? 1 : 0;
+  c0 = _hex_nib(str_getchar(hex, _ofs));
+  c1 = _hex_nib(str_getchar(hex, _ofs + 1));
+  ptr[0] = (c0 * 16 + c1) / 255;
+  c0 = _hex_nib(str_getchar(hex, _ofs + 2));
+  c1 = _hex_nib(str_getchar(hex, _ofs + 3));
+  ptr[1] = (c0 * 16 + c1) / 255;
+  c0 = _hex_nib(str_getchar(hex, _ofs + 4));
+  c1 = _hex_nib(str_getchar(hex, _ofs + 5));
+  ptr[2] = (c0 * 16 + c1) / 255;
+  strlen(hex) - _ofs >= 8 ? (
+    c0 = _hex_nib(str_getchar(hex, _ofs + 6));
+    c1 = _hex_nib(str_getchar(hex, _ofs + 7));
+    ptr[3] = (c0 * 16 + c1) / 255;
+  ) : (
+    ptr[3] = 1.0;
+  );
+);
+
+function fmt_value(dest, val, unit) (
+  abs(val) < 10 ? sprintf(dest, "%.2f", val) :
+  abs(val) < 100 ? sprintf(dest, "%.1f", val) :
+  abs(val) < 1000 ? sprintf(dest, "%.0f", val) :
+  sprintf(dest, "%.1fk", val / 1000);
+  strcat(dest, unit);
+);

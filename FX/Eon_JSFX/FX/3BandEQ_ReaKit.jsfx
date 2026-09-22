@@ -1,0 +1,548 @@
+// (C) 2006, Michael Gruhn.
+// NO WARRANTY IS GRANTED. THIS PLUG-IN IS PROVIDED ON AN "AS IS" BASIS, WITHOUT
+// WARRANTY OF ANY KIND. NO LIABILITY IS GRANTED, INCLUDING, BUT NOT LIMITED TO,
+// ANY DIRECT OR INDIRECT,  SPECIAL,  INCIDENTAL OR CONSEQUENTIAL DAMAGE ARISING
+// OUT OF  THE  USE  OR INABILITY  TO  USE  THIS PLUG-IN,  COMPUTER FAILTURE  OF
+// MALFUNCTION INCLUDED.  THE USE OF THE SOURCE CODE,  EITHER  PARTIALLY  OR  IN
+// TOTAL, IS ONLY GRANTED,  IF USED IN THE SENSE OF THE AUTHOR'S INTENTION,  AND
+// USED WITH ACKNOWLEDGEMENT OF THE AUTHOR. FURTHERMORE IS THIS PLUG-IN A  THIRD
+// PARTY CONTRIBUTION,  EVEN IF INCLUDED IN REAPER(TM),  COCKOS INCORPORATED  OR
+// ITS AFFILIATES HAVE NOTHING TO DO WITH IT.  LAST BUT NOT LEAST, BY USING THIS
+// PLUG-IN YOU RELINQUISH YOUR CLAIM TO SUE IT'S AUTHOR, AS WELL AS THE CLAIM TO
+// ENTRUST SOMEBODY ELSE WITH DOING SO.
+//
+// GUI by EON Studios (ReaKit Libraries)
+// DSP: LOSER's original one-pole crossover tone-stack — intentionally
+// UNCHANGED (perfect-reconstruction band split is this EQ's identity).
+// 1.2.0: ReaKit architecture pass — dsp_dirty flag removed (block-rate
+// change-detection, same model as 4BandEQ v1.3+), mark_dirty wrapper,
+// crossover freqs now re-applied when changed post-init (link-pull fix),
+// @gfx loop var privatized.
+// Version: 1.2.0
+desc:EON: 3-Band EQ
+//tags: equalizer
+//author: LOSER
+
+import ../../ReaKit/utils_kbsg.jsfx-inc
+import ../../ReaKit/knobs_kbsg.jsfx-inc
+import ../../ReaKit/buttons_kbsg.jsfx-inc
+import ../../ReaKit/meters_kbsg.jsfx-inc
+import ../../ReaKit/rk_playstate.jsfx-inc
+import ../../ReaKit/rk_gmem_link.jsfx-inc
+import ../../ReaKit/rk_theme.jsfx-inc
+
+slider1:0<-24,24,0.1>-Low (dB)
+slider2:200<0,22000,1>-Frequency (Hz)
+slider3:0<-24,24,0.1>-Mid (dB)
+slider4:2000<0,22000,1>-Frequency (Hz)
+slider5:0<-24,24,0.1>-High (dB)
+slider6:0<-24,24,0.1>-Output (dB)
+slider7:1<0,1,1>-Low Enable
+slider8:1<0,1,1>-Mid Enable
+slider9:1<0,1,1>-High Enable
+slider10:1<0,1,1>-Output Enable
+slider11:0<0,16,1{Off,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>-Link Group
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+options:gfx_hz=60 no_meter
+options:gmem=ReaKit3BEQ
+
+@init
+cDenorm = 10^-30;
+cAmpDB = 8.65617025;
+ext_tail_size = -1;
+gfx_ext_retina = 1;
+// Render the embedded UI without REAPER's frame/title-bar decoration
+// (REAPER 7.45+, gfx_ext_flags 0x100). Must be set in @init, not @gfx.
+gfx_ext_flags |= 0x100 | 0x400; // +0x400: no MCP hover tooltip (7.79+; older ignores)
+
+tau = 2 * $pi;
+KS = 16; BS = 8;
+freemem = 0;
+km = freemem; freemem += KS * 4;   // 4 knobs (Low, Mid, High, Output)
+bm = freemem; freemem += BS * 4;   // 4 buttons (band enables)
+meter_init(freemem); freemem += 1380;
+
+// Play-state awareness (EQ = stateless, bypass immediately on stop)
+rk_ps_init(0);
+
+// Instance linking: group in slider11, sync sliders 1-10
+rk_link_init(11, 10, freemem); freemem += 64;
+
+function kf(s, base_r) ( max(11*ret, floor(s * base_r / 38)); );
+
+function recalc_gains() (
+  slider7 ? lVol = exp(slider1/cAmpDB) : lVol = 1;
+  slider8 ? mVol = exp(slider3/cAmpDB) : mVol = 1;
+  slider9 ? hVol = exp(slider5/cAmpDB) : hVol = 1;
+  slider10 ? outVol = exp(slider6/cAmpDB) : outVol = 1;
+);
+
+// Frequency coefficients — slider2/slider4 are fixed (200 Hz / 2 kHz), compute once
+function recalc_freq() (
+  srate > 0 ? (
+    f2 = min(max(slider2, 1), srate * 0.49);
+    f4 = min(max(slider4, 1), srate * 0.49);
+    freqLP = min(f2, f4);
+    xLP = exp(-2.0*$pi*freqLP/srate);
+    a0LP = 1.0-xLP; b1LP = -xLP;
+    freqHP = max(f2, f4);
+    xHP = exp(-2.0*$pi*freqHP/srate);
+    a0HP = 1.0-xHP; b1HP = -xHP;
+  );
+);
+
+recalc_freq();
+recalc_gains();
+// Snapshot for block-rate crossover-freq change detection (covers link
+// pulls + automation of the hidden freq sliders; @init handles SR change)
+cf_last2 = slider2; cf_last4 = slider4;
+
+// GFX→DSP: host notify (undo/automation) only — DSP recalc is block-rate
+// from current slider values, no shared dirty flag (4BandEQ architecture)
+function mark_dirty(mask) ( slider_automate(mask); );
+
+// ── Gain smoothing (5ms one-pole) ──
+snap_params = 1;
+sm_coeff = 1 - exp(-1 / (srate * 0.005));
+sm_lVol = lVol;
+sm_mVol = mVol;
+sm_hVol = hVol;
+sm_outVol = outVol;
+
+// Knob cap colors (constant)
+lo_cr = 0.15; lo_cg = 0.30; lo_cb = 0.72;
+md_cr = 0.15; md_cg = 0.62; md_cb = 0.28;
+hi_cr = 0.75; hi_cg = 0.18; hi_cb = 0.15;
+// LED accent colors (constant)
+lo_lr = 0.20; lo_lg = 0.40; lo_lb = 0.90;
+md_lr = 0.20; md_lg = 0.75; md_lb = 0.30;
+hi_lr = 0.90; hi_lg = 0.25; hi_lb = 0.15;
+ou_lr = 0.65; ou_lg = 0.65; ou_lb = 0.72;
+
+@serialize
+
+// Play-state enable toggles (persist across sessions)
+file_var(0, rk_ps_en_play);
+file_var(0, rk_ps_en_rec);
+file_var(0, rk_ps_en_stop);
+file_var(0, rk_ps_inited);
+
+@slider
+recalc_gains();
+rk_link_on_slider();
+
+@block
+rk_link_pull();
+// Recalc gains every block from current sliders (4 exp at block rate —
+// negligible; covers GUI writes, automation, and link pulls uniformly).
+// Crossover freqs are gated by change check (exp recompute only on change).
+recalc_gains();
+(slider2 != cf_last2 || slider4 != cf_last4) ? (
+  cf_last2 = slider2; cf_last4 = slider4;
+  recalc_freq();
+);
+rk_ps_update_block();  // block-rate play-state decode (rk_playstate.jsfx-inc)
+
+@sample
+// Snap smoothers to targets on first sample (avoids ramp on load/reset)
+snap_params ? (
+  sm_lVol = lVol; sm_mVol = mVol; sm_hVol = hVol; sm_outVol = outVol;
+  snap_params = 0;
+);
+
+rk_ps_tick();
+
+// Per-sample gain smoothing
+sm_lVol   += (lVol   - sm_lVol)   * sm_coeff;
+sm_mVol   += (mVol   - sm_mVol)   * sm_coeff;
+sm_hVol   += (hVol   - sm_hVol)   * sm_coeff;
+sm_outVol += (outVol - sm_outVol) * sm_coeff;
+
+sl0 = (tmplLP = a0LP*spl0 - b1LP*tmplLP + cDenorm);
+sl1 = (tmprLP = a0LP*spl1 - b1LP*tmprLP + cDenorm);
+sh0 = spl0 - (tmplHP = a0HP*spl0 - b1HP*tmplHP + cDenorm);
+sh1 = spl1 - (tmprHP = a0HP*spl1 - b1HP*tmprHP + cDenorm);
+spl0 = (sl0*sm_lVol + (spl0 - sl0 - sh0)*sm_mVol + sh0*sm_hVol)*sm_outVol;
+spl1 = (sl1*sm_lVol + (spl1 - sl1 - sh1)*sm_mVol + sh1*sm_hVol)*sm_outVol;
+meter_process_sample(spl0, spl1);
+
+
+@gfx 460 900
+gfx_clear = 0x443D38;
+// EON theme: bridge mirrors the band into ReaKit3BEQ; follow the theme's bg +
+// knob STYLE. Per-band cap colours stay semantic (low=blue/mid=green/high=red).
+rk_theme_apply();
+sk_kp = (gmem[GS_THEME_ID] > 0 && gmem[GS_THEME_KNOB_P] > 0) ? (gmem[GS_THEME_KNOB_P] | 0) : 1;
+gmem[GS_THEME_ID] > 0 ? (
+  _th_bg_r=gmem[GS_THEME_BASE]; _th_bg_g=gmem[GS_THEME_BASE+1]; _th_bg_b=gmem[GS_THEME_BASE+2];
+  _th_tx_r=gmem[GS_THEME_BASE+6]; _th_tx_g=gmem[GS_THEME_BASE+7]; _th_tx_b=gmem[GS_THEME_BASE+8]; // TEXT
+  _th_td_r=gmem[GS_THEME_BASE+9]; _th_td_g=gmem[GS_THEME_BASE+10]; _th_td_b=gmem[GS_THEME_BASE+11]; // TEXT_DIM
+) : (
+  _th_bg_r=0.22; _th_bg_g=0.24; _th_bg_b=0.27;
+  _th_tx_r=0.92; _th_tx_g=0.90; _th_tx_b=0.85;   // native title cream
+  _th_td_r=0.55; _th_td_g=0.55; _th_td_b=0.58;   // native dim grey
+);
+// 0x200 (embedded click-through) is now armed conditionally inside the
+// embedded branch — only over dead zones — see below.
+
+// ═══════════════════════════════════════════════════════════════════════
+// FRAME STATE
+// ═══════════════════════════════════════════════════════════════════════
+rk_link_key = gfx_getchar();
+mx = mouse_x; my = mouse_y;
+LMB = mouse_cap & 1; RMB = mouse_cap & 2;
+CTRL = mouse_cap & 4; SHIFT = mouse_cap & 8;
+lmb_down = LMB && !prev_LMB;
+rmb_down = RMB && !prev_RMB;
+frame_wheel = mouse_wheel / 120; mouse_wheel = 0;
+timer = time_precise();
+dt = min(timer - frame_last_timer, 0.05);
+frame_last_timer = timer;
+
+hv_speed = 11;
+ret = max(1, gfx_ext_retina);
+rk_link_menu_gate();
+
+// Background
+gfx_set(_th_bg_r, _th_bg_g, _th_bg_b, 1);
+gfx_rect(0, 0, gfx_w, gfx_h);
+
+// ═══════════════════════════════════════════════════════════════════════
+// MODE: embedded (MCP/TCP) vs standalone
+// ═══════════════════════════════════════════════════════════════════════
+gfx_ext_flags & 1 ? (
+
+// ╔═══════════════════════════════════════════════════════════════════════╗
+// ║  EMBEDDED CHANNEL STRIP                                              ║
+// ╚═══════════════════════════════════════════════════════════════════════╝
+
+  gfx_ext_flags & 0x200 ? gfx_ext_flags -= 0x200;
+  emb_widget_active = 0;
+
+  // ── Link badge (top-right corner) ──
+  rk_link_draw_badge(gfx_w - 16*ret, 2*ret, 12*ret, 0.20, 0.40, 0.90, mx, my, lmb_down);
+
+  mcp_rows = 4;
+  mcp_row_h = gfx_h / mcp_rows;
+  mcp_cx = gfx_w * 0.5;
+
+  mcp_r = min(gfx_w * 0.30, mcp_row_h * 0.25);
+  mcp_r = max(mcp_r, 10*ret);
+
+  mcp_led_r = max(3*ret, min(mcp_r * 0.20, 6*ret));
+
+  mcp_lbl_font = max(11*ret, floor(min(gfx_w * 0.13, mcp_row_h * 0.10)));
+  mcp_val_font = max(10*ret, floor(min(gfx_w * 0.11, mcp_row_h * 0.08)));
+
+  mcp_knob_cy = mcp_row_h * 0.38;
+  mcp_lbl_cy = mcp_knob_cy + mcp_r + max(6*ret, mcp_row_h * 0.07);
+  mcp_val_cy = mcp_lbl_cy + mcp_lbl_font + 3*ret;
+
+  gfx_set(0.15, 0.18, 0.22, 0.5);
+  // _gx_i: @gfx-private loop var — global `i` is audio/init-side scratch
+  _gx_i = 1; loop(3,
+    gfx_line(3*ret, mcp_row_h * _gx_i, gfx_w - 3*ret, mcp_row_h * _gx_i);
+    _gx_i += 1;
+  );
+
+  // ── Row 0: HIGH ──────────────────────────────────────────────────
+  row_y = 0; m = km + 2 * KS; mb2 = bm + 2 * BS;
+  ky = row_y + mcp_knob_cy;
+
+  nv = ssl_knob_interact(m, mcp_cx, ky, mcp_r, slider5, -24, 24, 0, 49);
+  emb_widget_active |= m[6];
+  nv = floor(nv*10 + 0.5)/10; nv = clamp(nv, -24, 24);
+  nv != slider5 ? ( slider5 = nv; mark_dirty(16); );
+  rk_knob_draw(sk_kp,mcp_cx, ky, mcp_r, slider5, -24, 24, 1, m[0], 0.75, 0.18, 0.15, 9, _th_bg_r, _th_bg_g, _th_bg_b);
+
+  gfx_setfont(1, "Arial", mcp_lbl_font, 'b');
+  gfx_measurestr("HIGH", tw, th);
+  lbl_x = mcp_cx - tw/2; lbl_y = row_y + mcp_lbl_cy;
+  led_x = lbl_x - mcp_led_r - 5*ret; led_y = lbl_y + th * 0.5;
+  nv = btn_led_interact(mb2, led_x, led_y, mcp_led_r, slider9);
+  emb_widget_active |= mb2[6];
+  nv != slider9 ? ( slider9 = nv; mark_dirty(256); );
+  btn_led_draw(led_x, led_y, mcp_led_r, slider9, "", mb2[0], 0.90, 0.25, 0.15, 0);
+  slider9 ? gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_x = lbl_x; gfx_y = lbl_y; gfx_drawstr("HIGH");
+
+  sprintf(#e1, "%+.1f dB", slider5);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", mcp_val_font);
+  gfx_measurestr(#e1, tw, th); gfx_x = mcp_cx - tw/2; gfx_y = row_y + mcp_val_cy; gfx_drawstr(#e1);
+
+
+  // ── Row 1: MID ───────────────────────────────────────────────────
+  row_y = mcp_row_h; m = km + 1 * KS; mb1 = bm + 1 * BS;
+  ky = row_y + mcp_knob_cy;
+
+  nv = ssl_knob_interact(m, mcp_cx, ky, mcp_r, slider3, -24, 24, 0, 49);
+  emb_widget_active |= m[6];
+  nv = floor(nv*10 + 0.5)/10; nv = clamp(nv, -24, 24);
+  nv != slider3 ? ( slider3 = nv; mark_dirty(4); );
+  rk_knob_draw(sk_kp,mcp_cx, ky, mcp_r, slider3, -24, 24, 1, m[0], 0.15, 0.62, 0.28, 9, _th_bg_r, _th_bg_g, _th_bg_b);
+
+  gfx_setfont(1, "Arial", mcp_lbl_font, 'b');
+  gfx_measurestr("MID", tw, th);
+  lbl_x = mcp_cx - tw/2; lbl_y = row_y + mcp_lbl_cy;
+  led_x = lbl_x - mcp_led_r - 5*ret; led_y = lbl_y + th * 0.5;
+  nv = btn_led_interact(mb1, led_x, led_y, mcp_led_r, slider8);
+  emb_widget_active |= mb1[6];
+  nv != slider8 ? ( slider8 = nv; mark_dirty(128); );
+  btn_led_draw(led_x, led_y, mcp_led_r, slider8, "", mb1[0], 0.20, 0.75, 0.30, 0);
+  slider8 ? gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_x = lbl_x; gfx_y = lbl_y; gfx_drawstr("MID");
+
+  sprintf(#e2, "%+.1f dB", slider3);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", mcp_val_font);
+  gfx_measurestr(#e2, tw, th); gfx_x = mcp_cx - tw/2; gfx_y = row_y + mcp_val_cy; gfx_drawstr(#e2);
+
+
+  // ── Row 2: LOW ───────────────────────────────────────────────────
+  row_y = mcp_row_h * 2; m = km + 0 * KS; mb0 = bm + 0 * BS;
+  ky = row_y + mcp_knob_cy;
+
+  nv = ssl_knob_interact(m, mcp_cx, ky, mcp_r, slider1, -24, 24, 0, 49);
+  emb_widget_active |= m[6];
+  nv = floor(nv*10 + 0.5)/10; nv = clamp(nv, -24, 24);
+  nv != slider1 ? ( slider1 = nv; mark_dirty(1); );
+  rk_knob_draw(sk_kp,mcp_cx, ky, mcp_r, slider1, -24, 24, 1, m[0], 0.15, 0.30, 0.72, 9, _th_bg_r, _th_bg_g, _th_bg_b);
+
+  gfx_setfont(1, "Arial", mcp_lbl_font, 'b');
+  gfx_measurestr("LOW", tw, th);
+  lbl_x = mcp_cx - tw/2; lbl_y = row_y + mcp_lbl_cy;
+  led_x = lbl_x - mcp_led_r - 5*ret; led_y = lbl_y + th * 0.5;
+  nv = btn_led_interact(mb0, led_x, led_y, mcp_led_r, slider7);
+  emb_widget_active |= mb0[6];
+  nv != slider7 ? ( slider7 = nv; mark_dirty(64); );
+  btn_led_draw(led_x, led_y, mcp_led_r, slider7, "", mb0[0], 0.20, 0.40, 0.90, 0);
+  slider7 ? gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_x = lbl_x; gfx_y = lbl_y; gfx_drawstr("LOW");
+
+  sprintf(#e3, "%+.1f dB", slider1);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", mcp_val_font);
+  gfx_measurestr(#e3, tw, th); gfx_x = mcp_cx - tw/2; gfx_y = row_y + mcp_val_cy; gfx_drawstr(#e3);
+
+
+  // ── Row 3: OUTPUT ────────────────────────────────────────────────
+  row_y = mcp_row_h * 3; m = km + 3 * KS; mb3 = bm + 3 * BS;
+  ky = row_y + mcp_knob_cy;
+
+  nv = ssl_knob_interact(m, mcp_cx, ky, mcp_r, slider6, -24, 24, 0, 49);
+  emb_widget_active |= m[6];
+  nv = floor(nv*10 + 0.5)/10; nv = clamp(nv, -24, 24);
+  nv != slider6 ? ( slider6 = nv; mark_dirty(32); );
+  rk_role_col(1, 1, 0.62, 0.62, 0.65);  // OUTPUT — gain role
+  rk_knob_draw(sk_kp,mcp_cx, ky, mcp_r, slider6, -24, 24, 1, m[0], sk_kbr, sk_kbg, sk_kbb, 9, _th_bg_r, _th_bg_g, _th_bg_b);
+
+  gfx_setfont(1, "Arial", mcp_lbl_font, 'b');
+  gfx_measurestr("OUT", tw, th);
+  lbl_x = mcp_cx - tw/2; lbl_y = row_y + mcp_lbl_cy;
+  led_x = lbl_x - mcp_led_r - 5*ret; led_y = lbl_y + th * 0.5;
+  nv = btn_led_interact(mb3, led_x, led_y, mcp_led_r, slider10);
+  emb_widget_active |= mb3[6];
+  nv != slider10 ? ( slider10 = nv; mark_dirty(512); );
+  btn_led_draw(led_x, led_y, mcp_led_r, slider10, "", mb3[0], 0.65, 0.65, 0.72, 0);
+  slider10 ? gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_x = lbl_x; gfx_y = lbl_y; gfx_drawstr("OUT");
+
+  sprintf(#e4, "%+.1f dB", slider6);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", mcp_val_font);
+  gfx_measurestr(#e4, tw, th); gfx_x = mcp_cx - tw/2; gfx_y = row_y + mcp_val_cy; gfx_drawstr(#e4);
+
+  !emb_widget_active ? gfx_ext_flags |= 0x200;
+
+
+) : (
+
+// ╔═══════════════════════════════════════════════════════════════════════╗
+// ║  STANDALONE GUI                                                      ║
+// ╚═══════════════════════════════════════════════════════════════════════╝
+
+  hdr_h = 34*ret;
+  legend_h = 20*ret;
+  mtr_w = 56*ret;
+  body_w = gfx_w - mtr_w;
+  body_h = gfx_h - hdr_h - legend_h;
+  sec_w = body_w / 4;
+
+  main_r = min(sec_w * 0.30, body_h * 0.24);
+  main_r = max(main_r, 22*ret);
+  knob_cy = hdr_h + body_h * 0.46;
+
+  lbl_font = floor(kf(12, main_r));
+  val_font = floor(kf(10, main_r));
+  xo_font = val_font;
+  lbl_gap = main_r * 1.55;
+  lbl_val_gap = lbl_font + 5*ret;
+
+  // Title
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1);
+  gfx_setfont(1, "Arial", floor(max(11*ret, hdr_h * 0.48)), 'b');
+  gfx_x = 10*ret; gfx_y = (hdr_h - 14*ret) * 0.5 + 1*ret;
+  gfx_drawstr("3-BAND EQ");
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1);
+  gfx_setfont(1, "Arial", floor(max(9*ret, hdr_h * 0.34)));
+  gfx_x += 8*ret; gfx_drawstr("LOSER / EON Studios");
+
+  // ▸EON appearance cluster (shared lib): THEME · KNOB chips, no VU/SYNC
+  // (has_vu = 0). Interaction runs INSIDE rkth_cluster FIRST — an open
+  // panel swallows the click/wheel before the gear/badge or body widgets.
+  rkth_cluster_hdr(215*ret, 10*ret, 0, 0);
+
+  // ── Gear + Link badge (header right) ──
+  rk_gear_r = max(5*ret, hdr_h * 0.20);
+  rk_gear_x = body_w - rk_gear_r - 8*ret;
+  rk_gear_y = hdr_h / 2;
+  rk_link_draw_gear(rk_gear_x, rk_gear_y, rk_gear_r, 0.20, 0.40, 0.90, mx, my, lmb_down);
+  rk_badge_sz = max(9*ret, hdr_h * 0.36);
+  rk_link_draw_badge(rk_gear_x - rk_badge_sz - 5*ret, rk_gear_y - rk_badge_sz / 2, rk_badge_sz, 0.20, 0.40, 0.90, mx, my, lmb_down);
+
+  gfx_set(0.15, 0.18, 0.22, 1);
+  gfx_line(0, hdr_h - 1*ret, gfx_w, hdr_h - 1*ret);
+
+  // Section headers + LEDs
+  sh_y = hdr_h + 6*ret;
+  sh_font = max(9*ret, floor(min(sec_w * 0.10, 13*ret)));
+  led_r_hdr = max(3*ret, sh_font * 0.35);
+  gfx_setfont(1, "Arial", sh_font, 'b');
+
+  mb0 = bm + 0 * BS;
+  gfx_measurestr("LOW", tw, th); sh_cx = sec_w * 0.5;
+  led_cx = sh_cx - tw/2 - led_r_hdr - 5*ret; led_cy = sh_y + th * 0.5;
+  nv = btn_led_interact(mb0, led_cx, led_cy, led_r_hdr, slider7);
+  nv != slider7 ? ( slider7 = nv; mark_dirty(64); );
+  btn_led_draw(led_cx, led_cy, led_r_hdr, slider7, "", mb0[0], lo_lr, lo_lg, lo_lb, 0);
+  slider7 ? gfx_set(lo_lr, lo_lg, lo_lb, 0.90) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 0.75);
+  gfx_x = sh_cx - tw/2; gfx_y = sh_y; gfx_drawstr("LOW");
+
+  mb1 = bm + 1 * BS;
+  gfx_measurestr("MID", tw, th); sh_cx = sec_w * 1.5;
+  led_cx = sh_cx - tw/2 - led_r_hdr - 5*ret; led_cy = sh_y + th * 0.5;
+  nv = btn_led_interact(mb1, led_cx, led_cy, led_r_hdr, slider8);
+  nv != slider8 ? ( slider8 = nv; mark_dirty(128); );
+  btn_led_draw(led_cx, led_cy, led_r_hdr, slider8, "", mb1[0], md_lr, md_lg, md_lb, 0);
+  slider8 ? gfx_set(md_lr, md_lg, md_lb, 0.90) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 0.75);
+  gfx_x = sh_cx - tw/2; gfx_y = sh_y; gfx_drawstr("MID");
+
+  mb2 = bm + 2 * BS;
+  gfx_measurestr("HIGH", tw, th); sh_cx = sec_w * 2.5;
+  led_cx = sh_cx - tw/2 - led_r_hdr - 5*ret; led_cy = sh_y + th * 0.5;
+  nv = btn_led_interact(mb2, led_cx, led_cy, led_r_hdr, slider9);
+  nv != slider9 ? ( slider9 = nv; mark_dirty(256); );
+  btn_led_draw(led_cx, led_cy, led_r_hdr, slider9, "", mb2[0], hi_lr, hi_lg, hi_lb, 0);
+  slider9 ? gfx_set(hi_lr, hi_lg, hi_lb, 0.90) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 0.75);
+  gfx_x = sh_cx - tw/2; gfx_y = sh_y; gfx_drawstr("HIGH");
+
+  mb3 = bm + 3 * BS;
+  gfx_measurestr("OUTPUT", tw, th); sh_cx = sec_w * 3.5;
+  led_cx = sh_cx - tw/2 - led_r_hdr - 5*ret; led_cy = sh_y + th * 0.5;
+  nv = btn_led_interact(mb3, led_cx, led_cy, led_r_hdr, slider10);
+  nv != slider10 ? ( slider10 = nv; mark_dirty(512); );
+  btn_led_draw(led_cx, led_cy, led_r_hdr, slider10, "", mb3[0], ou_lr, ou_lg, ou_lb, 0);
+  slider10 ? gfx_set(ou_lr, ou_lg, ou_lb, 0.90) : gfx_set(_th_td_r, _th_td_g, _th_td_b, 0.75);
+  gfx_x = sh_cx - tw/2; gfx_y = sh_y; gfx_drawstr("OUTPUT");
+
+  // Accent bars
+  gfx_setfont(1, "Arial", sh_font); gfx_measurestr("X", tw, th);
+  bar_y = sh_y + th + 3*ret;
+  slider7 ? gfx_set(lo_lr, lo_lg, lo_lb, 0.45) : gfx_set(0.20, 0.20, 0.22, 0.30);
+  gfx_rect(sec_w * 0.15, bar_y, sec_w * 0.70, 2*ret);
+  slider8 ? gfx_set(md_lr, md_lg, md_lb, 0.45) : gfx_set(0.20, 0.20, 0.22, 0.30);
+  gfx_rect(sec_w + sec_w * 0.15, bar_y, sec_w * 0.70, 2*ret);
+  slider9 ? gfx_set(hi_lr, hi_lg, hi_lb, 0.45) : gfx_set(0.20, 0.20, 0.22, 0.30);
+  gfx_rect(sec_w * 2 + sec_w * 0.15, bar_y, sec_w * 0.70, 2*ret);
+  slider10 ? gfx_set(ou_lr, ou_lg, ou_lb, 0.45) : gfx_set(0.20, 0.20, 0.22, 0.30);
+  gfx_rect(sec_w * 3 + sec_w * 0.15, bar_y, sec_w * 0.70, 2*ret);
+
+  // Dividers
+  gfx_set(0.18, 0.18, 0.20, 0.5);
+  gfx_line(sec_w,     hdr_h + 2*ret, sec_w,     gfx_h - legend_h - 2*ret);
+  gfx_line(sec_w * 2, hdr_h + 2*ret, sec_w * 2, gfx_h - legend_h - 2*ret);
+  gfx_line(sec_w * 3, hdr_h + 2*ret, sec_w * 3, gfx_h - legend_h - 2*ret);
+  gfx_line(body_w,    hdr_h + 2*ret, body_w,    gfx_h - legend_h - 2*ret);
+
+  // LOW knob
+  cx = sec_w * 0.5; m = km + 0 * KS;
+  nv = ssl_knob_interact(m, cx, knob_cy, main_r, slider1, -24, 24, 0, 49);
+  nv = floor(nv*10 + 0.5)/10; nv = clamp(nv, -24, 24);
+  nv != slider1 ? ( slider1 = nv; mark_dirty(1); );
+  rk_knob_draw(sk_kp,cx, knob_cy, main_r, slider1, -24, 24, 1, m[0], lo_cr, lo_cg, lo_cb, 9, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_setfont(1, "Arial", lbl_font, 'b');
+  gfx_measurestr("GAIN", tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap; gfx_drawstr("GAIN");
+  sprintf(#lv, "%+.1f dB", slider1);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", val_font);
+  gfx_measurestr(#lv, tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap + lbl_val_gap; gfx_drawstr(#lv);
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_setfont(1, "Arial", xo_font, 'b');
+  gfx_measurestr("< 200 Hz", tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy - lbl_gap - th; gfx_drawstr("< 200 Hz");
+
+  // MID knob
+  cx = sec_w * 1.5; m = km + 1 * KS;
+  nv = ssl_knob_interact(m, cx, knob_cy, main_r, slider3, -24, 24, 0, 49);
+  nv = floor(nv*10 + 0.5)/10; nv = clamp(nv, -24, 24);
+  nv != slider3 ? ( slider3 = nv; mark_dirty(4); );
+  rk_knob_draw(sk_kp,cx, knob_cy, main_r, slider3, -24, 24, 1, m[0], md_cr, md_cg, md_cb, 9, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_setfont(1, "Arial", lbl_font, 'b');
+  gfx_measurestr("GAIN", tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap; gfx_drawstr("GAIN");
+  sprintf(#mv, "%+.1f dB", slider3);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", val_font);
+  gfx_measurestr(#mv, tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap + lbl_val_gap; gfx_drawstr(#mv);
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_setfont(1, "Arial", xo_font, 'b');
+  gfx_measurestr("200 - 2k Hz", tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy - lbl_gap - th; gfx_drawstr("200 - 2k Hz");
+
+  // HIGH knob
+  cx = sec_w * 2.5; m = km + 2 * KS;
+  nv = ssl_knob_interact(m, cx, knob_cy, main_r, slider5, -24, 24, 0, 49);
+  nv = floor(nv*10 + 0.5)/10; nv = clamp(nv, -24, 24);
+  nv != slider5 ? ( slider5 = nv; mark_dirty(16); );
+  rk_knob_draw(sk_kp,cx, knob_cy, main_r, slider5, -24, 24, 1, m[0], hi_cr, hi_cg, hi_cb, 9, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_setfont(1, "Arial", lbl_font, 'b');
+  gfx_measurestr("GAIN", tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap; gfx_drawstr("GAIN");
+  sprintf(#hv, "%+.1f dB", slider5);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", val_font);
+  gfx_measurestr(#hv, tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap + lbl_val_gap; gfx_drawstr(#hv);
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_setfont(1, "Arial", xo_font, 'b');
+  gfx_measurestr("> 2k Hz", tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy - lbl_gap - th; gfx_drawstr("> 2k Hz");
+
+  // OUTPUT knob
+  cx = sec_w * 3.5; m = km + 3 * KS;
+  nv = ssl_knob_interact(m, cx, knob_cy, main_r, slider6, -24, 24, 0, 49);
+  nv = floor(nv*10 + 0.5)/10; nv = clamp(nv, -24, 24);
+  nv != slider6 ? ( slider6 = nv; mark_dirty(32); );
+  rk_role_col(1, 1, 0.62, 0.62, 0.65);  // OUTPUT — gain role
+  rk_knob_draw(sk_kp,cx, knob_cy, main_r, slider6, -24, 24, 1, m[0], sk_kbr, sk_kbg, sk_kbb, 9, _th_bg_r, _th_bg_g, _th_bg_b);
+  gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1); gfx_setfont(1, "Arial", lbl_font, 'b');
+  gfx_measurestr("LEVEL", tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap; gfx_drawstr("LEVEL");
+  sprintf(#ov, "%+.1f dB", slider6);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 1); gfx_setfont(1, "Arial", val_font);
+  gfx_measurestr(#ov, tw, th); gfx_x = cx - tw/2; gfx_y = knob_cy + lbl_gap + lbl_val_gap; gfx_drawstr(#ov);
+
+  // Meter
+  mtr_x = body_w + 6*ret; mtr_y = hdr_h + 8*ret;
+  mtr_h = gfx_h - hdr_h - legend_h - 16*ret;
+  mtr_bar_w = mtr_w - 24*ret;
+  mtr_led_bar_draw(mtr_x, mtr_y, mtr_bar_w, mtr_h, mtr_peak_l, mtr_peak_r, -60, 0);
+
+  // Legend
+  gfx_set(0.18, 0.18, 0.20, 1);
+  gfx_line(0, gfx_h - legend_h, gfx_w, gfx_h - legend_h);
+  gfx_set(_th_td_r, _th_td_g, _th_td_b, 0.85);
+  gfx_setfont(1, "Arial", floor(max(8*ret, legend_h * 0.52)));
+  gfx_x = 8*ret; gfx_y = gfx_h - legend_h + 4*ret;
+  gfx_drawstr("Drag = value  |  Ctrl = fine  |  Scroll = adjust  |  Dbl-click = reset  |  LED = bypass");
+);
+
+// ── Options menu overlay ──
+rk_link_draw_menu(rk_gear_x - 165*ret, rk_gear_y + rk_gear_r + 4*ret, ret,
+                  0.20, 0.40, 0.90, mx, my, lmb_down);
+
+// Theme list + KNOB panel on top of everything (floating only — the
+// bit-test gate lives inside rkth_cluster_overlay)
+rkth_cluster_overlay();
+
+rk_link_on_gfx_change();
+prev_LMB = LMB;
+prev_RMB = RMB;

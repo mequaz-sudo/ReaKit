@@ -1,0 +1,874 @@
+// rk_gmem_link.jsfx-inc — Parameter Group Linking + UI for ReaKit Plugins
+// Part of the ReaKit framework by EON Studios
+// ═══════════════════════════════════════════════════════════════════
+// Sync parameters across multiple instances of the same plugin via
+// REAPER's gmem shared memory.
+//
+// Sync model (v3): Tukan-style old-value comparison (ref: tk_lib.jsfx-inc
+// by Tukan / demian d). No counter or snapshot array for slider sync.
+// Each instance compares slider(i) against rk_link_prev[i] every @gfx
+// frame to decide whether to push or pull. Play-state still uses a
+// counter since it is UI-driven and not a REAPER slider.
+//
+// GMem layout (per-group, base = (g-1)*64, g = 1..16):
+//   [base+1 .. base+32]  — slider values 1..32 (slot = slider index)
+//   [base+33]            — alive flag  (1 = group has at least one member)
+//   [base+34]            — en_play
+//   [base+35]            — en_rec
+//   [base+36]            — en_stop
+//   [base+37]            — play-state change counter
+//   [base+38 ..]         — slider values 33+ (slot = index + 5, see
+//                          rk_link_slot; metadata above predates >31-slider
+//                          sync and stays put so old/new builds interoperate)
+//   [base+63]            — member heartbeat: time_precise() stamped each
+//                          @gfx frame by members (menu occupancy dots;
+//                          old builds don't stamp — dot simply absent;
+//                          join logic still keys off +33)
+// Quick-link scratch (global, outside group blocks):
+//   [1024]               — slider index
+//   [1025]               — value
+//   [1026]               — mode (2 = force/reset)
+//   [1027]               — counter
+//
+// Local memory footprint: 64 slots consumed from mem_base
+//   [0..35]  — rk_link_prev : previous slider values (push/pull detector)
+//   [36..63] — rk_link_excl : exclusion flags (1 = don't sync slider i)
+// Caps: sync covers sliders 1..35 (prev[] partition); rk_link_exclude
+// covers sliders 1..27 (excl[] partition). Widen the partitions (and the
+// callers' freemem += 64) before adding a plugin that exceeds either.
+//
+// REQUIREMENTS:
+//   Plugin header : options:gmem=ReaKitYourPluginName
+//   One slider    : sliderN:0<0,16,1{Off,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>Link Group
+//
+// USAGE:
+//   @init:
+//     rk_link_init(group_slider_num, total_sliders, freemem);
+//     freemem += 64;
+//     rk_link_exclude(n);        // optional: skip slider n from sync
+//
+//   @slider:
+//     rk_link_on_slider();
+//
+//   @gfx:
+//     rk_link_key = gfx_getchar();  // feeds Esc-to-close (replaces bare call)
+//     // ... mouse globals: mx,my,LMB,lmb_down[,rmb_down] ...
+//     rk_link_menu_gate();       // AFTER edge computation, BEFORE widgets
+//     rk_link_pull() ? ( recalc_dsp(); );
+//     // ... knob interact, slider changes ...
+//     rk_link_on_gfx_change();   // call after any GUI-driven slider change
+//     rk_link_draw_gear(x, y, r, ar, ag, ab, mx, my, lmb_down);
+//     rk_link_draw_badge(x, y, sz, ar, ag, ab, mx, my, lmb_down);
+//     rk_link_draw_menu(mx, my, sc, ar, ag, ab, mx, my, lmb_down); // LAST
+//
+//   @serialize:
+//     (nothing — group membership lives in the group slider; host saves it)
+//
+// ═══════════════════════════════════════════════════════════════════
+
+@init
+
+function rk_link_init(group_slider_, num_sliders_, mem_base)
+(
+  rk_link_group_slider = group_slider_;
+  rk_link_num_sliders  = num_sliders_;
+  rk_link_base         = 0;   // gmem offset for group blocks; rk_link_set_base() relocates
+  rk_link_group        = 0;
+
+  // Local memory: 64 slots from mem_base (caller does freemem += 64 after)
+  rk_link_prev = mem_base;       // [0..35]  previous slider values
+  rk_link_excl = mem_base + 36;  // [36..63] exclusion flags (sliders 1..27)
+
+  memset(mem_base, 0, 64);
+
+  // Sync cap: bounded by the prev[] partition (35 sliders)
+  rk_link_sync_max = min(rk_link_num_sliders, 35);
+
+  rk_link_last_ps_counter = 0;
+  rk_link_last_ql_counter = 0;
+
+  // Baseline snapshot: current sliders become the "agreed" state
+  i = 1;
+  loop(rk_link_sync_max,
+    rk_link_prev[i] = slider(i);
+    i += 1;
+  );
+
+  // UI state
+  rk_menu_open = 0;
+  rk_menu_just_opened = 0;  // guard: skip close-on-outside on open frame
+  rk_menu_from_badge = 0;   // 1 if menu was opened by badge right-click
+  rk_badge_menu_x = 0;
+  rk_badge_menu_y = 0;
+  rk_gear_ht = 0;           // gear hover animation  0..1
+  rk_badge_ht = 0;          // badge hover animation 0..1
+  rk_menu_anim = 0;         // menu open/close fade  0..1
+  rk_link_gate_on = 0;      // 1 while rk_link_menu_gate has zeroed the edges
+  rk_link_raw_lmb = 0;      // stashed lmb_down edge (menu reads this)
+  rk_link_raw_rmb = 0;      // stashed rmb_down edge
+  rk_link_key = 0;          // last gfx_getchar() code (Esc close)
+  rk_link_dt = 0;           // lib-clocked frame delta (see rk_link_menu_gate)
+  rk_link_dt_t = time_precise();
+);
+
+
+// Exclude a slider from group sync (call after rk_link_init)
+// Cap 27 = excl[] partition of the 64-slot local block (see header).
+function rk_link_exclude(slider_num)
+(
+  slider_num >= 1 && slider_num <= 27 ? (
+    rk_link_excl[slider_num] = 1;
+  );
+);
+
+
+// GMem slot for slider i — sliders 33+ hop over the metadata block at
+// [base+33 .. base+37] so the deployed layout stays valid for sliders 1..32.
+function rk_link_slot(i) ( i <= 32 ? i : i + 5 );
+
+
+// ── Modal input gate + lib clock ──
+// Call once per frame from @gfx, AFTER the plugin computes its click-edge
+// globals (lmb_down / rmb_down) and BEFORE the first interactive widget.
+// While the options menu is open it stashes the edges and zeroes the
+// globals, so widgets under the menu never fire. Levels (LMB/RMB) and
+// mouse_wheel are deliberately untouched: plugins advance prev_LMB = LMB
+// at end of frame (zeroing the level would fake a click on close), the
+// wheel idiom is prev_wheel deltas (zeroing mouse_wheel would fake a huge
+// reverse scroll), and in-flight knob drags hold on the level. Drags
+// cannot START while gated — starts need an edge.
+// Also self-clocks rk_link_dt from time_precise() for lib animation
+// (plugin dt conventions vary; one plugin has none) and closes the menu
+// on Esc via rk_link_key (fed by the plugin's gfx_getchar call).
+function rk_link_menu_gate()
+  local(t)
+(
+  t = time_precise();
+  rk_link_dt = min(max(t - rk_link_dt_t, 0.001), 0.05);
+  rk_link_dt_t = t;
+
+  // Embedded: no menu, no gate. Bit test, NOT != 0 (idle bit 2 coexists).
+  (gfx_ext_flags & 1) ? (
+    rk_menu_open = 0;
+    rk_link_gate_on = 0;
+  ) : (
+    // Esc closes (floating only; keyboard never reaches embedded UIs)
+    rk_menu_open && rk_link_key == 27 ? (
+      rk_menu_open = 0;
+      rk_menu_from_badge = 0;
+    );
+
+    rk_menu_open ? (
+      rk_link_gate_on = 1;
+      rk_link_raw_lmb = lmb_down;
+      rk_link_raw_rmb = rmb_down;
+      lmb_down = 0;
+      rmb_down = 0;
+      frame_wheel = 0;
+    ) : (
+      rk_link_gate_on = 0;
+      rk_link_raw_lmb = lmb_down;
+      rk_link_raw_rmb = rmb_down;
+    );
+  );
+);
+
+
+// Filled rounded rect: cross of 3 rects + 4 AA corner discs.
+// gfx_roundrect is outline-only in JSFX — use it for borders, this for fills.
+function rk_link_fill_rrect(x, y, w, h, r)
+(
+  r <= 0.75 ? (
+    gfx_rect(x, y, w, h);
+  ) : (
+    gfx_rect(x + r, y, w - 2*r, h);
+    gfx_rect(x, y + r, r, h - 2*r);
+    gfx_rect(x + w - r, y + r, r, h - 2*r);
+    gfx_circle(x + r, y + r, r, 1, 1);
+    gfx_circle(x + w - r - 1, y + r, r, 1, 1);
+    gfx_circle(x + r, y + h - r - 1, r, 1, 1);
+    gfx_circle(x + w - r - 1, y + h - r - 1, r, 1, 1);
+  );
+);
+
+
+// Relocate the group-block gmem region (call after rk_link_init). Lets a plugin
+// share a host gmem namespace (e.g. Swing_Media_Transfer, for the One-Rack
+// theme) without colliding with that namespace's reserved low slots. The region
+// spans [gmem_base .. gmem_base+1027]. Default base = 0 (legacy / own namespace).
+function rk_link_set_base(gmem_base)
+(
+  rk_link_base = gmem_base;
+);
+
+
+// ── PUSH (internal): write locally-changed sliders to gmem ──
+// Old-value comparison: slider(i) != rk_link_prev[i] means we changed it.
+function _rk_link_push()
+  local(g, base, i)
+(
+  g = slider(rk_link_group_slider) | 0;
+  g >= 1 && g <= 16 ? (
+    base = rk_link_base + (g - 1) * 64;
+    i = 1;
+    loop(rk_link_sync_max,
+      i != rk_link_group_slider && !rk_link_excl[i] ? (
+        slider(i) != rk_link_prev[i] ? (
+          gmem[base + rk_link_slot(i)] = slider(i);
+          rk_link_prev[i] = slider(i);
+        );
+      );
+      i += 1;
+    );
+    gmem[base + 33] = 1;  // mark group alive
+  );
+);
+
+
+// Call from @slider — handles host automation and preset loads
+function rk_link_on_slider()
+(
+  _rk_link_push();
+);
+
+
+// Call after GUI-driven slider changes in @gfx
+function rk_link_on_gfx_change()
+(
+  _rk_link_push();
+);
+
+
+// ── SYNC: push local changes and pull remote changes ──
+// Call from @gfx every frame. Returns 1 if any slider was updated from
+// gmem (use as signal to call recalc_dsp).
+//
+// Tukan old-value logic per slider i:
+//   rk_link_prev[i] == slider(i) → we haven't touched it → pull if gmem differs
+//   rk_link_prev[i] != slider(i) → we changed it         → push to gmem
+function rk_link_pull()
+  local(g, base, i, updated, ps_counter, ql_counter)
+(
+  g = slider(rk_link_group_slider) | 0;
+  rk_link_group = g;
+  updated = 0;
+
+  g >= 1 && g <= 16 ? (
+    base = rk_link_base + (g - 1) * 64;
+    gmem[base + 33] = 1;  // keep alive flag set
+    gmem[base + 63] = time_precise();  // member heartbeat (menu occupancy dots)
+
+    // ── Slider sync (old-value) ──────────────────────────────
+    i = 1;
+    loop(rk_link_sync_max,
+      i != rk_link_group_slider && !rk_link_excl[i] ? (
+        rk_link_prev[i] == slider(i) ? (
+          // Locally unchanged — pull if remote differs
+          gmem[base + rk_link_slot(i)] != slider(i) ? (
+            slider(i) = gmem[base + rk_link_slot(i)];
+            rk_link_prev[i] = slider(i);
+            slider_automate(slider(i));
+            updated = 1;
+          );
+        ) : (
+          // Locally changed — push to gmem
+          gmem[base + rk_link_slot(i)] = slider(i);
+          rk_link_prev[i] = slider(i);
+        );
+      );
+      i += 1;
+    );
+
+    // ── Play-state sync (counter-based, UI-driven only) ──────
+    ps_counter = gmem[base + 37];
+    ps_counter != rk_link_last_ps_counter ? (
+      rk_ps_en_play = gmem[base + 34];
+      rk_ps_en_rec  = gmem[base + 35];
+      rk_ps_en_stop = gmem[base + 36];
+      rk_link_last_ps_counter = ps_counter;
+    );
+
+    // ── Quick-link (force/reset broadcast) ───────────────────
+    ql_counter = gmem[rk_link_base + 1027];
+    ql_counter != rk_link_last_ql_counter ? (
+      gmem[rk_link_base + 1026] == 2 ? (
+        i = gmem[rk_link_base + 1024] | 0;
+        i >= 1 && i <= rk_link_sync_max &&
+        i != rk_link_group_slider && !rk_link_excl[i] ? (
+          slider(i) = gmem[rk_link_base + 1025];
+          slider_automate(slider(i));
+          rk_link_prev[i] = slider(i);
+          // Write through to group so other instances see it
+          gmem[base + rk_link_slot(i)] = slider(i);
+          updated = 1;
+        );
+      );
+      rk_link_last_ql_counter = ql_counter;
+    );
+
+  ) : (
+    // Not in a group — keep prev current so first join-push is clean
+    i = 1;
+    loop(rk_link_sync_max,
+      rk_link_prev[i] = slider(i);
+      i += 1;
+    );
+  );
+
+  updated;
+);
+
+
+// ── JOIN: adopt group state or seed it ──
+// Called when user selects a new group via badge or menu.
+function rk_link_join_group()
+  local(g, base, i)
+(
+  g = slider(rk_link_group_slider) | 0;
+
+  g >= 1 && g <= 16 ? (
+    base = rk_link_base + (g - 1) * 64;
+
+    gmem[base + 33] == 1 ? (
+      // Group is live — adopt its values and play-state
+      i = 1;
+      loop(rk_link_sync_max,
+        i != rk_link_group_slider && !rk_link_excl[i] ? (
+          slider(i) = gmem[base + rk_link_slot(i)];
+          slider_automate(slider(i));
+          rk_link_prev[i] = slider(i);
+        );
+        i += 1;
+      );
+
+      rk_ps_en_play = gmem[base + 34];
+      rk_ps_en_rec  = gmem[base + 35];
+      rk_ps_en_stop = gmem[base + 36];
+      rk_link_last_ps_counter = gmem[base + 37];
+
+    ) : (
+      // Group is empty — seed it with our current values
+      i = 1;
+      loop(rk_link_sync_max,
+        i != rk_link_group_slider && !rk_link_excl[i] ? (
+          gmem[base + rk_link_slot(i)] = slider(i);
+          rk_link_prev[i] = slider(i);
+        );
+        i += 1;
+      );
+      gmem[base + 33] = 1;
+
+      gmem[base + 34] = rk_ps_en_play;
+      gmem[base + 35] = rk_ps_en_rec;
+      gmem[base + 36] = rk_ps_en_stop;
+      gmem[base + 37] = 0;
+      rk_link_last_ps_counter = 0;
+    );
+  );
+);
+
+
+// ── Quick-link: broadcast a reset-to-default across the group ──
+// Call from a knob double-click handler when the plugin is in a group.
+function rk_link_quick_reset(slider_num, default_val)
+  local(g, base)
+(
+  g = slider(rk_link_group_slider) | 0;
+  g >= 1 && g <= 16 ? (
+    gmem[rk_link_base + 1024] = slider_num;
+    gmem[rk_link_base + 1025] = default_val;
+    gmem[rk_link_base + 1026] = 2;   // force/reset mode
+    gmem[rk_link_base + 1027] += 1;
+    rk_link_last_ql_counter = gmem[rk_link_base + 1027];
+
+    // Apply locally and write to group block so other instances pull it
+    base = rk_link_base + (g - 1) * 64;
+    gmem[base + rk_link_slot(slider_num)] = default_val;
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  GUI: Gear Icon, Link Badge, Options Menu
+//  Per-group color system (v3): each group 1-16 has a fixed color from
+//  the EON link palette (rk_link_group_color, below).
+//  Group color drives badge fill, gear glow, and menu cell highlights.
+//  Plugin accent color (ar,ag,ab) is used only for the gear icon when
+//  no group is active and for the ACTIVE playstate pills.
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Per-group color lookup ──
+// Sets globals rk_gc_r, rk_gc_g, rk_gc_b to the color for group g.
+// Group 0 (off) → neutral dim (0.35, 0.35, 0.38).
+// EON link palette: eight hues in two strengths, one strength per menu
+// row, so each column of the 2x8 group menu is one hue. The hues are
+// Tone's six band colours (red, orange, green, teal, blue, violet: the
+// same values as rk_curve_band_rgb in rk_curve.jsfx-inc -- keep in step)
+// with yellow and magenta filling the two widest gaps between them.
+// Groups 9-16 are the same eight lifted 42% toward white. Every fill
+// carries the badge's black number.
+function rk_link_group_color(g)
+(
+  g == 1  ? ( rk_gc_r = 0.92; rk_gc_g = 0.30; rk_gc_b = 0.30; ) :  // red
+  g == 2  ? ( rk_gc_r = 0.96; rk_gc_g = 0.60; rk_gc_b = 0.18; ) :  // orange
+  g == 3  ? ( rk_gc_r = 0.92; rk_gc_g = 0.86; rk_gc_b = 0.23; ) :  // yellow
+  g == 4  ? ( rk_gc_r = 0.38; rk_gc_g = 0.86; rk_gc_b = 0.36; ) :  // green
+  g == 5  ? ( rk_gc_r = 0.22; rk_gc_g = 0.82; rk_gc_b = 0.70; ) :  // teal
+  g == 6  ? ( rk_gc_r = 0.30; rk_gc_g = 0.66; rk_gc_b = 0.96; ) :  // blue
+  g == 7  ? ( rk_gc_r = 0.68; rk_gc_g = 0.44; rk_gc_b = 0.96; ) :  // violet
+  g == 8  ? ( rk_gc_r = 0.83; rk_gc_g = 0.37; rk_gc_b = 0.67; ) :  // magenta
+  g == 9  ? ( rk_gc_r = 0.95; rk_gc_g = 0.59; rk_gc_b = 0.59; ) :  // light red
+  g == 10 ? ( rk_gc_r = 0.98; rk_gc_g = 0.77; rk_gc_b = 0.52; ) :  // light orange
+  g == 11 ? ( rk_gc_r = 0.95; rk_gc_g = 0.92; rk_gc_b = 0.55; ) :  // light yellow
+  g == 12 ? ( rk_gc_r = 0.64; rk_gc_g = 0.92; rk_gc_b = 0.63; ) :  // light green
+  g == 13 ? ( rk_gc_r = 0.55; rk_gc_g = 0.90; rk_gc_b = 0.83; ) :  // light teal
+  g == 14 ? ( rk_gc_r = 0.59; rk_gc_g = 0.80; rk_gc_b = 0.98; ) :  // light blue
+  g == 15 ? ( rk_gc_r = 0.81; rk_gc_g = 0.68; rk_gc_b = 0.98; ) :  // light violet
+  g == 16 ? ( rk_gc_r = 0.90; rk_gc_g = 0.63; rk_gc_b = 0.81; ) :  // light magenta
+  (          rk_gc_r = 0.350; rk_gc_g = 0.350; rk_gc_b = 0.380; );    // off/neutral
+);
+
+
+// ── Gear glyph (vector-drawn, 6 teeth) ──
+// cx,cy = center; r = outer radius; ht = hover 0..1; ar,ag,ab = accent
+function rk_link_draw_gear_glyph(cx, cy, r, ht, ar, ag, ab)
+  local(i, a, inner, outer, tw, t1a, t2a, t1x, t1y, t2x, t2y,
+        ox, oy, ix, iy, base_a)
+(
+  inner = r * 0.52;
+  outer = r * 0.92;
+  tw = 0.28;  // tooth half-width in radians
+
+  base_a = ht > 0.01 ? 0.85 : 0.45;
+  gfx_set(ar * 0.7, ag * 0.7, ab * 0.7, base_a);
+  i = 0;
+  loop(6,
+    a = i * $pi / 3;
+    t1a = a - tw; t2a = a + tw;
+    t1x = cx + cos(t1a) * outer; t1y = cy + sin(t1a) * outer;
+    t2x = cx + cos(t2a) * outer; t2y = cy + sin(t2a) * outer;
+    ox = cx + cos(t1a) * inner;  oy = cy + sin(t1a) * inner;
+    ix = cx + cos(t2a) * inner;  iy = cy + sin(t2a) * inner;
+    gfx_triangle(t1x, t1y, t2x, t2y, ox, oy);
+    gfx_triangle(t2x, t2y, ox, oy, ix, iy);
+    i += 1;
+  );
+
+  gfx_set(ar * 0.6, ag * 0.6, ab * 0.6, base_a);
+  gfx_circle(cx, cy, inner + 1, 1, 1);
+
+  gfx_set(0.08, 0.08, 0.10, 1);
+  gfx_circle(cx, cy, r * 0.24, 1, 1);
+
+  ht > 0.01 ? (
+    gfx_set(ar, ag, ab, 0.15 * ht);
+    gfx_circle(cx, cy, r + 2, 0, 1);
+    gfx_circle(cx, cy, r + 3, 0, 1);
+  );
+);
+
+
+// ── Gear button: interact + draw ──
+// When in a group the gear glow uses that group's color; otherwise
+// it uses the plugin accent (ar,ag,ab).
+// Returns 1 if menu was toggled this frame.
+function rk_link_draw_gear(gx, gy, gr, ar, ag, ab, _mx, _my, _lmb)
+  local(hov, clicked, g, cr, cg, cb)
+(
+  hov = ((_mx - gx) * (_mx - gx) + (_my - gy) * (_my - gy)) <= (gr + 3) * (gr + 3);
+  // dt-based ramp (hv_speed 11); 1/60 fallback for gate-less importers
+  rk_gear_ht = hov ? min(rk_gear_ht + (rk_link_dt > 0 ? rk_link_dt : 1/60) * 11, 1)
+                   : max(rk_gear_ht - (rk_link_dt > 0 ? rk_link_dt : 1/60) * 11, 0);
+  clicked = 0;
+
+  _lmb && hov ? (
+    rk_menu_open = !rk_menu_open;
+    rk_menu_from_badge = 0;
+    rk_menu_open ? rk_menu_just_opened = 1;
+    clicked = 1;
+  );
+
+  // Resolve draw color: group color when active, plugin accent when off
+  g = slider(rk_link_group_slider) | 0;
+  g >= 1 ? (
+    rk_link_group_color(g);
+    cr = rk_gc_r; cg = rk_gc_g; cb = rk_gc_b;
+  ) : (
+    cr = ar; cg = ag; cb = ab;
+  );
+
+  rk_menu_open ? (
+    rk_link_draw_gear_glyph(gx, gy, gr, 1.0, cr, cg, cb);
+  ) : (
+    rk_link_draw_gear_glyph(gx, gy, gr, rk_gear_ht, cr, cg, cb);
+  );
+
+  clicked;
+);
+
+
+// ── Link badge: small colored dot showing current group ──
+// bx,by = top-left corner; sz = diameter.
+// Left-click  → cycle groups 0→1→…→16→0
+// Right-click → open options menu at badge position
+// Badge fill color is the group's fixed hue (not plugin accent).
+function rk_link_draw_badge(bx, by, sz, ar, ag, ab, _mx, _my, _lmb)
+  local(cx, cy, r, hov, g, new_g, tw, th)
+(
+  g = slider(rk_link_group_slider) | 0;
+  cx = bx + sz / 2;
+  cy = by + sz / 2;
+  r  = sz / 2;
+
+  hov = ((_mx - cx) * (_mx - cx) + (_my - cy) * (_my - cy)) <= (r + 2) * (r + 2);
+  rk_badge_ht = hov ? min(rk_badge_ht + (rk_link_dt > 0 ? rk_link_dt : 1/60) * 11, 1)
+                    : max(rk_badge_ht - (rk_link_dt > 0 ? rk_link_dt : 1/60) * 11, 0);
+
+  new_g = g;
+
+  // Left-click: cycle groups
+  _lmb && hov && !rk_menu_open ? (
+    new_g = (g + 1) % 17;
+    slider(rk_link_group_slider) = new_g;
+    slider_automate(slider(rk_link_group_slider));
+    rk_link_join_group();
+  );
+
+  // Right-click: open menu at badge (floating mode only).
+  // Bit test, NOT == 0: idle bit 2 would break a strict-equality check.
+  // Read the stashed raw edge while the gate is engaged (menu open).
+  (rk_link_gate_on ? rk_link_raw_rmb : rmb_down) && hov && !(gfx_ext_flags & 1) ? (
+    rk_menu_open = !rk_menu_open;
+    rk_menu_open ? (
+      rk_menu_from_badge = 1;
+      rk_badge_menu_x = bx;  // raw anchor; the menu computes its own offset
+      rk_badge_menu_y = by + sz + 4;
+      rk_menu_just_opened = 1;
+    );
+  );
+
+  g > 0 ? (
+    // Active: filled circle in group color
+    rk_link_group_color(g);
+    gfx_set(rk_gc_r, rk_gc_g, rk_gc_b, 0.90);
+    gfx_circle(cx, cy, r, 1, 1);
+    // Hover ring: brighter edge
+    hov ? (
+      gfx_set(rk_gc_r, rk_gc_g, rk_gc_b, 0.40);
+      gfx_circle(cx, cy, r + 1, 0, 1);
+    );
+    // Number — dark text for legibility on bright fills
+    gfx_set(0.0, 0.0, 0.0, 1);
+    g < 10 ? (
+      gfx_setfont(1, "Arial", max(7, floor(sz * 0.65)), 'b');
+      gfx_measurestr("0", tw, th);
+      gfx_x = cx - tw / 2; gfx_y = cy - th / 2;
+      gfx_drawnumber(g, 0);
+    ) : (
+      gfx_setfont(1, "Arial", max(6, floor(sz * 0.50)), 'b');
+      sprintf(#rk_badge_num, "%d", g);
+      gfx_measurestr(#rk_badge_num, tw, th);
+      gfx_x = cx - tw / 2; gfx_y = cy - th / 2;
+      gfx_drawstr(#rk_badge_num);
+    );
+  ) : (
+    // Off: dim outline dot, brightens on hover
+    gfx_set(0.35, 0.35, 0.38, 0.4 + 0.3 * rk_badge_ht);
+    gfx_circle(cx, cy, r, 0, 1);
+    hov ? (
+      gfx_set(0.5, 0.5, 0.52, 0.5);
+      gfx_circle(cx, cy, r - 1, 0, 1);
+    );
+  );
+
+  new_g;
+);
+
+
+// ── Options menu overlay ──
+// Call LAST in @gfx. Returns bitmask: 1 = group changed, 2 = playstate toggled.
+//
+// Layout (at sc = 1): 216x118 rounded panel + drop shadow. Header row
+// ("LINK GROUP" + OFF pill), two rows of 8 group cells with occupancy
+// dots (heartbeat at gmem[base+63], stamped by member GUIs), separator,
+// ACTIVE play-state pill row. Opens/closes with a ~125ms dt-driven fade.
+// While open, rk_link_menu_gate() zeroes the plugin's click edges; the
+// menu reads the stashed raws, so clicks never leak to widgets beneath.
+//
+// Group cell coloring:
+//   Active cell  : group color fill (dim) + left bar, group color text
+//   Hovered cell : group color fill (very dim), tinted text
+//   Idle cell    : no fill, dim color-tinted text
+// Menu border reflects the active group color (or plugin accent if off).
+function rk_link_draw_menu(menu_x, menu_y, sc, ar, ag, ab, _mx, _my, _lmb)
+  local(mw, mh, pad, rr, gap, i, cell_w, cell_x, cell_y, use_l, use_r, a,
+        hov, g, changed, tw, th, pill_w, pill_h, pill_x,
+        pill_gap, ps_y, py, inside, off_w, off_h, off_x, off_y,
+        grp_y, grp2_y, title_font, font_sz, base, stamp, dot_r)
+(
+  // Never render in embedded mode — panel is too small and W/H may be stale.
+  // Bit test, NOT != 0: bit 2 (idle context, options:gfx_idle) coexists with
+  // floating mode and would false-positive a truthiness test (research:
+  // _refs/jsfx_embedded_gui_research_v3.md §4).
+  (gfx_ext_flags & 1) ? ( changed = 0; ) : (
+
+  changed = 0;
+
+  // Effective click edges: stashed raws while the gate is engaged.
+  // Gate-less callers (no rk_link_menu_gate) behave exactly as before.
+  use_l = rk_link_gate_on ? rk_link_raw_lmb : _lmb;
+  use_r = rk_link_gate_on ? rk_link_raw_rmb : rmb_down;
+
+  // Open/close fade (~125 ms); 1/60 fallback for gate-less importers
+  rk_menu_open ? (
+    rk_menu_anim = min(rk_menu_anim + (rk_link_dt > 0 ? rk_link_dt : 1/60) * 8, 1);
+  ) : (
+    rk_menu_anim = max(rk_menu_anim - (rk_link_dt > 0 ? rk_link_dt : 1/60) * 8, 0);
+  );
+
+  rk_menu_open || rk_menu_anim > 0.02 ? (
+    a = rk_menu_anim;
+    mw = floor(216 * sc);
+    mh = floor(118 * sc);
+    pad = floor(8 * sc);
+    rr = floor(4 * sc);
+    gap = max(1, floor(sc));
+    font_sz = max(8, floor(10 * sc));
+    title_font = max(7, floor(8 * sc));
+
+    rk_menu_from_badge ? (
+      menu_x = rk_badge_menu_x - mw + floor(10 * sc);
+      menu_y = rk_badge_menu_y;
+    );
+
+    // 4px viewport clamp (house popup standard), then settle-in drift
+    menu_x = min(menu_x, gfx_w - mw - 4);
+    menu_x = max(menu_x, 4);
+    menu_y = min(menu_y, gfx_h - mh - 4);
+    menu_y = max(menu_y, 4);
+    menu_y -= floor((1 - a) * 4 * sc);
+
+    inside = (_mx >= menu_x && _mx <= menu_x + mw &&
+              _my >= menu_y && _my <= menu_y + mh);
+    rk_menu_just_opened ? (
+      rk_menu_just_opened = 0;
+    ) : (
+      (use_l || use_r) && !inside && rk_menu_open ? (
+        rk_menu_open = 0;
+        rk_menu_from_badge = 0;
+      );
+    );
+
+    // Shadow + panel (filled round-rects)
+    gfx_set(0, 0, 0, 0.45 * a);
+    rk_link_fill_rrect(menu_x + 2, menu_y + 2, mw, mh, rr);
+    gfx_set(0.05, 0.05, 0.07, 0.96 * a);
+    rk_link_fill_rrect(menu_x, menu_y, mw, mh, rr);
+
+    // Border: group color when active, plugin accent when off
+    g = slider(rk_link_group_slider) | 0;
+    g >= 1 ? (
+      rk_link_group_color(g);
+      gfx_set(rk_gc_r * 0.45, rk_gc_g * 0.45, rk_gc_b * 0.45, 0.7 * a);
+    ) : (
+      gfx_set(ar * 0.4, ag * 0.4, ab * 0.4, 0.6 * a);
+    );
+    gfx_roundrect(menu_x, menu_y, mw - 1, mh - 1, rr, 1);
+
+    // ── Header: LINK GROUP + OFF pill ─────────────────────────
+    gfx_set(0.55, 0.55, 0.58, a);
+    gfx_setfont(1, "Arial", title_font, 'b');
+    gfx_x = menu_x + pad; gfx_y = menu_y + pad;
+    gfx_drawstr("LINK GROUP");
+
+    off_w = floor(30 * sc); off_h = floor(16 * sc);
+    off_x = menu_x + mw - pad - off_w;
+    off_y = menu_y + floor(6 * sc);
+    hov = (_mx >= off_x && _mx < off_x + off_w &&
+           _my >= off_y && _my < off_y + off_h);
+    g == 0 ? (
+      gfx_set(0.28, 0.28, 0.30, 0.9 * a);
+      rk_link_fill_rrect(off_x, off_y, off_w, off_h, floor(3 * sc));
+      gfx_set(0.80, 0.80, 0.82, a);
+    ) : hov ? (
+      gfx_set(0.18, 0.18, 0.22, 0.6 * a);
+      rk_link_fill_rrect(off_x, off_y, off_w, off_h, floor(3 * sc));
+      gfx_set(0.65, 0.65, 0.68, a);
+    ) : (
+      gfx_set(0.11, 0.11, 0.14, 0.6 * a);
+      rk_link_fill_rrect(off_x, off_y, off_w, off_h, floor(3 * sc));
+      gfx_set(0.42, 0.42, 0.45, a);
+    );
+    gfx_measurestr("OFF", tw, th);
+    gfx_x = off_x + (off_w - tw) / 2;
+    gfx_y = off_y + (off_h - th) / 2;
+    gfx_drawstr("OFF");
+    use_l && hov && rk_menu_open && g != 0 ? (
+      slider(rk_link_group_slider) = 0;
+      slider_automate(slider(rk_link_group_slider));
+      changed |= 1;
+    );
+
+    cell_w = floor(24 * sc);
+
+    // ── Group cells: two rows of 8, occupancy dots ───────────
+    grp_y  = menu_y + floor(30 * sc);
+    grp2_y = menu_y + floor(55 * sc);
+    dot_r  = max(1, floor(2 * sc));
+    gfx_setfont(1, "Arial", font_sz, 'b');
+
+    i = 1;
+    loop(16,
+      cell_x = menu_x + pad + ((i - 1) % 8) * (cell_w + gap);
+      cell_y = i <= 8 ? grp_y : grp2_y;
+      hov = (_mx >= cell_x && _mx < cell_x + cell_w &&
+             _my >= cell_y && _my < cell_y + cell_w);
+      rk_link_group_color(i);
+      g == i ? (
+        // Active: dim fill in group color + left bar, bright colored text
+        gfx_set(rk_gc_r * 0.22, rk_gc_g * 0.22, rk_gc_b * 0.22, 0.95 * a);
+        gfx_rect(cell_x, cell_y, cell_w, cell_w);
+        gfx_set(rk_gc_r, rk_gc_g, rk_gc_b, 0.90 * a);
+        gfx_rect(cell_x, cell_y, 2, cell_w);
+        gfx_set(rk_gc_r, rk_gc_g, rk_gc_b, a);
+      ) : hov ? (
+        gfx_set(rk_gc_r * 0.10, rk_gc_g * 0.10, rk_gc_b * 0.10, 0.70 * a);
+        gfx_rect(cell_x, cell_y, cell_w, cell_w);
+        gfx_set(rk_gc_r * 0.70, rk_gc_g * 0.70, rk_gc_b * 0.70, a);
+      ) : (
+        // Idle: faint color tint in the text
+        gfx_set(rk_gc_r * 0.55, rk_gc_g * 0.55, rk_gc_b * 0.55, a);
+      );
+      sprintf(#rk_cell_num, "%d", i);
+      gfx_measurestr(#rk_cell_num, tw, th);
+      gfx_x = cell_x + (cell_w - tw) / 2;
+      gfx_y = cell_y + (cell_w - th) / 2;
+      gfx_drawstr(#rk_cell_num);
+
+      // Occupancy dot: a member GUI stamped this group's heartbeat recently
+      stamp = gmem[rk_link_base + (i - 1) * 64 + 63];
+      stamp > 0 && time_precise() - stamp < 1.5 ? (
+        gfx_set(rk_gc_r, rk_gc_g, rk_gc_b, 0.9 * a);
+        gfx_circle(cell_x + cell_w - dot_r - 3, cell_y + dot_r + 3, dot_r, 1, 1);
+      );
+
+      use_l && hov && rk_menu_open && g != i ? (
+        slider(rk_link_group_slider) = i;
+        slider_automate(slider(rk_link_group_slider));
+        rk_link_join_group();
+        changed |= 1;
+      );
+      i += 1;
+    );
+
+    // ── Separator + ACTIVE play-state pills ──────────────────
+    gfx_set(0.22, 0.22, 0.25, 0.5 * a);
+    gfx_line(menu_x + pad, menu_y + floor(85 * sc),
+             menu_x + mw - pad, menu_y + floor(85 * sc));
+
+    ps_y = menu_y + floor(90 * sc);
+    gfx_set(0.50, 0.50, 0.53, a);
+    gfx_setfont(1, "Arial", title_font, 'b');
+    gfx_x = menu_x + pad; gfx_y = ps_y;
+    gfx_drawstr("ACTIVE");
+
+    pill_h = floor(18 * sc);
+    pill_w = floor(44 * sc);
+    pill_gap = floor(5 * sc);
+    pill_x = menu_x + floor(48 * sc);
+    py = ps_y - floor(2 * sc);
+    rr = floor(3 * sc);
+
+    gfx_setfont(1, "Arial", max(7, floor(9 * sc)), 'b');
+
+    // PLAY — uses plugin accent (ar,ag,ab), not group color
+    hov = (_mx >= pill_x && _mx < pill_x + pill_w &&
+           _my >= py && _my < py + pill_h);
+    rk_ps_en_play ? (
+      gfx_set(ar * 0.30, ag * 0.30, ab * 0.30, 0.9 * a);
+      rk_link_fill_rrect(pill_x, py, pill_w, pill_h, rr);
+      gfx_set(ar, ag, ab, a);
+    ) : (
+      hov ? gfx_set(0.20, 0.20, 0.24, 0.6 * a) : gfx_set(0.14, 0.14, 0.18, 0.5 * a);
+      rk_link_fill_rrect(pill_x, py, pill_w, pill_h, rr);
+      gfx_set(0.40, 0.40, 0.42, a);
+    );
+    gfx_measurestr("PLAY", tw, th);
+    gfx_x = pill_x + (pill_w - tw) / 2;
+    gfx_y = py + (pill_h - th) / 2;
+    gfx_drawstr("PLAY");
+    use_l && hov && rk_menu_open ? (
+      rk_ps_en_play = !rk_ps_en_play;
+      g = slider(rk_link_group_slider) | 0;
+      g >= 1 && g <= 16 ? (
+        base = rk_link_base + (g - 1) * 64;
+        gmem[base + 34] = rk_ps_en_play;
+        gmem[base + 37] += 1;
+        rk_link_last_ps_counter = gmem[base + 37];
+      );
+      changed |= 2;
+    );
+    pill_x += pill_w + pill_gap;
+
+    // REC — red regardless of group
+    hov = (_mx >= pill_x && _mx < pill_x + pill_w &&
+           _my >= py && _my < py + pill_h);
+    rk_ps_en_rec ? (
+      gfx_set(0.70, 0.12, 0.10, 0.9 * a);
+      rk_link_fill_rrect(pill_x, py, pill_w, pill_h, rr);
+      gfx_set(1.0, 0.30, 0.25, a);
+    ) : (
+      hov ? gfx_set(0.20, 0.20, 0.24, 0.6 * a) : gfx_set(0.14, 0.14, 0.18, 0.5 * a);
+      rk_link_fill_rrect(pill_x, py, pill_w, pill_h, rr);
+      gfx_set(0.40, 0.40, 0.42, a);
+    );
+    gfx_measurestr("REC", tw, th);
+    gfx_x = pill_x + (pill_w - tw) / 2;
+    gfx_y = py + (pill_h - th) / 2;
+    gfx_drawstr("REC");
+    use_l && hov && rk_menu_open ? (
+      rk_ps_en_rec = !rk_ps_en_rec;
+      g = slider(rk_link_group_slider) | 0;
+      g >= 1 && g <= 16 ? (
+        base = rk_link_base + (g - 1) * 64;
+        gmem[base + 35] = rk_ps_en_rec;
+        gmem[base + 37] += 1;
+        rk_link_last_ps_counter = gmem[base + 37];
+      );
+      changed |= 2;
+    );
+    pill_x += pill_w + pill_gap;
+
+    // STOP — uses plugin accent
+    hov = (_mx >= pill_x && _mx < pill_x + pill_w &&
+           _my >= py && _my < py + pill_h);
+    rk_ps_en_stop ? (
+      gfx_set(ar * 0.30, ag * 0.30, ab * 0.30, 0.9 * a);
+      rk_link_fill_rrect(pill_x, py, pill_w, pill_h, rr);
+      gfx_set(ar, ag, ab, a);
+    ) : (
+      hov ? gfx_set(0.20, 0.20, 0.24, 0.6 * a) : gfx_set(0.14, 0.14, 0.18, 0.5 * a);
+      rk_link_fill_rrect(pill_x, py, pill_w, pill_h, rr);
+      gfx_set(0.40, 0.40, 0.42, a);
+    );
+    gfx_measurestr("STOP", tw, th);
+    gfx_x = pill_x + (pill_w - tw) / 2;
+    gfx_y = py + (pill_h - th) / 2;
+    gfx_drawstr("STOP");
+    use_l && hov && rk_menu_open ? (
+      rk_ps_en_stop = !rk_ps_en_stop;
+      g = slider(rk_link_group_slider) | 0;
+      g >= 1 && g <= 16 ? (
+        base = rk_link_base + (g - 1) * 64;
+        gmem[base + 36] = rk_ps_en_stop;
+        gmem[base + 37] += 1;
+        rk_link_last_ps_counter = gmem[base + 37];
+      );
+      changed |= 2;
+    );
+  );
+
+  ); // end embedded guard
+
+  changed;
+);

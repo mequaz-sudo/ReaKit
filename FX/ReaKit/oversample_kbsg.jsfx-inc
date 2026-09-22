@@ -1,0 +1,93 @@
+// oversample_kbsg.jsfx-inc — Standalone Stereo 2x Oversampling Library
+// Part of the ReaKit framework by EON Studios
+//
+// Self-contained 2x oversampler using 7-tap polyphase halfband FIR.
+// No external dependencies required.
+//
+// Filter: h = [c0, 0, c1, 0.5, c1, 0, c0]
+//   c0 = -1/32 = -0.03125
+//   c1 =  9/32 =  0.28125
+//   ~44dB stopband rejection, unity gain round-trip
+//
+// Latency: 3 samples (report via pdc_delay = 3)
+//
+// Usage:
+//   @init:
+//     pdc_bot_ch = 0; pdc_top_ch = 2; pdc_delay = 3;
+//
+//   @sample:
+//     os.os2_stereo_up(spl0, spl1);
+//     os.y1L = process(os.y1L);  // first pair
+//     os.y1R = process(os.y1R);
+//     os.y0L = process(os.y0L);  // second pair
+//     os.y0R = process(os.y0R);
+//     os.os2_stereo_down();
+//     spl0 = os.outL;
+//     spl1 = os.outR;
+
+@init
+
+// Halfband FIR coefficients (7-tap, sum = 1.0)
+_OS_C0 = -0.03125;   // -1/32
+_OS_C1 =  0.28125;   //  9/32
+// center = 0.5
+// 2*c0 + 2*c1 + 0.5 = -0.0625 + 0.5625 + 0.5 = 1.0
+
+function os2_stereo_reset()
+(
+  // Upsample delay lines (4 per channel)
+  this.ux1L=0; this.ux2L=0; this.ux3L=0; this.ux4L=0;
+  this.ux1R=0; this.ux2R=0; this.ux3R=0; this.ux4R=0;
+  // Downsample y1 history (4 per channel: current + 3 past)
+  this.d1aL=0; this.d1bL=0; this.d1cL=0; this.d1dL=0;
+  this.d1aR=0; this.d1bR=0; this.d1cR=0; this.d1dR=0;
+  // Downsample y0 history (3 per channel: need [n-2])
+  this.d0aL=0; this.d0bL=0; this.d0cL=0;
+  this.d0aR=0; this.d0bR=0; this.d0cR=0;
+  // Outputs
+  this.y1L=0; this.y1R=0; this.y0L=0; this.y0R=0;
+  this.outL=0; this.outR=0;
+);
+
+// ============================================================
+// UPSAMPLE: one input → two output samples per channel
+// y1 = interpolated (at position 2n), process FIRST
+// y0 = direct (at position 2n+1), process SECOND
+// ============================================================
+function os2_stereo_up(inL, inR)
+(
+  // Shift delay lines
+  this.ux4L = this.ux3L; this.ux3L = this.ux2L;
+  this.ux2L = this.ux1L; this.ux1L = inL;
+  this.ux4R = this.ux3R; this.ux3R = this.ux2R;
+  this.ux2R = this.ux1R; this.ux1R = inR;
+
+  // Even position (interpolated): 2*(c0*(x[n]+x[n-3]) + c1*(x[n-1]+x[n-2]))
+  this.y1L = 2 * (_OS_C0 * (this.ux1L + this.ux4L) + _OS_C1 * (this.ux2L + this.ux3L));
+  this.y1R = 2 * (_OS_C0 * (this.ux1R + this.ux4R) + _OS_C1 * (this.ux2R + this.ux3R));
+
+  // Odd position (direct): x[n-1] (centered for alignment)
+  this.y0L = this.ux2L;
+  this.y0R = this.ux2R;
+);
+
+// ============================================================
+// DOWNSAMPLE: two processed samples → one output per channel
+// Must be called AFTER processing y1L/R and y0L/R
+// ============================================================
+function os2_stereo_down()
+(
+  // Shift y1 history (need current + 3 past)
+  this.d1dL = this.d1cL; this.d1cL = this.d1bL;
+  this.d1bL = this.d1aL; this.d1aL = this.y1L;
+  this.d1dR = this.d1cR; this.d1cR = this.d1bR;
+  this.d1bR = this.d1aR; this.d1aR = this.y1R;
+
+  // Shift y0 history (need [n-2])
+  this.d0cL = this.d0bL; this.d0bL = this.d0aL; this.d0aL = this.y0L;
+  this.d0cR = this.d0bR; this.d0bR = this.d0aR; this.d0aR = this.y0R;
+
+  // out = c0*(y1[n] + y1[n-3]) + c1*(y1[n-1] + y1[n-2]) + 0.5*y0[n-2]
+  this.outL = _OS_C0 * (this.d1aL + this.d1dL) + _OS_C1 * (this.d1bL + this.d1cL) + 0.5 * this.d0cL;
+  this.outR = _OS_C0 * (this.d1aR + this.d1dR) + _OS_C1 * (this.d1bR + this.d1cR) + 0.5 * this.d0cR;
+);

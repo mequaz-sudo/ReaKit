@@ -2335,29 +2335,37 @@ local(ht, cap_a, val_rad, capr, i, fa, fw, px, py, ox, oy,
 
 function rk_knob_draw(style, cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
                       cr, cg, cb, n_det, bgr, bgg, bgb)
+local(_h, _r)
 (
+  // Hover level, chosen by the host through the global rk_hover_mode. Unset
+  // reads 0 in EEL2 and 0 is Normal, so a plugin that never sets it draws as
+  // before. 1 = None (the knob rests), 2 = Moderate (half the reach of every
+  // style's own response), 3 = Dramatic (the full response, and the whole knob
+  // grows 8%). The hit area stays the caller's radius whatever the level.
+  _h = rk_hover_mode == 1 ? 0 : rk_hover_mode == 2 ? hover_t * 0.5 : hover_t;
+  _r = rk_hover_mode == 3 ? radius * (1 + 0.08 * hover_t) : radius;
   // Every style now takes real units; nothing is pre-normalised here any more.
-  style == 2  ? varimu_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 3  ? api_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb) :
-  style == 4  ? ws_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 5  ? neve_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb, n_det) :
-  style == 6  ? jo_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 7  ? mpc_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 8  ? jog_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 9  ? rainbow_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
-  style == 10 ? sp_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, is_sym, cr, cg, cb, bgr, bgg, bgb) :
-  style == 12 ? pultec_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
-  style == 13 ? ableton_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 14 ? fl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 15 ? pt_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 11 ? encoder_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 16 ? fabfilter_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 17 ? serum_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 18 ? roland_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 19 ? pultec_cream_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
-  style == 20 ? neve_alt_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb, n_det) :
-  style == 21 ? sslg_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, n_det) :
-                ssl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, n_det);
+  style == 2  ? varimu_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb) :
+  style == 3  ? api_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb) :
+  style == 4  ? ws_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 5  ? neve_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb, n_det) :
+  style == 6  ? jo_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb) :
+  style == 7  ? mpc_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 8  ? jog_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb) :
+  style == 9  ? rainbow_knob_draw(cx, cy, _r, value, vmin, vmax, _h) :
+  style == 10 ? sp_knob_draw(cx, cy, _r, value, vmin, vmax, _h, is_sym, cr, cg, cb, bgr, bgg, bgb) :
+  style == 12 ? pultec_knob_draw(cx, cy, _r, value, vmin, vmax, _h) :
+  style == 13 ? ableton_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 14 ? fl_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 15 ? pt_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 11 ? encoder_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb) :
+  style == 16 ? fabfilter_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 17 ? serum_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 18 ? roland_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 19 ? pultec_cream_knob_draw(cx, cy, _r, value, vmin, vmax, _h) :
+  style == 20 ? neve_alt_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb, n_det) :
+  style == 21 ? sslg_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, n_det) :
+                ssl_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, n_det);
 );
 
 // Uniform interaction for every style (visual dispatch only — see above).

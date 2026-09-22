@@ -137,6 +137,8 @@ gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below
 freemem = 0;      // rk_vu claims no memory
 KS = 16;
 km = freemem; freemem += 20 * KS;   // 16 words/knob
+hvsb = freemem; freemem += 8;       // HOVER level segment bar (Knobs tab)
+hv_level = 2;                       // None · Moderate · NORMAL · Dramatic
 btnmem = freemem; freemem += 11 * 8;   // 8 words/button-family (10 demo styles + nav tab bar)
 sldmem = freemem; freemem += 16 * 16;  // 16 words/slider
 pgdmem_0 = freemem; freemem += 17;     // pad grid: 16 hover ramps + the held pad
@@ -308,6 +310,21 @@ slider1 == 0 ? (
 
 // KNOBS — all 20 styles (select one · scroll to change) (label)
 gfx_setfont(1,"Arial",max(9,floor(11*sc)),'b'); gfx_set(0.72,0.74,0.80); gfx_x=ox+sc*14; gfx_y=sc*56; gfx_drawstr("KNOBS — all 20 styles (select one · scroll to change)");
+
+// HOVER — how strongly every knob answers the mouse. This sets the library's
+// rk_hover_mode, which rk_knob_draw reads for all 20 styles here and for the
+// knobs on every other tab. In the library 0 (unset) is Normal, so a plugin
+// that never sets it draws as it always did; the bar shows the levels in the
+// order you would choose them: None · Moderate · Normal · Dramatic.
+hv_level = btn_segment_interact(hvsb, ox+sc*244, sc*229, sc*60, sc*22, 4, sc*4, hv_level);
+rk_hover_mode = hv_level == 0 ? 1 : hv_level == 1 ? 2 : hv_level == 2 ? 0 : 3;
+gfx_setfont(1,"Arial",max(8,floor(10*sc)),'b'); gfx_set(0.55,0.58,0.64);
+gfx_measurestr("HOVER",_tw,_th); gfx_x=ox+sc*236-_tw; gfx_y=sc*229+(sc*22-_th)*0.5; gfx_drawstr("HOVER");
+gfx_setfont(1,"Arial",max(8,floor(9*sc)),'b');
+btn_segment_draw(ox+sc*244, sc*229, sc*60, sc*22, 0, hv_level, "NONE",     hvsb[0], 0.29,0.62,1.00);
+btn_segment_draw(ox+sc*308, sc*229, sc*60, sc*22, 1, hv_level, "MODERATE", hvsb[0], 0.29,0.62,1.00);
+btn_segment_draw(ox+sc*372, sc*229, sc*60, sc*22, 2, hv_level, "NORMAL",   hvsb[0], 0.29,0.62,1.00);
+btn_segment_draw(ox+sc*436, sc*229, sc*60, sc*22, 3, hv_level, "DRAMATIC", hvsb[0], 0.29,0.62,1.00);
 
 // SSL (knob / ssl)
 m = km + 0*KS;

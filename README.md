@@ -59,6 +59,10 @@ draws them, so the same widget serves an EQ, a filter sweep or a compressor
 knee. It writes nothing back either — it reports where a dragged node wants to
 be and you clamp and automate, which is what lets it leave the plugin it was
 written for.
+Since 1.6.0 every band wears its own colour, fill and outline, with the summed
+curve in white over them, and one switch picks how a band and a node are shown
+(fill, lines, both; ring, dot, badge). The showcase's Curve tab has the
+selectors under the graph.
 **Dropdown** (rk_popup) — a menu that draws itself instead of handing the list
 to `gfx_showmenu`, so it looks like your plugin rather than the operating
 system. Scrolls when the list outgrows the window, and understands the same

@@ -2,16 +2,28 @@ desc:ReaKit Elements
 options:gfx_hz=60 no_meter want_all_kb
 // @description ReaKit - UI widget library for JSFX (knobs, faders, buttons, meters, VU, pads, piano)
 // @author Quaz (EON Studios)
-// @version 1.5.3
+// @version 1.6.0
 // @changelog
-//   New: ReaKit Starter - a working GUI skeleton to copy from. Installing this
-//   package now also drops a second JSFX alongside this showcase. Where
-//   Elements shows you every widget, Starter shows you a finished plugin face:
-//   grain / pitch / motion / envelope / reverb / delay / output, every control
-//   bound to a real automatable parameter, native sliders hidden so what you
-//   see is the GUI. Its layout chrome is ~120 lines of ordinary local
-//   functions, deliberately not a framework - copy them and change them.
-//   Library incs are unchanged.
+//   New: a colour per curve band. rk_curve draws every band's fill and outline
+//   in that band's own colour, the six colours the EON EQs use, with the
+//   summed curve in white over them, and each node wears its band's colour.
+//   One switch picks how a band is shown (fill, lines, both) and how a node is
+//   shown (ring, dot, a badge with its name). The Curve tab has the selectors
+//   under the graph, and the Starter's EQ page draws through the same call.
+//
+//   New: the Rainbow Arc, knob style 9. Elements shows all 20 knob styles.
+//
+//   New: every knob answers the mouse. The styles that barely moved on hover
+//   now swell the way Spice does, and how strongly is the host's choice:
+//   rk_hover_mode 0 is Normal, 1 None, 2 Moderate, 3 Dramatic. The Knobs tab
+//   has a HOVER bar that flips it live.
+//
+//   Fixed in rk_curve: a curve with more points than pixels no longer stair-
+//   steps, the analyser no longer looks cut off at the edges, a band's outline
+//   runs the full width and stays solid, the badge carries its name, the
+//   ruler's labels are quieter, and the shade reads its array the same way the
+//   outline does. The caller can set the label size, and a plate mode with a
+//   compact grid.
 // @about
 //   20 procedural knob styles, 17 slider/fader types, 10 button styles,
 //   12 meter styles with DSP included, an analog VU with 11 face themes,

@@ -18,12 +18,12 @@ options:gfx_hz=60 no_meter want_all_kb
 //   rk_hover_mode 0 is Normal, 1 None, 2 Moderate, 3 Dramatic. The Knobs tab
 //   has a HOVER bar that flips it live.
 //
-//   Fixed in rk_curve: a curve with more points than pixels no longer stair-
-//   steps, the analyser no longer looks cut off at the edges, a band's outline
-//   runs the full width and stays solid, the badge carries its name, the
-//   ruler's labels are quieter, and the shade reads its array the same way the
-//   outline does. The caller can set the label size, and a plate mode with a
-//   compact grid.
+//   Fixed in rk_curve: a curve with more points than pixels no longer
+//   stair-steps, the analyser no longer looks cut off at the edges, a band's
+//   outline runs the full width and stays solid, the badge carries its name,
+//   the ruler's labels are quieter, and the shade reads its array the same way
+//   the outline does. The caller can set the label size, and a plate mode with
+//   a compact grid.
 // @about
 //   20 procedural knob styles, 17 slider/fader types, 10 button styles,
 //   12 meter styles with DSP included, an analog VU with 11 face themes,

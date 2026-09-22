@@ -46,6 +46,20 @@ __knobs_kbsg_loaded = 1;
 //   hv_speed      — hover animation speed (typ. 11)
 //   frame_wheel   — mouse_wheel / 120 (caller zeroes mouse_wheel after)
 //   tau           — 2 * $pi
+//   _srf_foreign  — OPTIONAL, 0 unless the host runs one instance on two
+//                   surfaces at once. A host that embeds a face in both the
+//                   TCP and the MCP must keep a drag alive on the surface the
+//                   pointer is NOT over, which it does by handing that pass the
+//                   owner's held LMB and pointer; otherwise the drag dies the
+//                   moment the unhovered pass sees LMB 0. But the drag maths
+//                   here divides by the CALLER'S radius, so the foreign pass
+//                   computes a different value from the same gesture and the
+//                   two alternate, frame by frame, while the button is held
+//                   (measured: 0.6747 vs 0.7000 on 277x462 against 82x137).
+//                   Set this on the foreign pass and every continue-drag branch
+//                   below returns cur_val untouched, while the press latch and
+//                   the drag state survive. Unset reads 0 in EEL2, so a host
+//                   that never sets it behaves exactly as before.
 //
 // MEMORY CONVENTION (16 slots per instance):
 //   [0]  hover_t        [1]  is_dragging     [2]  drag_y / start_y

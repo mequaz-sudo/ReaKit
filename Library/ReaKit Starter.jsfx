@@ -92,6 +92,24 @@ import rk_popup.jsfx-inc
 
 gfx_ext_retina = 1;
 
+// ── Embedding in a TCP/MCP strip ────────────────────────────────────────────
+// ⭐ THE HOUSE RULE, and the reason it is in the Starter: a JSFX with a GUI
+// should behave in a track panel the way a stock one does. Four parts, and this
+// file carries all four so a plugin built from it inherits them.
+//
+//   1. NO FRAME, NO NAME BAR. 0x100 asks REAPER to draw the embed undecorated;
+//      without it you get a frame and a grey bar with the plugin's name across
+//      the top of your own artwork. 0x400 suppresses REAPER's hover tooltip
+//      over an MCP embed (7.79+; older builds ignore it).
+//      ⚠ REAPER's own doc says 0x100 "should be done in @init but not later on".
+//      It is read live on 7.80, but @init is the supported place — do it here.
+//   2. A click on EMPTY embed space OPENS the floating window (0x200, armed at
+//      the frame tail only while embedded and only over background).
+//   3. A click on the strip CLOSES a floating window (0x200, armed in the
+//      WINDOW pass). See the tail for why that is a separate case.
+//   4. An IDLE pass leaves 0x200 exactly as it was.
+gfx_ext_flags |= 0x100 | 0x400;
+
 // ── Memory ──────────────────────────────────────────────────────────────────
 // No allocator: JSFX gives you one flat array and `freemem` is just a cursor
 // you push forward. Claim ONCE here — claiming in @gfx would hand out fresh
@@ -272,6 +290,10 @@ function ui_panel(x, y, w, h, r) (
 
 // Draws the panel and its title, and returns the y where content starts.
 function ui_section(x, y, w, h, title) (
+  // Every panel declares its rect here anyway, so this is where "is the pointer
+  // over content, or over the plate?" comes from for free — no per-widget
+  // bookkeeping. The embed's click-through re-arm at the frame tail reads it.
+  mx >= x && mx < x + w && my >= y && my < y + h ? _ui_inpanel = 1;
   ui_panel(x, y, w, h, px(4));
   ui_font(9, 1);
   gfx_set(tx_r, tx_g, tx_b, 0.62);
@@ -524,6 +546,25 @@ vu.rk_vu_sample(_ml);
 DW = 900; DH = 540;
 sc = min(gfx_w / DW, gfx_h / DH);
 sc < 0.35 ? sc = 0.35;
+
+// Embedded in a track panel? REAPER sets bit 0. A real plugin branches its
+// LAYOUT on this too — a 900x540 channel strip is unreadable in an 82 px mixer
+// strip — but the flag discipline below is the part every plugin needs.
+micro = gfx_ext_flags & 1;
+
+// ⚠ gfx_ext_flags is ONE variable shared by every @gfx pass of the instance, so
+// 0x200 is CLEARED here and re-armed at the tail. Clearing it only while
+// embedded would leave the embed's re-arm standing across the window's pass and
+// latch the whole instance into click-through. (EEL2 has no unary bitwise-NOT:
+// clear a bit with |= then -=.)
+// The idle test costs nothing here — this file does not ask for idle passes —
+// but a plugin that adds `options:gfx_idle` needs it, so it is already right.
+!(gfx_ext_flags & 2) ? gfx_ext_flags = (gfx_ext_flags | 0x200) - 0x200;
+
+// Dead space, accumulated by ui_section as the face draws: anything NOT inside
+// a panel is background, and a click there should open the window rather than
+// be swallowed. See the tail.
+_ui_inpanel = 0;
 
 mx = mouse_x; my = mouse_y;
 LMB = mouse_cap & 1; lmb_down = LMB && !_pLMB; _pLMB = LMB;
@@ -854,3 +895,21 @@ ui_tip_flush();
 
 _pk = rk_popup_run(ppmem, #face_menu, px(18), _ch, ac_r, ac_g, ac_b);
 _pk > 0 ? ( ui_face = _pk - 1; slider_automate(ui_face); );
+
+// ── Embed click-through, re-armed (house rule parts 2 and 3) ────────────────
+// EMBEDDED: arm only over the plate, so a click on a knob still reaches the
+// knob and a click on the background opens the floating window. A face with no
+// background at all (a full-bleed grid, a node editor) has nothing to arm and
+// should offer another way in — a small hover bar along the top edge is the
+// pattern EON uses.
+// WINDOW PASS: arm ALWAYS. This is the part that is easy to get wrong. The flag
+// only ever routes clicks on the EMBED, and an embed runs NO @gfx pass while a
+// window of the same instance is open — so the window's pass is the only one
+// that can set it, and clearing it there is what makes a click on the strip do
+// nothing instead of closing the window.
+// IDLE: leave it exactly as the last visible pass left it.
+micro ? (
+  !_ui_inpanel ? gfx_ext_flags |= 0x200;
+) : !(gfx_ext_flags & 2) ? (
+  gfx_ext_flags |= 0x200;
+);

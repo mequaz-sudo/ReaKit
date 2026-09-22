@@ -146,6 +146,13 @@ import rk_adsr.jsfx-inc
 // el_rate_init() below, which @block calls again when the rate moves.
 ext_noinit = 1.0;
 gfx_ext_retina = 1;   // HiDPI/Retina: REAPER doubles the surface, sc math below follows
+
+// ── Embedding in a TCP/MCP strip (the house rule; the Starter explains it) ──
+// 0x100 = draw the embed with no REAPER frame and no grey name bar over it.
+// 0x400 = no hover tooltip over an MCP embed (7.79+; older builds ignore it).
+// REAPER's doc says 0x100 belongs in @init, so it is set here; the click-through
+// half (0x200) lives in @gfx, cleared at the top and re-armed at the tail.
+gfx_ext_flags |= 0x100 | 0x400;
 freemem = 0;      // rk_vu claims no memory
 KS = 16;
 km = freemem; freemem += 20 * KS;   // 16 words/knob
@@ -287,6 +294,14 @@ sc_ui < 0.35 ? sc_ui = 0.35;
 // one big empty side into two small even margins, which is the honest best for
 // a layout of independent widgets.
 ox = max(0, (gfx_w - 740 * sc) * 0.5);
+
+// Embedded in a track panel? REAPER sets bit 0.
+micro = gfx_ext_flags & 1;
+
+// ⚠ gfx_ext_flags is ONE variable shared by every @gfx pass of the instance, so
+// clear 0x200 here and re-arm at the tail; clearing it only while embedded
+// latches the whole instance into click-through. (EEL2 has no unary ~.)
+!(gfx_ext_flags & 2) ? gfx_ext_flags = (gfx_ext_flags | 0x200) - 0x200;
 
 // --- per-frame input globals required by the kbsg libs ---
 mx = mouse_x; my = mouse_y;
@@ -982,3 +997,20 @@ slider1 == 3 ? (
 // included. A pick loads that envelope; ESC or a click away changes nothing.
 _pp = rk_popup_run(ppmem, #el_menu, sc*18, el_key, 0.29, 0.62, 1.00);
 _pp > 0 ? el_env_preset(_pp);
+
+// ── Embed click-through, re-armed (house rule parts 2, 3 and 4) ─────────────
+// This file is a SHOWCASE: below the header every pixel is a live widget, on
+// purpose, so the only honest dead space is the header band either side of the
+// tab bar — the title sits there and takes no clicks. A plugin with a real
+// background has much more of it; see the Starter, which accumulates its dead
+// space from ui_section.
+// The WINDOW pass arms unconditionally: the flag only routes clicks on the
+// EMBED, and an embed runs no @gfx pass while a window of the same instance is
+// open, so this pass is the only one that can set it. That is what makes a
+// click on the strip close the window.
+// An IDLE pass leaves the flag exactly as the last visible pass left it.
+micro ? (
+  my < sc_ui * 44 && (mx < sc_ui * 150 || mx > sc_ui * 728) ? gfx_ext_flags |= 0x200;
+) : !(gfx_ext_flags & 2) ? (
+  gfx_ext_flags |= 0x200;
+);

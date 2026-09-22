@@ -134,6 +134,9 @@ desc: ReaKit response-curve widget
 //        ONE node at a pixel, for a plugin that runs its own gesture and only
 //        wants the look. ht 0..1 hover, on = selected or held, al = 1, or less
 //        for a band that is off, lbl a string or -1. Sets a font.
+//   rk_curve_drawn_db(buf, n, x, w, px)
+//        the dB the trace SHOWS at pixel px (a column's value once the points
+//        outnumber the pixels), for anything of your own that must sit on it.
 //   rk_curve_node_label(nx, ny, rad, x, y, w, h, str)
 //        a line of text by a node ("+3 dB Q1.2"): above it, below when that
 //        would leave the rect, kept inside left and right. Sets a font.
@@ -389,6 +392,28 @@ local(j, j1, v) (
   v;
 );
 
+// What a FILL column shows: the outline's own reduction when the points
+// outnumber the pixels, so the shade and the outline cannot disagree by a
+// column (they did: a one-point spike drew an outline with no shade under it),
+// and the interpolation the fill always used otherwise.
+function rk_curve_fill_db(buf, n, i, w)
+local(t, j, fr) (
+  (n - 1) > w ? rk_curve_col_db(buf, n, i, w) : (
+    t  = i / max(w - 1, 1) * (n - 1);
+    j  = floor(t);
+    fr = t - j;
+    j >= n - 1 ? ( j = n - 2; fr = 1; );
+    buf[j] + (buf[j + 1] - buf[j]) * fr;
+  );
+);
+
+// What the trace SHOWS at pixel px, for a caller drawing something of its own
+// that has to land on the line (Apex's connector from a dot to the curve).
+// Interpolating the array is not it once the trace is drawn a column at a time.
+function rk_curve_drawn_db(buf, n, x, w, px) (
+  rk_curve_fill_db(buf, n, min(max(px - x, 0), max(w - 1, 0)), w);
+);
+
 // The polyline itself, in the current colour, `dy` pixels lower (the shadow).
 function rk_curve_poly(x, y, w, h, buf, n, dr, dy)
 local(i, m, cols, x0, x1, y0, y1, top, bot) (
@@ -422,11 +447,7 @@ local(i, y0, cy_, top, bot, t, j, fr) (
       gfx_set(r, g, b, 0.14 * a);
       i = 0;
       loop(floor(w),
-        t  = i / max(w - 1, 1) * (n - 1);
-        j  = floor(t);
-        fr = t - j;
-        j >= n - 1 ? ( j = n - 2; fr = 1; );
-        y0 = rk_curve_d2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, dr);
+        y0 = rk_curve_d2y(rk_curve_fill_db(buf, n, i, w), y, h, dr);
         y0 = min(max(y0, top), bot);
         gfx_rect(x + i, min(cy_, y0), 1, max(1, abs(y0 - cy_)));
         i += 1;
@@ -463,11 +484,7 @@ local(i, j, t, fr, x0, x1, y0, y1, cy_, top, bot, ay, a0, a1, cols, m, v0, v1) (
       gfx_set(r, g, b, fill_a);
       i = 0;
       loop(floor(w),
-        t  = i / max(w - 1, 1) * (n - 1);
-        j  = floor(t);
-        fr = t - j;
-        j >= n - 1 ? ( j = n - 2; fr = 1; );
-        y0 = rk_curve_d2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, dr);
+        y0 = rk_curve_d2y(rk_curve_fill_db(buf, n, i, w), y, h, dr);
         y0 = min(max(y0, top), bot);
         abs(y0 - cy_) >= 0.5 ? gfx_rect(x + i, min(cy_, y0), 1, abs(y0 - cy_));
         i += 1;
@@ -772,7 +789,8 @@ local(tw, th, br) (
       // Dark on the band's colour -- unless the band is off, when the disc is
       // dimmed almost to the plate and dark type on it vanishes ("HP" / "LP" on
       // the 4-Band's switched-off filters). Then it is light.
-      al < 0.6 ? gfx_set(0.92, 0.94, 0.98, 0.70) : gfx_set(0.04, 0.05, 0.07, 0.92 * al);
+      // Light type still follows `al`: 0.69 at the 0.30 an off band uses, 0 at 0.
+      al < 0.6 ? gfx_set(0.92, 0.94, 0.98, min(1, 2.3 * al)) : gfx_set(0.04, 0.05, 0.07, 0.92 * al);
       gfx_x = nx - tw * 0.5 + 0.5; gfx_y = ny - th * 0.5;
       gfx_drawstr(lbl);
     );

@@ -461,8 +461,8 @@ function rkth_vu_face_migrate(old) (
 
 // Dropdown / chip label. kind 2 = VU face (rows = the meter's faces, no AUTO —
 // the host slider stays a direct index; see rkth_vu_n), kind 3 = knob style
-// over the FULL 20-style dispatcher (row -> id skips the mem-only bb=9: id =
-// row<=8 ? row : row+1; ids 19/20 = Pultec Cream / Neve Alt). Strings via
+// over the FULL dispatcher, row = style id (0 = Default, 9 = Rainbow Arc,
+// 19/20 = Pultec Cream / Neve Alt). Strings via
 // strcpy(#buf).
 //
 // The rk_vu names below MIRROR rk_vu_theme_name in rk_vu.jsfx-inc and must
@@ -488,19 +488,18 @@ function rkth_cl_lbl(kind, r) (
       r == 0  ? "Default"   : r == 1  ? "SSL"     : r == 2  ? "Vari-Mu"   :
       r == 3  ? "API"       : r == 4  ? "Witti"   : r == 5  ? "Neve"      :
       r == 6  ? "Joanny"    : r == 7  ? "MPC"     : r == 8  ? "Jog"       :
-      r == 9  ? "Spice"     : r == 10 ? "Encoder" : r == 11 ? "Pultec"    :
-      r == 12 ? "Ableton"   : r == 13 ? "FL"      : r == 14 ? "Pro Tools" :
-      r == 15 ? "FabFilter" : r == 16 ? "Serum"   : r == 17 ? "Roland"    :
-      r == 18 ? "Pultec Cream" : "Neve Alt");
+      r == 9  ? "Rainbow"   : r == 10 ? "Spice"   : r == 11 ? "Encoder"   :
+      r == 12 ? "Pultec"    : r == 13 ? "Ableton" : r == 14 ? "FL"        :
+      r == 15 ? "Pro Tools" : r == 16 ? "FabFilter" : r == 17 ? "Serum"   :
+      r == 18 ? "Roland"    : r == 19 ? "Pultec Cream" : "Neve Alt");
   );
 );
 // Row that carries the "current" mark: VU = the host's face (stashed in
 // rkth_cl_vu by rkth_cluster); KNOB = published primary style mapped back to
-// its row (id<=8 ? id : id-1).
+// its row (row = id).
 function rkth_cl_currow() (
   rkth_dd_kind == 2 ? rkth_cl_vu
-                    : ((gmem[GS_THEME_KNOB_P] | 0) <= 8 ? (gmem[GS_THEME_KNOB_P] | 0)
-                                                        : (gmem[GS_THEME_KNOB_P] | 0) - 1);
+                    : (gmem[GS_THEME_KNOB_P] | 0);
 );
 // Open at (ax, ay): width measured from the widest label (font set FIRST —
 // gfx_measurestr fails silently under a stale font), clamped into the window.
@@ -603,7 +602,7 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
             rkth_vu_pick = rkth_dd_hrow; rkth_cl_vu = rkth_dd_hrow;
             rkth_sync_on ? ( gmem[GS_THEME_VU_REQ] = rkth_dd_hrow + 1; );
           ) : (
-            gmem[GS_THEME_KNOB_REQ] = (rkth_dd_hrow <= 8 ? rkth_dd_hrow : rkth_dd_hrow + 1) + 1;
+            gmem[GS_THEME_KNOB_REQ] = rkth_dd_hrow + 1;
           );
         );
         rkth_dd_open = 0; lmb_down = 0; rkth_consumed = 1;   // any click closes (swallowed)
@@ -701,15 +700,15 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
       lmb_down = 0; frame_wheel = 0; rkth_consumed = 1;
     );
     // ── KNOB chip: click opens the list; hover-wheel cycles the suite style
-    // via GS_THEME_KNOB_REQ (skips the mem-only bb=9, wraps) ──
+    // via GS_THEME_KNOB_REQ (wraps) ──
     !rkth_locked && lmb_down && mx >= knx && mx < knx + knw && my >= kny && my < kny + _ch ? (
-      rkth_cl_openat(3, 20, knx, kny + _ch + 2*rkth_scale, _rh); lmb_down = 0; rkth_consumed = 1;
+      rkth_cl_openat(3, 21, knx, kny + _ch + 2*rkth_scale, _rh); lmb_down = 0; rkth_consumed = 1;
     );
     !rkth_locked && frame_wheel != 0 && mx >= knx && mx < knx + knw && my >= kny && my < kny + _ch ? (
       kid = gmem[GS_THEME_KNOB_P] | 0;
       kid = frame_wheel > 0
-        ? (kid >= 20 ? 0 : (kid == 8 || kid == 9) ? 10 : kid + 1)
-        : (kid <= 0 ? 20 : (kid == 10 || kid == 9) ? 8 : kid - 1);
+        ? (kid >= 20 ? 0 : kid + 1)
+        : (kid <= 0 ? 20 : kid - 1);
       gmem[GS_THEME_KNOB_REQ] = kid + 1;
       frame_wheel = 0; rkth_consumed = 1;
     );

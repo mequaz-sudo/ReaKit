@@ -78,6 +78,8 @@ RK_DBLCLICK_T = 0.3;
 // ═══════════════════════════════════════════════════════════════════════════
 // Globals used: bb_brightness (0 at init; lifts the colour toward white) and
 // bb_tr/bb_tg/bb_tb (set by bb_palette). The bb_ names stay for existing callers.
+// Two ways in: bb_knob_draw keeps colour state in mem and fades in;
+// rainbow_knob_draw is stateless (the theme dispatcher's style 9).
 
 // One of EON's six band colours (Tone's six) into bb_sr/bb_sg/bb_sb.
 function bb_six(i) (
@@ -110,28 +112,16 @@ local(p, i, f, r0, g0, b0)
   bb_tb += (1 - bb_tb) * bb_brightness;
 );
 
-// Draw: a 270-degree value arc in the cycling house colour over a dim track,
-// a dark body with a thin coloured rim, and a pointer ending in a dot.
-// mem[0] = hover ramp (from bb_knob_interact), mem[8] = run time,
-// mem[9..11] = colour state (eases toward the palette).
-function bb_knob_draw(cx, cy, r, value, vmin, vmax, mem)
-local(v, a0, sweep, av, ring_w, ring_in, rr, n, ease, cr, cg, cb, body_r, s, c)
+// Paint: a 270-degree value arc in (cr, cg, cb) over a dim track, a dark body
+// with a thin coloured rim, and a pointer ending in a dot. v and hov are 0..1.
+// Angles run clockwise from 12 o'clock: lower-left to lower-right.
+function rainbow_knob_paint(cx, cy, r, v, hov, cr, cg, cb)
+local(a0, sweep, av, ring_w, ring_in, rr, n, body_r, s, c)
 (
-  v = vmax > vmin ? min(max((value - vmin) / (vmax - vmin), 0), 1) : 0;
-
-  // Colour: the loop runs while the knob is up; at zero it rests on red.
-  bb_palette(v > 0 ? mem[8] : 0);
-  ease = min(1, dt * 6);
-  mem[9]  += (bb_tr - mem[9])  * ease;
-  mem[10] += (bb_tg - mem[10]) * ease;
-  mem[11] += (bb_tb - mem[11]) * ease;
-  cr = mem[9]; cg = mem[10]; cb = mem[11];
-
-  // Angles run clockwise from 12 o'clock: lower-left to lower-right.
   sweep = $pi * 1.5;
   a0 = -$pi * 0.75;
   av = a0 + v * sweep;
-  ring_w = r * (0.16 + 0.04 * mem[0]);   // a touch thicker on hover
+  ring_w = r * (0.16 + 0.04 * hov);      // a touch thicker on hover
   ring_in = r - ring_w;
   n = ceil(ring_w * 2);                   // half-pixel passes
 
@@ -147,7 +137,7 @@ local(v, a0, sweep, av, ring_w, ring_in, rr, n, ease, cr, cg, cb, body_r, s, c)
   body_r = ring_in - max(2, r * 0.08);
   gfx_set(0.10, 0.10, 0.12, 1);
   gfx_circle(cx, cy, body_r, 1, 1);
-  gfx_set(cr, cg, cb, 0.55 + 0.35 * mem[0]);
+  gfx_set(cr, cg, cb, 0.55 + 0.35 * hov);
   gfx_circle(cx, cy, body_r, 0, 1);
 
   s = sin(av);
@@ -156,8 +146,32 @@ local(v, a0, sweep, av, ring_w, ring_in, rr, n, ease, cr, cg, cb, body_r, s, c)
   gfx_line(cx + s * body_r * 0.35, cy + c * body_r * 0.35,
            cx + s * body_r * 0.85, cy + c * body_r * 0.85, 1);
   gfx_circle(cx + s * body_r * 0.85, cy + c * body_r * 0.85, max(1.5, r * 0.05), 1, 1);
+);
 
+// Draw with state: mem[0] = hover ramp (from bb_knob_interact), mem[8] = run
+// time, mem[9..11] = colour state (eases toward the palette so it fades in).
+function bb_knob_draw(cx, cy, r, value, vmin, vmax, mem)
+local(v, ease)
+(
+  v = vmax > vmin ? min(max((value - vmin) / (vmax - vmin), 0), 1) : 0;
+  // The colour loop runs while the knob is up; at zero it rests on red.
+  bb_palette(v > 0 ? mem[8] : 0);
+  ease = min(1, dt * 6);
+  mem[9]  += (bb_tr - mem[9])  * ease;
+  mem[10] += (bb_tg - mem[10]) * ease;
+  mem[11] += (bb_tb - mem[11]) * ease;
+  rainbow_knob_paint(cx, cy, r, v, mem[0], mem[9], mem[10], mem[11]);
   v > 0 ? ( mem[8] += dt; ) : ( mem[8] = 0; );
+);
+
+// Draw without state (theme dispatcher, style 9): the colour follows the clock
+// while the knob is up and rests on red at zero. hover_t is 0..1.
+function rainbow_knob_draw(cx, cy, r, value, vmin, vmax, hover_t)
+local(v)
+(
+  v = vmax > vmin ? min(max((value - vmin) / (vmax - vmin), 0), 1) : 0;
+  bb_palette(v > 0 ? time_precise() : 0);
+  rainbow_knob_paint(cx, cy, r, v, hover_t, bb_tr, bb_tg, bb_tb);
 );
 
 // Interact: circular hover, drag, scroll, double-click reset to 0
@@ -2297,9 +2311,9 @@ local(ht, cap_a, val_rad, capr, i, fa, fw, px, py, ox, oy,
 // routes to the matching *_knob_draw. Style enum (MUST stay in lockstep with the
 // Lua T.KNOBS comment):
 //   1 ssl · 2 varimu · 3 api · 4 ws(witti) · 5 neve · 6 jo · 7 mpc · 8 jog
-//   · 10 sp · 11 encoder · 12 pultec · 13 ableton · 14 fl · 15 protools
+//   · 9 rainbow · 10 sp · 11 encoder · 12 pultec · 13 ableton · 14 fl · 15 protools
 //   · 16 fabfilter · 17 serum · 18 roland · 19 pultec_cream · 20 neve_alt.
-//   1 / 9 (bb, needs mem) / 0 (bridge idle) / unknown fall back to ssl.
+//   1 / 0 (bridge idle) / unknown fall back to ssl.
 //   IDs are persisted in ExtState (eon_knob_<theme>) — APPEND ONLY, never renumber.
 //
 // VISUAL DISPATCH ONLY: every style shares ssl_knob_interact via rk_knob_interact,
@@ -2325,6 +2339,7 @@ function rk_knob_draw(style, cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
   style == 6  ? jo_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
   style == 7  ? mpc_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
   style == 8  ? jog_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
+  style == 9  ? rainbow_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
   style == 10 ? sp_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, is_sym, cr, cg, cb, bgr, bgg, bgb) :
   style == 12 ? pultec_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
   style == 13 ? ableton_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :

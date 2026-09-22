@@ -28,6 +28,12 @@ desc: ReaKit response-curve widget
 // response is symmetric about the midline, an analyser runs absolute from a
 // ceiling down to a floor.
 //
+// A face embedded in BOTH the TCP and the MCP runs @gfx twice a cycle, and the
+// pass that does not own the mouse is handed the owner's pointer against its
+// own, different, geometry. rk_curve_nodes does nothing on such a pass
+// (`_srf_foreign`, the flag knobs_kbsg already honours; it reads 0 in a plugin
+// that never sets it).
+//
 // REQUIREMENTS (host plugin must provide, per frame, before calling):
 //   - mx, my       — mouse position
 //   - lmb_down     — left-button PRESS edge (not the held state)
@@ -54,12 +60,58 @@ desc: ReaKit response-curve widget
 //   rk_curve_plate(x, y, w, h, dr)
 //        plate, frequency grid + labels, dB grid + labels, border. Sets a
 //        small font for the labels and does not restore it.
+//   rk_curve_plate_ex(x, y, w, h, dr, mode)
+//        the same plate with the grid in `mode` (see rk_curve_grid).
+//   rk_curve_font(px)
+//        label size for the grid and the node readout. 0, the default, sizes
+//        them from the rect's height, CAPPED at 11 px (x gfx_ext_retina). A
+//        plugin that scales its whole face should pass its own scaled size.
+//   rk_curve_grid(x, y, w, h, dr, lr, lg, lb, tr, tg, tb, mode)
+//        the grid WITHOUT the plate, lines in one ink and labels in another,
+//        for a graph that sits on a panel the plugin already painted. `mode` 0
+//        is the full grid rk_curve_plate draws; 1 is compact -- the 0 dB line
+//        and 100 / 1k / 10k, no labels -- for an embedded strip; 2 is the full
+//        grid with EVERY dB line labelled but the floor's, for an EQ whose user
+//        reads gain off the ruler (mode 0 labels only the top line and 0).
 //   rk_curve_analyser(x, y, w, h, buf, n, f_lo, f_hi, ceil_db, floor_db, r, g, b)
 //        the underlay. Call BEFORE the trace. f_lo/f_hi are the band buffer's
 //        OWN frequency span — give it honestly and the bands land on the right
 //        part of the graph whatever range the graph itself is set to.
 //   rk_curve_trace(x, y, w, h, buf, n, dr, fill, r, g, b)
 //        the curve. `fill` 1 shades to the midline.
+//   rk_curve_trace_a(x, y, w, h, buf, n, dr, fill, r, g, b, a)
+//        the same at alpha `a`, for a curve that dims while it is bypassed.
+//   rk_curve_style(bands, nodes)
+//        THE LOOK, one switch for everything below. bands: 0 Fill (each band a
+//        shaded shape, no outline), 1 Lines (each band an outline, no shade),
+//        2 both. nodes: 0 Ring (the band's name inside it), 1 Dot (a plain
+//        disc), 2 Badge (a bigger disc, the name under it). Never called, it is
+//        Fill and Ring. A plugin exposes the two as it likes; the default is the
+//        same everywhere, which is what makes two EQs side by side agree.
+//   rk_curve_draw(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim,
+//                 sbuf, tr, tg, tb, ta)
+//        ⭐ THE ONE CALL for a multi-band response: every band's shade, the
+//        0 dB line, the summed curve (`sbuf`, n points, colour tr,tg,tb at
+//        alpha ta), and LAST every band's coloured outline, over the summed
+//        curve. The ORDER lives here so no plugin can get it differently. The
+//        band arguments are rk_curve_bands's, below.
+//   rk_curve_bands(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim)
+//        the bands alone, all passes at once, for a graph with no summed curve.
+//        EVERY band, in the current style, at the house alphas -- they live
+//        here and nowhere else. `bbuf` is nb arrays of n dB values one after
+//        another; `cbuf` r,g,b per band; `ebuf` 1/0 per band for on/off (pass
+//        -1: all on); `hbuf` a 0..1 hover ramp per band (pass -1: none -- the
+//        node block's mem + 8 is exactly this); `sel` the selected band or -1;
+//        `dim` 1 while the whole EQ is bypassed.
+//   rk_curve_bands_ex(..., what)
+//        the same, one PASS at a time: what = 1 shades, 4 the 0 dB line,
+//        2 outlines (add them). For a plugin that layers a second set of bands
+//        and has to interleave the passes itself; everyone else: rk_curve_draw.
+//   rk_curve_band(x, y, w, h, buf, n, dr, r, g, b, fill_a, line_a)
+//        ONE band's own contribution, in that band's colour: a shade of it
+//        filling to the midline at `fill_a`, and its outline at `line_a` (0
+//        skips either). Call it once per band, before the summed trace. The
+//        caller fills one array per band, the same way it fills the sum.
 //   rk_curve_nodes(mem, x, y, w, h, dr, fbuf, dbuf, n)
 //        the whole gesture: hover, grab, delta drag, wheel, double-click.
 //        Publishes rk_curve_ni / rk_curve_nf / rk_curve_ndb / rk_curve_moved /
@@ -69,6 +121,32 @@ desc: ReaKit response-curve widget
 //        clamps and calls slider_automate, which is the one thing that made
 //        every surveyed implementation unusable as a widget.
 //   rk_curve_nodes_draw(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, r, g, b)
+//   rk_curve_nodes_draw_rgb(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, cbuf)
+//        the same nodes, each in its own colour. `cbuf` holds r, g, b per node,
+//        three words each, in node order. Pairs with rk_curve_band.
+//   rk_curve_nodes_draw_ex(mem, x, y, w, h, dr, fbuf, ybuf, n, sel, cbuf, ebuf, lblbuf)
+//        the full painter. `ybuf` is where each node SITS in dB -- hand it the
+//        real response at the node's frequency and a shelf's node rides the
+//        curve instead of floating at twice its height. `ebuf` dims a band that
+//        is off (-1: all on). `lblbuf` holds a string per node, its name
+//        ("1", "LS"), or -1 for none.
+//   rk_curve_node_paint_ex(nx, ny, rad, ht, on, al, r, g, b, lbl)
+//        ONE node at a pixel, for a plugin that runs its own gesture and only
+//        wants the look. ht 0..1 hover, on = selected or held, al = 1, or less
+//        for a band that is off, lbl a string or -1. Sets a font.
+//   rk_curve_drawn_db(buf, n, x, w, px)
+//        the dB the trace SHOWS at pixel px (a column's value once the points
+//        outnumber the pixels), for anything of your own that must sit on it.
+//   rk_curve_node_label(nx, ny, rad, x, y, w, h, str)
+//        a line of text by a node ("+3 dB Q1.2"): above it, below when that
+//        would leave the rect, kept inside left and right. Sets a font.
+//   rk_curve_palette(cbuf, n)
+//        fills `cbuf` with the library's band colours for `n` bands (up to 6),
+//        low to high, from red orange green teal blue violet. ONE definition,
+//        so every plugin's low band is the same orange. Call once, in @init.
+//   rk_curve_band_rgb(cbuf, i, c)
+//        one slot, by hand: colour `c` (0 red .. 5 violet) into node `i`, for a
+//        layout the palette does not guess -- a filter node, say.
 //
 // The TRACE buffer holds `n` dB values spread evenly across the rect in X, and
 // because X is log frequency that is log spacing in Hz. ~512 is a good `n`.
@@ -127,109 +205,167 @@ function rk_curve_grid_f(i) (
   i == 4 ? 500  : i == 5 ? 1000 : i == 6 ? 2000 : i == 7 ? 5000 : 10000;
 );
 
-function rk_curve_plate(x, y, w, h, dr)
+function rk_curve_font(px) ( rkcv_font = max(0, px); );
+// The default was 7.5% of the height with no ceiling: on a 290 px graph that is
+// 21 px, bigger than the plugin's own title, and the ruler shouted over the
+// curve it was there to measure. Capped at 11 px, doubled with the surface on a
+// HiDPI display (gfx_ext_retina reads 0 in a plugin that never sets it).
+function rk_curve_font_px(h) (
+  rkcv_font > 0 ? rkcv_font
+                : min(max(8, floor(h * 0.075)), floor(11 * max(1, gfx_ext_retina)));
+);
+
+// The grid alone, in the caller's inks. rk_curve_plate is a plate, this, and a
+// border -- so a graph on its own plate and a graph on a themed panel still put
+// every line and every label in the same place.
+function rk_curve_grid(x, y, w, h, dr, lr, lg, lb, tr, tg, tb, mode)
 local(i, f, gx_, gy_, tw, th, last_x, db) (
+  mode == 1 ? (
+    // Compact: the midline, and a decade ladder. An embedded strip has no room
+    // for labels and nine verticals read as hatching at that size.
+    gfx_set(lr, lg, lb, 0.70);
+    gfx_rect(x, rk_curve_d2y(0, y, h, dr), w, 1);
+    gfx_set(lr, lg, lb, 0.40);
+    f = 100;
+    loop(3,
+      f > RKCV_FMIN && f < RKCV_FMAX ? gfx_rect(rk_curve_f2x(f, x, w), y, 1, h);
+      f *= 10;
+    );
+  ) : (
+    gfx_setfont(1, "Arial", rk_curve_font_px(h));
+
+    // Frequency grid. Labels sit INSIDE the rect: outside they get clipped by
+    // whatever the caller has drawn around the graph.
+    last_x = -1000;
+    i = 0;
+    loop(9,
+      f = rk_curve_grid_f(i);
+      f > RKCV_FMIN && f < RKCV_FMAX ? (
+        gx_ = rk_curve_f2x(f, x, w);
+        gfx_set(lr, lg, lb, 0.40);
+        gfx_rect(gx_, y, 1, h);
+        f >= 1000 ? sprintf(#rkcv_s, "%dk", f / 1000) : sprintf(#rkcv_s, "%d", f);
+        gfx_measurestr(#rkcv_s, tw, th);
+        // Suppress a label that would touch the previous one.
+        gx_ - tw * 0.5 > last_x + 4 ? (
+          gfx_set(tr, tg, tb, 0.95);
+          // Keep it inside the plate: a stop close to either end would otherwise
+          // hang half its label off the edge.
+          gfx_x = min(max(gx_ - tw * 0.5, x + 2), x + w - tw - 2);
+          gfx_y = y + h - th - 2;
+          gfx_drawstr(#rkcv_s);
+          last_x = gfx_x + tw;
+        );
+      );
+      i += 1;
+    );
+
+    // dB grid: five lines at i*(dr/2), 0 dB brighter than the rest.
+    i = -2;
+    loop(5,
+      db = i * dr * 0.5;
+      gy_ = rk_curve_d2y(db, y, h, dr);
+      gfx_set(lr, lg, lb, i == 0 ? 0.70 : 0.35);
+      gfx_rect(x, gy_, w, 1);
+      // Top and midline only. The bottom line shares the rect's floor with the
+      // frequency labels, and -dr printed there lands straight on top of them --
+      // the scale is symmetric, so +dr and 0 already say what the bottom is.
+      // Mode 2 adds the two quarter lines: a working EQ is read off its ruler,
+      // and the 4-Band and Apex both labelled every line before they drew
+      // through this. A half step (15 dB range -> 7.5) keeps its decimal; the
+      // 4-Band used to print that one as "+8".
+      i == 2 || i == 0 || (mode == 2 && i != -2) ? (
+        // 0 is "0": "%+d" prints "+0", which is nobody's idea of zero.
+        db == 0 ? strcpy(#rkcv_s, "0") :
+        mode == 2 && db != floor(db) ? sprintf(#rkcv_s, "%+.1f", db) : sprintf(#rkcv_s, "%+d", db);
+        gfx_measurestr(#rkcv_s, tw, th);
+        gfx_set(tr, tg, tb, 0.85);
+        gfx_x = x + 3;
+        gfx_y = i == 2 ? gy_ + 2 : gy_ - th - 1;   // top line labels below itself
+        gfx_drawstr(#rkcv_s);
+      );
+      i += 1;
+    );
+  );
+);
+
+function rk_curve_plate_ex(x, y, w, h, dr, mode) (
   gfx_set(0.043, 0.047, 0.067, 1);
   gfx_rect(x, y, w, h);
 
-  gfx_setfont(1, "Arial", max(8, floor(h * 0.075)));
-
-  // Frequency grid. Labels sit INSIDE the rect: outside they get clipped by
-  // whatever the caller has drawn around the graph.
-  last_x = -1000;
-  i = 0;
-  loop(9,
-    f = rk_curve_grid_f(i);
-    f > RKCV_FMIN && f < RKCV_FMAX ? (
-      gx_ = rk_curve_f2x(f, x, w);
-      gfx_set(0.18, 0.20, 0.25, 0.40);
-      gfx_rect(gx_, y, 1, h);
-      f >= 1000 ? sprintf(#rkcv_s, "%dk", f / 1000) : sprintf(#rkcv_s, "%d", f);
-      gfx_measurestr(#rkcv_s, tw, th);
-      // Suppress a label that would touch the previous one.
-      gx_ - tw * 0.5 > last_x + 4 ? (
-        gfx_set(0.42, 0.45, 0.52, 0.95);
-        // Keep it inside the plate: a stop close to either end would otherwise
-        // hang half its label off the edge.
-        gfx_x = min(max(gx_ - tw * 0.5, x + 2), x + w - tw - 2);
-        gfx_y = y + h - th - 2;
-        gfx_drawstr(#rkcv_s);
-        last_x = gfx_x + tw;
-      );
-    );
-    i += 1;
-  );
-
-  // dB grid: five lines at i*(dr/2), 0 dB brighter than the rest.
-  i = -2;
-  loop(5,
-    db = i * dr * 0.5;
-    gy_ = rk_curve_d2y(db, y, h, dr);
-    gfx_set(0.18, 0.20, 0.25, i == 0 ? 0.70 : 0.35);
-    gfx_rect(x, gy_, w, 1);
-    // Top and midline only. The bottom line shares the rect's floor with the
-    // frequency labels, and -dr printed there lands straight on top of them --
-    // the scale is symmetric, so +dr and 0 already say what the bottom is.
-    i == 2 || i == 0 ? (
-      sprintf(#rkcv_s, "%+d", db);
-      gfx_measurestr(#rkcv_s, tw, th);
-      gfx_set(0.42, 0.45, 0.52, 0.85);
-      gfx_x = x + 3;
-      gfx_y = i == 2 ? gy_ + 2 : gy_ - th - 1;   // top line labels below itself
-      gfx_drawstr(#rkcv_s);
-    );
-    i += 1;
-  );
+  rk_curve_grid(x, y, w, h, dr, 0.18, 0.20, 0.25, 0.42, 0.45, 0.52, mode);
 
   gfx_set(0.20, 0.22, 0.27, 1);
   gfx_rect(x, y, w, 1); gfx_rect(x, y + h - 1, w, 1);
   gfx_rect(x, y, 1, h); gfx_rect(x + w - 1, y, 1, h);
 );
 
+function rk_curve_plate(x, y, w, h, dr) ( rk_curve_plate_ex(x, y, w, h, dr, 0); );
+
 // ── Analyser underlay ─────────────────────────────────────────────────
-// Filled to the bottom, quads guarded on an integer column change so many
-// bands landing in one pixel do not each emit a degenerate triangle.
+// A shade down to the floor, and an OUTLINE along its top.
+//
+// ⭐ Bands are placed BY FREQUENCY, not by spreading them evenly across the
+// rect. The first version assumed the buffer spanned the whole graph, which was
+// true only while the analyser and the graph happened to share a range -- and
+// the moment the meter's span changed with srate, every band moved. Each pixel
+// asks what frequency it is and fetches the level for it, so the two align
+// however either one is configured.
+//
+// ⭐ OUTSIDE the buffer's span it ROLLS OFF to the floor, reaching it at the
+// graph's own edge. It used to draw nothing there, so a meter covering 40 Hz to
+// 16 kHz on a 20 Hz to 20 kHz graph began with a vertical WALL at 40 Hz, the
+// full height of whatever the lowest band read. That reads as cut off, not as
+// "no data below here".
+//
+// ⭐ The outline is CONTINUOUS and carries the shape. It used to be one dot per
+// column at 0.32, which on a steep slope broke into a dotted line; and the shade
+// is faint on purpose, so once coloured band shades were drawn over it the
+// analyser vanished wherever a band was -- it looked chopped off flat along
+// 0 dB. (EON Tone's analyser reads through its bands the same way: by its line.)
+// Nothing is drawn along the floor: a silent analyser used to rule a line there.
+
+// The level at one frequency, in dB, including the roll-off outside the span.
+function rk_curve_an_db(fx, buf, n, f_lo, f_hi, lspan, floor_db)
+local(t, j, fr) (
+  fx < f_lo ? (
+    t = log(fx / RKCV_FMIN) / max(log(f_lo / RKCV_FMIN), 0.0001);
+    floor_db + (buf[0] - floor_db) * min(max(t, 0), 1);
+  ) : fx > f_hi ? (
+    t = log(RKCV_FMAX / fx) / max(log(RKCV_FMAX / f_hi), 0.0001);
+    floor_db + (buf[n - 1] - floor_db) * min(max(t, 0), 1);
+  ) : (
+    t  = log(fx / max(f_lo, 1)) / lspan * (n - 1);
+    j  = floor(t);
+    fr = t - j;
+    j < 0 ? ( j = 0; fr = 0; );
+    j >= n - 1 ? ( j = n - 2; fr = 1; );
+    buf[j] + (buf[j + 1] - buf[j]) * fr;
+  );
+);
 
 function rk_curve_analyser(x, y, w, h, buf, n, f_lo, f_hi, ceil_db, floor_db, r, g, b)
-local(i, x0, x1, y0, y1, bot, t, j, fr, fx, lspan) (
+local(i, y0, py, bot, lspan) (
   n < 2 ? 0 : (
     bot = y + h - 1;
     lspan = log(max(f_hi, f_lo * 2) / max(f_lo, 1));
-    // ⭐ Bands are placed BY FREQUENCY, not by spreading them evenly across the
-    // rect. The first version assumed the buffer spanned the whole graph, which
-    // was true only while the analyser and the graph happened to share a range
-    // — and the moment the meter's span changed with srate, every band moved.
-    // Each pixel asks what frequency it is and fetches the band for it, so the
-    // two align however either one is configured.
     gfx_set(r, g, b, 0.13);
+    py = bot;
     i = 0;
     loop(floor(w),
-      fx = rk_curve_x2f(x + i, x, w);
-      fx >= f_lo && fx <= f_hi ? (
-        t  = log(fx / max(f_lo, 1)) / lspan * (n - 1);
-        j  = floor(t);
-        fr = t - j;
-        j < 0 ? ( j = 0; fr = 0; );
-        j >= n - 1 ? ( j = n - 2; fr = 1; );
-        y0 = rk_curve_a2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, ceil_db, floor_db);
-        y0 < bot ? gfx_rect(x + i, y0, 1, bot - y0);
+      y0 = rk_curve_a2y(rk_curve_an_db(rk_curve_x2f(x + i, x, w), buf, n, f_lo, f_hi, lspan, floor_db),
+                        y, h, ceil_db, floor_db);
+      y0 < bot ? (
+        gfx_a = 0.13;
+        gfx_rect(x + i, y0, 1, bot - y0);
       );
-      i += 1;
-    );
-    // Capping line, same placement, so the edge and the fill agree.
-    gfx_set(r, g, b, 0.32);
-    i = 1;
-    loop(floor(w) - 1,
-      fx = rk_curve_x2f(x + i, x, w);
-      fx >= f_lo && fx <= f_hi ? (
-        t  = log(fx / max(f_lo, 1)) / lspan * (n - 1);
-        j  = floor(t); fr = t - j;
-        j < 0 ? ( j = 0; fr = 0; );
-        j >= n - 1 ? ( j = n - 2; fr = 1; );
-        y0 = rk_curve_a2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, ceil_db, floor_db);
-        y1 = rk_curve_a2y(buf[j], y, h, ceil_db, floor_db);
-        gfx_rect(x + i, y0, 1, 1);
+      // the outline, from the previous column's top to this one's -- skipped
+      // while both sit on the floor
+      i > 0 && (y0 < bot - 0.5 || py < bot - 0.5) ? (
+        gfx_a = 0.45;
+        gfx_line(x + i - 1, py, x + i, y0);
       );
+      py = y0;
       i += 1;
     );
   );
@@ -237,8 +373,67 @@ local(i, x0, x1, y0, y1, bot, t, j, fr, fx, lspan) (
 
 // ── The trace ─────────────────────────────────────────────────────────
 
-function rk_curve_trace(x, y, w, h, buf, n, dr, fill, r, g, b)
-local(i, x0, x1, y0, y1, cy_, top, bot, t, j, fr) (
+// ⭐ MORE POINTS THAN PIXELS. A line segment per data point is right while the
+// points are further apart than a pixel. Put 1024 points across an 85 px mixer
+// strip and each segment is a twelfth of a pixel long: the antialiasing has
+// nothing to work with and the curve comes out as a STAIRCASE (seen on Apex's
+// embedded view, 2026-09-21; the code it replaced stepped in whole pixels).
+// So when n - 1 > w the polyline is drawn a pixel COLUMN at a time, and each
+// column takes the value furthest from 0 dB among the points that fall in it --
+// a plain sample at the column's centre would shave the tip off a narrow bell.
+function rk_curve_col_db(buf, n, c, w)
+local(j, j1, v) (
+  j  = floor(c * (n - 1) / max(w - 1, 1));
+  j1 = min(floor((c + 1) * (n - 1) / max(w - 1, 1)), n - 1);
+  j  = min(j, n - 1);
+  v  = buf[j];
+  j += 1;
+  while (j <= j1) ( abs(buf[j]) > abs(v) ? v = buf[j]; j += 1; );
+  v;
+);
+
+// What a FILL column shows: the outline's own reduction when the points
+// outnumber the pixels, so the shade and the outline cannot disagree by a
+// column (they did: a one-point spike drew an outline with no shade under it),
+// and the interpolation the fill always used otherwise.
+function rk_curve_fill_db(buf, n, i, w)
+local(t, j, fr) (
+  (n - 1) > w ? rk_curve_col_db(buf, n, i, w) : (
+    t  = i / max(w - 1, 1) * (n - 1);
+    j  = floor(t);
+    fr = t - j;
+    j >= n - 1 ? ( j = n - 2; fr = 1; );
+    buf[j] + (buf[j + 1] - buf[j]) * fr;
+  );
+);
+
+// What the trace SHOWS at pixel px, for a caller drawing something of its own
+// that has to land on the line (Apex's connector from a dot to the curve).
+// Interpolating the array is not it once the trace is drawn a column at a time.
+function rk_curve_drawn_db(buf, n, x, w, px) (
+  rk_curve_fill_db(buf, n, min(max(px - x, 0), max(w - 1, 0)), w);
+);
+
+// The polyline itself, in the current colour, `dy` pixels lower (the shadow).
+function rk_curve_poly(x, y, w, h, buf, n, dr, dy)
+local(i, m, cols, x0, x1, y0, y1, top, bot) (
+  top = y + 1; bot = y + h - 2;
+  cols = (n - 1) > w;
+  m = cols ? floor(w) : n;
+  y0 = min(max(rk_curve_d2y(cols ? rk_curve_col_db(buf, n, 0, w) : buf[0], y, h, dr), top), bot);
+  x0 = x;
+  i = 1;
+  loop(m - 1,
+    y1 = min(max(rk_curve_d2y(cols ? rk_curve_col_db(buf, n, i, w) : buf[i], y, h, dr), top), bot);
+    x1 = cols ? x + i : x + i * w / (n - 1);
+    gfx_line(x0, y0 + dy, x1, y1 + dy);
+    x0 = x1; y0 = y1;
+    i += 1;
+  );
+);
+
+function rk_curve_trace_a(x, y, w, h, buf, n, dr, fill, r, g, b, a)
+local(i, y0, cy_, top, bot, t, j, fr) (
   n < 2 ? 0 : (
     top = y + 1; bot = y + h - 2; cy_ = y + h * 0.5;
 
@@ -249,14 +444,10 @@ local(i, x0, x1, y0, y1, cy_, top, bot, t, j, fr) (
     // every pair -- the same stripes, from the opposite cause. A column per
     // pixel cannot gap and cannot overlap, and it costs one loop over the width.
     fill ? (
-      gfx_set(r, g, b, 0.14);
+      gfx_set(r, g, b, 0.14 * a);
       i = 0;
       loop(floor(w),
-        t  = i / max(w - 1, 1) * (n - 1);
-        j  = floor(t);
-        fr = t - j;
-        j >= n - 1 ? ( j = n - 2; fr = 1; );
-        y0 = rk_curve_d2y(buf[j] + (buf[j + 1] - buf[j]) * fr, y, h, dr);
+        y0 = rk_curve_d2y(rk_curve_fill_db(buf, n, i, w), y, h, dr);
         y0 = min(max(y0, top), bot);
         gfx_rect(x + i, min(cy_, y0), 1, max(1, abs(y0 - cy_)));
         i += 1;
@@ -265,27 +456,196 @@ local(i, x0, x1, y0, y1, cy_, top, bot, t, j, fr) (
 
     // Shadow pass then the line itself: one pixel down and dark, so the trace
     // reads against the grid without needing a thicker stroke.
-    gfx_set(0, 0, 0, 0.45);
-    i = 0;
-    loop(n - 1,
-      x0 = x + i * w / (n - 1);
-      x1 = x + (i + 1) * w / (n - 1);
-      y0 = min(max(rk_curve_d2y(buf[i],     y, h, dr), top), bot);
-      y1 = min(max(rk_curve_d2y(buf[i + 1], y, h, dr), top), bot);
-      gfx_line(x0, y0 + 1, x1, y1 + 1);
-      i += 1;
+    gfx_set(0, 0, 0, 0.45 * a);
+    rk_curve_poly(x, y, w, h, buf, n, dr, 1);
+    gfx_set(r, g, b, a);
+    rk_curve_poly(x, y, w, h, buf, n, dr, 0);
+  );
+);
+
+function rk_curve_trace(x, y, w, h, buf, n, dr, fill, r, g, b) (
+  rk_curve_trace_a(x, y, w, h, buf, n, dr, fill, r, g, b, 1);
+);
+
+// ── One band, in its own colour ───────────────────────────────────────
+// A multi-band curve reads as BANDS when each keeps a colour: its node, and a
+// shade of the same colour filling that band's own bell under the summed
+// trace. The FILL skips every column shorter than half a pixel, so a narrow
+// band costs only the pixels it covers. The OUTLINE is drawn wherever the band
+// is off the midline and SNAPS onto the midline's own pixel row where it lands;
+// along the midline itself rk_curve_bands draws ONE neutral line, full width,
+// for all of them. See the note in the outline pass for why it is not simply
+// every band's colour run edge to edge.
+function rk_curve_band(x, y, w, h, buf, n, dr, r, g, b, fill_a, line_a)
+local(i, j, t, fr, x0, x1, y0, y1, cy_, top, bot, ay, a0, a1, cols, m, v0, v1) (
+  n < 2 ? 0 : (
+    top = y + 1; bot = y + h - 2; cy_ = y + h * 0.5;
+    fill_a > 0 ? (
+      gfx_set(r, g, b, fill_a);
+      i = 0;
+      loop(floor(w),
+        y0 = rk_curve_d2y(rk_curve_fill_db(buf, n, i, w), y, h, dr);
+        y0 = min(max(y0, top), bot);
+        abs(y0 - cy_) >= 0.5 ? gfx_rect(x + i, min(cy_, y0), 1, abs(y0 - cy_));
+        i += 1;
+      );
     );
-    gfx_set(r, g, b, 1);
-    i = 0;
-    loop(n - 1,
-      x0 = x + i * w / (n - 1);
-      x1 = x + (i + 1) * w / (n - 1);
-      y0 = min(max(rk_curve_d2y(buf[i],     y, h, dr), top), bot);
-      y1 = min(max(rk_curve_d2y(buf[i + 1], y, h, dr), top), bot);
-      gfx_line(x0, y0, x1, y1);
-      i += 1;
+    // The outline. FOUR tries, in order, so the next person does not repeat one:
+    //  1. each line simply stopped half a pixel from the midline. Beside a 0 dB
+    //     gridline too faint to see, it looked like it ended in mid-air.
+    //  2. a 4 px fade into the midline. A bell's tail nears 0 dB so slowly that
+    //     4 px of height is a long stretch of graph: every line went murky.
+    //  3. every band's colour run edge to edge, "like Apex". Looked at closely
+    //     the midline was a dashed candy stripe two rows thick: each tail sits a
+    //     fraction of a pixel above or below 0 dB, so neighbours land on
+    //     different rows, and being translucent they mix differently all the way
+    //     along. (Apex never showed it: it floored every coordinate and drew
+    //     opaque, so its last band simply painted the whole line.)
+    //  4. THIS: a band's colour wherever it is off the midline, its end SNAPPED
+    //     onto the midline's exact pixel row (`ay`, the row rk_curve_grid's 0 dB
+    //     line occupies), and the stretch along the midline left to the one
+    //     neutral line rk_curve_bands draws full width. Nothing hangs, nothing
+    //     stripes, and the 0 dB line does not claim to be any one band's.
+    line_a > 0 ? (
+      gfx_set(r, g, b, line_a);
+      ay = floor(cy_);
+      cols = (n - 1) > w;                  // see rk_curve_col_db
+      m = cols ? floor(w) : n;
+      // "On the midline" is within 1.5 px, not 0.5. A Gaussian demo bell dies
+      // away fast; a REAL filter's skirt stays a few hundredths of a dB off 0
+      // for octaves, which is a coloured line one pixel from the 0 dB line for
+      // half the graph, antialiased INTO its row: the neutral line came out
+      // tinted a different colour every few hundred Hz (seen on the 4-Band and
+      // Apex, 2026-09-21). 1.5 px keeps an outline clear of that row or on it.
+      v0 = cols ? rk_curve_col_db(buf, n, 0, w) : buf[0];
+      x0 = x;
+      i = 1;
+      loop(m - 1,
+        v1 = cols ? rk_curve_col_db(buf, n, i, w) : buf[i];
+        x1 = cols ? x + i : x + i * w / (n - 1);
+        y0 = min(max(rk_curve_d2y(v0, y, h, dr), top), bot);
+        y1 = min(max(rk_curve_d2y(v1, y, h, dr), top), bot);
+        a0 = abs(y0 - cy_) < 1.5;
+        a1 = abs(y1 - cy_) < 1.5;
+        !(a0 && a1) ? (
+          a0 ? y0 = ay;
+          a1 ? y1 = ay;
+          gfx_line(x0, y0, x1, y1);
+        );
+        v0 = v1; x0 = x1;
+        i += 1;
+      );
     );
   );
+);
+
+// ── The look ──────────────────────────────────────────────────────────
+// Three ways to show a band and three ways to show a node were each alive in
+// one EQ and nowhere else: shaded shapes in EON Tone, thick outlines in Apex,
+// a named ring in the 4-Band, a plain dot in Tone, a badge in Apex. They are
+// all here now, so a plugin chooses a look instead of owning one -- and every
+// plugin starts on the SAME one. Zero is the default on purpose: a plugin that
+// never calls this, and memory that starts zeroed, both land on Fill and Ring.
+RKCV_FILL = 0; RKCV_LINES = 1; RKCV_BOTH = 2;
+RKCV_RING = 0; RKCV_DOT   = 1; RKCV_BADGE = 2;
+RKCV_BADGE_K = 1.12;      // a Badge disc's radius, as a multiple of the node radius
+
+function rk_curve_style(bands, nodes) (
+  rkcv_sty_bands = min(max(floor(bands), 0), 2);
+  rkcv_sty_nodes = min(max(floor(nodes), 0), 2);
+);
+
+// Every band, in the current style. ⭐ THE ALPHAS LIVE HERE. Before this each
+// EQ typed its own (0.20, 0.50, 0.13 ...), which is why the same filter looked
+// like three different filters in three plugins.
+//   fill  0.20, rising to 0.34 under the pointer or selected
+//   line  0.40 beside a fill, 0.85 alone; hover and selection lift it
+//   off   a band that is switched off keeps a ghost of its shape, so it can
+//         still be found: fill 0.06, line 0.18
+//   axis  in the two styles that draw outlines, ONE neutral line along 0 dB,
+//         edge to edge, that every outline runs into (0.55)
+//   dim   everything x 0.35 while the whole EQ is bypassed
+//
+// ⭐ ORDER. Shades, then the 0 dB line, then the SUMMED curve, then the coloured
+// outlines ON TOP of it. A band that overlaps no other IS the sum over its own
+// span, so with the outlines underneath the white curve hid every one of them
+// and "Fill + Lines" looked exactly like "Fill" (user, 2026-09-21: "draw the
+// colored outlines over the white curve"). Hence passes: rk_curve_draw runs
+// them in that order with the trace in the middle.
+function rk_curve_bands_ex(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim, what)
+local(i, en, ht, fa, la, k, r, g, b) (
+  k = dim ? 0.35 : 1;
+  i = 0;
+  loop(nb,
+    en = ebuf < 0 ? 1 : ebuf[i];
+    ht = hbuf < 0 ? 0 : hbuf[i];
+    i == sel ? ht = max(ht, 0.7);
+    fa = rkcv_sty_bands == RKCV_LINES ? 0 : en ? 0.20 + 0.14 * ht : 0.06;
+    la = rkcv_sty_bands == RKCV_FILL  ? 0 :
+         rkcv_sty_bands == RKCV_LINES ? ( en ? 0.85 + 0.15 * ht : 0.18 )
+                                      : ( en ? 0.40 + 0.40 * ht : 0.18 );
+    r = cbuf[i * 3]; g = cbuf[i * 3 + 1]; b = cbuf[i * 3 + 2];
+    (what & 1) && fa > 0 ? rk_curve_band(x, y, w, h, bbuf + i * n, n, dr, r, g, b, fa * k, 0);
+    (what & 2) && la > 0 ? (
+      rk_curve_band(x, y, w, h, bbuf + i * n, n, dr, r, g, b, 0, la * k);
+      // Alone, a one-pixel outline is too thin to carry a colour: a second pass
+      // a pixel lower gives it weight without a polygon.
+      rkcv_sty_bands == RKCV_LINES && en ?
+        rk_curve_band(x, y + 1, w, h, bbuf + i * n, n, dr, r, g, b, 0, la * k * 0.45);
+    );
+    i += 1;
+  );
+  // The line the outlines run into: on the same pixel row the outlines snap to
+  // and the grid's own 0 dB line sits on. Under the summed curve, which is
+  // white where it lies flat along it.
+  (what & 4) && rkcv_sty_bands != RKCV_FILL ? (
+    gfx_set(0.62, 0.66, 0.74, 0.55 * k);
+    gfx_rect(x + 1, floor(y + h * 0.5), w - 2, 1);
+  );
+);
+
+function rk_curve_bands(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim) (
+  rk_curve_bands_ex(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim, 7);
+);
+
+function rk_curve_draw(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim,
+                       sbuf, tr, tg, tb, ta) (
+  rk_curve_bands_ex(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim, 5);
+  rk_curve_trace_a(x, y, w, h, sbuf, n, dr, 0, tr, tg, tb, ta);
+  rk_curve_bands_ex(x, y, w, h, bbuf, n, nb, dr, cbuf, ebuf, hbuf, sel, dim, 2);
+);
+
+// The band colours, in one place: the six the EON EQs wear (Swing's master and
+// per-pad EQ, EON Tone). They run in FREQUENCY order, low to high like a
+// spectrum, so neighbouring bands never share a hue -- two bands whose fills
+// overlap in the same colour read as one shape.
+//   0 red   1 orange   2 green   3 teal   4 blue   5 violet
+// The ends belong to the filters (HPF red, LPF violet) and teal to a second
+// mid, so fewer than six bands take the MIDDLE of the run, the way those EQs do:
+//   3 -> orange green blue          4 -> orange green teal blue
+//   5 -> red orange green blue violet          6 -> all of them
+function rk_curve_band_rgb(cbuf, i, c) (
+  c == 0 ? ( cbuf[i * 3] = 0.92; cbuf[i * 3 + 1] = 0.30; cbuf[i * 3 + 2] = 0.30; ) :
+  c == 1 ? ( cbuf[i * 3] = 0.96; cbuf[i * 3 + 1] = 0.60; cbuf[i * 3 + 2] = 0.18; ) :
+  c == 2 ? ( cbuf[i * 3] = 0.38; cbuf[i * 3 + 1] = 0.86; cbuf[i * 3 + 2] = 0.36; ) :
+  c == 3 ? ( cbuf[i * 3] = 0.22; cbuf[i * 3 + 1] = 0.82; cbuf[i * 3 + 2] = 0.70; ) :
+  c == 4 ? ( cbuf[i * 3] = 0.30; cbuf[i * 3 + 1] = 0.66; cbuf[i * 3 + 2] = 0.96; ) :
+           ( cbuf[i * 3] = 0.68; cbuf[i * 3 + 1] = 0.44; cbuf[i * 3 + 2] = 0.96; );
+);
+
+function rk_curve_palette(cbuf, n) (
+  n <= 1 ? ( rk_curve_band_rgb(cbuf, 0, 2); ) :
+  n == 2 ? ( rk_curve_band_rgb(cbuf, 0, 1); rk_curve_band_rgb(cbuf, 1, 4); ) :
+  n == 3 ? ( rk_curve_band_rgb(cbuf, 0, 1); rk_curve_band_rgb(cbuf, 1, 2);
+             rk_curve_band_rgb(cbuf, 2, 4); ) :
+  n == 4 ? ( rk_curve_band_rgb(cbuf, 0, 1); rk_curve_band_rgb(cbuf, 1, 2);
+             rk_curve_band_rgb(cbuf, 2, 3); rk_curve_band_rgb(cbuf, 3, 4); ) :
+  n == 5 ? ( rk_curve_band_rgb(cbuf, 0, 0); rk_curve_band_rgb(cbuf, 1, 1);
+             rk_curve_band_rgb(cbuf, 2, 2); rk_curve_band_rgb(cbuf, 3, 4);
+             rk_curve_band_rgb(cbuf, 4, 5); ) :
+           ( rk_curve_band_rgb(cbuf, 0, 0); rk_curve_band_rgb(cbuf, 1, 1);
+             rk_curve_band_rgb(cbuf, 2, 2); rk_curve_band_rgb(cbuf, 3, 3);
+             rk_curve_band_rgb(cbuf, 4, 4); rk_curve_band_rgb(cbuf, 5, 5); );
 );
 
 // ── Nodes ─────────────────────────────────────────────────────────────
@@ -314,6 +674,23 @@ function rk_curve_nodes(mem, x, y, w, h, dr, fbuf, dbuf, n)
 local(i, hov, mods, dx, dy, sens, now) (
   rk_curve_ni = -1; rk_curve_moved = 0; rk_curve_dblclk = 0;
   rk_curve_nf = 0;  rk_curve_ndb = 0;  rk_curve_nwheel = 0;
+
+  // A foreign pass (see the header) holds the owner's pointer against THIS
+  // pass's rect: it must not hover, grab, drag or eat the wheel. It must not
+  // drop the drag either -- LMB there is the owner's held button.
+  // ⚠️ A held node publishes its CURRENT frequency and gain on such a pass. A
+  // caller is entitled to gate its write-back on "a node is held" (mem[0] >= 0)
+  // rather than on rk_curve_moved -- the 4-Band does, deliberately -- and with
+  // these left at zero that caller would write 20 Hz / 0 dB into the dragged
+  // band on every foreign frame. The current value written back is a no-op.
+  _srf_foreign ? (
+    rk_curve_hov = mem[0];
+    mem[0] >= 0 ? (
+      rk_curve_ni  = mem[0];
+      rk_curve_nf  = fbuf[mem[0]];
+      rk_curve_ndb = dbuf[mem[0]];
+    );
+  ) : (
 
   hov = mem[0] >= 0 ? mem[0] : rk_curve_nodes_hit(x, y, w, h, dr, fbuf, dbuf, n);
   rk_curve_hov = hov;
@@ -370,34 +747,136 @@ local(i, hov, mods, dx, dy, sens, now) (
     rk_curve_ndb = rk_curve_y2d(rk_curve_d2y(mem[4], y, h, dr) + dy, y, h, dr);
     rk_curve_moved = (dx != 0 || dy != 0);
   );
+
+  );   // !_srf_foreign
   rk_curve_ni;
 );
 
+// One node, in the current style. Every painter below calls it, so a node
+// looks the same whichever one drew it and they cannot drift apart.
+//   Ring   the 4-Band's: a disc in the band's colour, a dark centre, the band's
+//          name inside it. With no name, the centre is smaller and carries a dot.
+//   Dot    EON Tone's: a plain disc with a dark outline.
+//   Badge  a bigger solid disc with white rims, the name INSIDE it in dark
+//          type. (It came from Apex with the name underneath, because Apex
+//          fills the disc with a filter-shape picture. With nothing inside, the
+//          disc was an empty blob over the peak it marked and the name was a
+//          speck below it. Apex passes no name and draws its picture and its
+//          number itself, sized from RKCV_BADGE_K.)
+// `al` scales every alpha, for a band that is switched off.
+function rk_curve_node_paint_ex(nx, ny, rad, ht, on, al, r, g, b, lbl)
+local(tw, th, br) (
+  rkcv_sty_nodes == RKCV_DOT ? (
+    ht > 0.01 ? ( gfx_set(r, g, b, 0.22 * ht * al); gfx_circle(nx, ny, rad * 1.7, 1, 1); );
+    gfx_set(r, g, b, al);
+    gfx_circle(nx, ny, rad * 0.85, 1, 1);
+    gfx_set(0, 0, 0, 0.40 * al);
+    gfx_circle(nx, ny, rad * 0.85, 0, 1);
+    on ? ( gfx_set(1, 1, 1, 0.90 * al); gfx_circle(nx, ny, rad * 0.85 + 2, 0, 1); );
+  ) : rkcv_sty_nodes == RKCV_BADGE ? (
+    br = rad * RKCV_BADGE_K;
+    ht > 0.01 ? ( gfx_set(r, g, b, 0.18 * ht * al); gfx_circle(nx, ny, br * 1.6, 1, 1); );
+    gfx_set(r, g, b, al);
+    gfx_circle(nx, ny, br, 1, 1);
+    gfx_set(1, 1, 1, 0.55 * al); gfx_circle(nx, ny, br, 0, 1);
+    gfx_set(1, 1, 1, 0.22 * al); gfx_circle(nx, ny, br - 1, 0, 1);
+    gfx_set(0, 0, 0, 0.85 * al); gfx_circle(nx, ny, br + 1, 0, 1);
+    on ? ( gfx_set(1, 1, 1, 0.80 * al); gfx_circle(nx, ny, br + 3, 0, 1); );
+    lbl >= 0 ? (
+      // the name, dark on the band's colour
+      gfx_setfont(1, "Arial", max(7, floor(rad * 1.05)), 'b');
+      gfx_measurestr(lbl, tw, th);
+      // Dark on the band's colour -- unless the band is off, when the disc is
+      // dimmed almost to the plate and dark type on it vanishes ("HP" / "LP" on
+      // the 4-Band's switched-off filters). Then it is light.
+      // Light type still follows `al`: 0.69 at the 0.30 an off band uses, 0 at 0.
+      al < 0.6 ? gfx_set(0.92, 0.94, 0.98, min(1, 2.3 * al)) : gfx_set(0.04, 0.05, 0.07, 0.92 * al);
+      gfx_x = nx - tw * 0.5 + 0.5; gfx_y = ny - th * 0.5;
+      gfx_drawstr(lbl);
+    );
+  ) : (
+    // hover halo
+    ht > 0.01 ? (
+      gfx_set(r, g, b, 0.16 * ht * al);
+      gfx_circle(nx, ny, rad * 1.9, 1, 1);
+    );
+    // body, dark core, ring
+    gfx_set(r, g, b, (on ? 1 : 0.78) * al);
+    gfx_circle(nx, ny, rad, 1, 1);
+    gfx_set(0.04, 0.04, 0.06, 0.85 * al);
+    gfx_circle(nx, ny, rad * (lbl >= 0 ? 0.74 : 0.55), 1, 1);
+    gfx_set(1, 1, 1, (on ? 0.95 : 0.55) * al);
+    gfx_circle(nx, ny, rad, 0, 1);
+    lbl >= 0 ? (
+      // the name, where the centre dot would be
+      gfx_setfont(1, "Arial", max(7, floor(rad * 0.95)), 'b');
+      gfx_measurestr(lbl, tw, th);
+      gfx_set(1, 1, 1, (on ? 1 : 0.88) * al);
+      gfx_x = nx - tw * 0.5 + 0.5; gfx_y = ny - th * 0.5;
+      gfx_drawstr(lbl);
+    ) : on ? (
+      gfx_set(1, 1, 1, 0.9 * al);
+      gfx_circle(nx, ny, max(1, rad * 0.18), 1, 1);
+    );
+  );
+);
+
+function rk_curve_node_paint(nx, ny, rad, ht, on, r, g, b) (
+  rk_curve_node_paint_ex(nx, ny, rad, ht, on, 1, r, g, b, -1);
+);
+
+// A line of text by a node. Above it; below when above would leave the rect.
+function rk_curve_node_label(nx, ny, rad, x, y, w, h, str)
+local(tw, th, ty) (
+  gfx_setfont(1, "Arial", rk_curve_font_px(h));
+  gfx_measurestr(str, tw, th);
+  ty = ny - rad * 1.4 - th - 2;
+  ty < y + 1 ? ty = ny + rad * 1.4 + 2;
+  gfx_set(0.86, 0.88, 0.92, 0.95);
+  gfx_x = min(max(nx - tw * 0.5, x + 2), x + w - tw - 2);
+  gfx_y = ty;
+  gfx_drawstr(str);
+);
+
 function rk_curve_nodes_draw(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, r, g, b)
-local(i, nx, ny, rad, ht, held) (
+local(i, rad, held) (
   rad = rk_curve_node_r(w);
   held = mem[0];
   i = 0;
   loop(n,
-    nx = rk_curve_f2x(fbuf[i], x, w);
-    ny = rk_curve_d2y(dbuf[i], y, h, dr);
-    ht = mem[8 + i];
-    // hover halo
-    ht > 0.01 ? (
-      gfx_set(r, g, b, 0.16 * ht);
-      gfx_circle(nx, ny, rad * 1.9, 1, 1);
-    );
-    // body, dark core, ring, centre dot
-    gfx_set(r, g, b, i == sel || i == held ? 1 : 0.78);
-    gfx_circle(nx, ny, rad, 1, 1);
-    gfx_set(0.04, 0.04, 0.06, 0.85);
-    gfx_circle(nx, ny, rad * 0.55, 1, 1);
-    gfx_set(1, 1, 1, i == sel || i == held ? 0.95 : 0.55);
-    gfx_circle(nx, ny, rad, 0, 1);
-    i == sel || i == held ? (
-      gfx_set(1, 1, 1, 0.9);
-      gfx_circle(nx, ny, max(1, rad * 0.18), 1, 1);
-    );
+    rk_curve_node_paint(rk_curve_f2x(fbuf[i], x, w), rk_curve_d2y(dbuf[i], y, h, dr),
+                        rad, mem[8 + i], i == sel || i == held, r, g, b);
+    i += 1;
+  );
+);
+
+function rk_curve_nodes_draw_rgb(mem, x, y, w, h, dr, fbuf, dbuf, n, sel, cbuf)
+local(i, rad, held) (
+  rad = rk_curve_node_r(w);
+  held = mem[0];
+  i = 0;
+  loop(n,
+    rk_curve_node_paint(rk_curve_f2x(fbuf[i], x, w), rk_curve_d2y(dbuf[i], y, h, dr),
+                        rad, mem[8 + i], i == sel || i == held,
+                        cbuf[i * 3], cbuf[i * 3 + 1], cbuf[i * 3 + 2]);
+    i += 1;
+  );
+);
+
+function rk_curve_nodes_draw_ex(mem, x, y, w, h, dr, fbuf, ybuf, n, sel, cbuf, ebuf, lblbuf)
+local(i, rad, held, top, bot) (
+  rad = rk_curve_node_r(w);
+  held = mem[0];
+  // A node riding a curve that is clamped to the rect stays inside it too.
+  top = y + 1; bot = y + h - 2;
+  i = 0;
+  loop(n,
+    rk_curve_node_paint_ex(rk_curve_f2x(fbuf[i], x, w),
+                           min(max(rk_curve_d2y(ybuf[i], y, h, dr), top), bot),
+                           rad, mem[8 + i], i == sel || i == held,
+                           ebuf < 0 || ebuf[i] ? 1 : 0.30,
+                           cbuf[i * 3], cbuf[i * 3 + 1], cbuf[i * 3 + 2],
+                           lblbuf < 0 ? -1 : lblbuf[i]);
     i += 1;
   );
 );

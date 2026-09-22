@@ -74,6 +74,11 @@ slider27:eq_w2=1.1<0.2,3,0.01>-EQ Lo-Mid Width (oct)
 slider28:eq_w3=1.1<0.2,3,0.01>-EQ Hi-Mid Width (oct)
 slider29:eq_w4=1.1<0.2,3,0.01>-EQ High Width (oct)
 
+// The graph's LOOK. rk_curve can show a band three ways and a node three ways;
+// these two pick. Parameters, so the choice is saved with the project.
+slider30:eq_bands=0<0,2,1{Fill,Lines,Fill + Lines}>-EQ Band Look
+slider31:eq_nodes=0<0,2,1{Ring,Dot,Badge}>-EQ Node Look
+
 // One library set, one place. These five are the whole shipping widget API.
 import knobs_kbsg.jsfx-inc
 import buttons_kbsg.jsfx-inc
@@ -123,6 +128,8 @@ m_mode   = freemem; freemem += BTN_W;
 m_demo   = freemem; freemem += BTN_W;
 m_acc    = freemem; freemem += BTN_W;
 m_sty    = freemem; freemem += BTN_W;
+m_gbands = freemem; freemem += BTN_W;
+m_gnodes = freemem; freemem += BTN_W;
 
 mtr_base = freemem; freemem += 1380; meter_init(mtr_base);
 
@@ -152,6 +159,11 @@ eqf    = freemem; freemem += 4;           // node frequencies
 eqd    = freemem; freemem += 4;           // node gains
 eqw    = freemem; freemem += 4;           // bell widths, in octaves
 eqnm   = freemem; freemem += 8 + 4;       // node drag state: 8 + one per node
+eqb    = freemem; freemem += 4 * EQ_PTS;  // each band's own bell, for its fill
+eqc    = freemem; freemem += 4 * 3;       // a colour per band: r, g, b each
+rk_curve_palette(eqc, 4);                 // the library's own, low to high
+eql    = freemem; freemem += 4;           // each node's name, drawn inside its ring
+eql[0] = "1"; eql[1] = "2"; eql[2] = "3"; eql[3] = "4";
 ppmem  = freemem; freemem += RKPP_MEM;    // the face dropdown's popup
 eqnm[0] = -1;                             // nothing grabbed
 eq_hash = -1;                             // forces the first fill
@@ -400,8 +412,11 @@ function ui_segment3(mem, x, y, w, h, cur, l0, l1, l2) local(nv, sw, gap) (
 // ⭐ It refills only when something changed. Four bands over 256 points is
 // ~2000 transcendentals a fill, and doing that every frame is exactly how the
 // Drum Strip's graph once burned ~600k of them a second while nothing moved.
-function eq_fill(buf, n, fbuf, gbuf, wbuf, nb)
-local(i, j, f, d, sum) (
+//
+// Each band's own bell is kept as well as the sum (`bbuf`, nb arrays of n, one
+// after another), because rk_curve_band fills each band's shape in its colour.
+function eq_fill(buf, bbuf, n, fbuf, gbuf, wbuf, nb)
+local(i, j, f, d, v, sum) (
   i = 0;
   loop(n,
     f = rk_curve_x2f(i, 0, n - 1);        // a unit rect: point index IS the x
@@ -409,7 +424,9 @@ local(i, j, f, d, sum) (
     j = 0;
     loop(nb,
       d = log(f / fbuf[j]) / 0.69314718 / max(wbuf[j], 0.05);   // octaves away
-      sum += gbuf[j] * exp(-d * d);
+      v = gbuf[j] * exp(-d * d);
+      bbuf[j * n + i] = v;
+      sum += v;
       j += 1;
     );
     buf[i] = sum;
@@ -654,7 +671,7 @@ _nv != eq_hi ? ( eq_hi = _nv; slider_automate(eq_hi); );
 // plate kept the full rect put the 500 Hz gridline and the 500 Hz node a pixel
 // apart — the exact drift the shared mapping exists to prevent.
 _cx = c2 + px(10); _cy = st_y(100);
-_cw = w2 - px(20); _ch = st_h(168);
+_cw = w2 - px(20); _ch = st_h(140);
 
 eqf[0] = eq_f1; eqf[1] = eq_f2; eqf[2] = eq_f3; eqf[3] = eq_f4;
 eqd[0] = eq_lo; eqd[1] = eq_lmf; eqd[2] = eq_hmf; eqd[3] = eq_hi;
@@ -664,16 +681,26 @@ eqw[0] = eq_w1; eqw[1] = eq_w2; eqw[2] = eq_w3; eqw[3] = eq_w4;
 _h = eq_lo + eq_lmf * 7 + eq_hmf * 31 + eq_hi * 127
    + eq_f1 * 0.001 + eq_f2 * 0.003 + eq_f3 * 0.007 + eq_f4 * 0.013
    + eq_w1 * 11 + eq_w2 * 53 + eq_w3 * 211 + eq_w4 * 907;
-_h != eq_hash ? ( eq_hash = _h; eq_fill(eqbuf, EQ_PTS, eqf, eqd, eqw, 4); );
+_h != eq_hash ? ( eq_hash = _h; eq_fill(eqbuf, eqb, EQ_PTS, eqf, eqd, eqw, 4); );
 
 // The meter's sixteen bands, in dB, on the same span as the graph.
 _i = 0;
 loop(16, eqspec[_i] = rk_curve_mag2db(mtr_base[1280 + _i]); _i += 1; );
 
+rk_curve_font(max(8, floor(px(9) + 0.5)));    // the ruler, at the face's own label size
 rk_curve_plate(_cx, _cy, _cw, _ch, 18);
+// The analyser is neutral so the colour belongs to the bands: in the accent's
+// secondary it turned whichever band shared its hue to mud.
 rk_curve_analyser(_cx, _cy, _cw, _ch, eqspec, 16, mtr_spec_lo, mtr_spec_hi,
-                  0, -60, a2_r, a2_g, a2_b);
-rk_curve_trace(_cx, _cy, _cw, _ch, eqbuf, EQ_PTS, 18, 1, ac_r, ac_g, ac_b);
+                  0, -60, 0.55, 0.62, 0.75);
+// Every band, in its own colour, in the look the two selectors below chose.
+// rk_curve_draw owns the ORDER (shades, summed curve, outlines on top), the alphas, the hover lift (eqnm + 8 is the node block's
+// hover ramps, one per band) and the dimming while EQ IN is off -- the curve is
+// still what you would get, it is just not what you are hearing. Then the sum
+// of them all, neutral, since it belongs to no one band.
+rk_curve_style(eq_bands, eq_nodes);
+rk_curve_draw(_cx, _cy, _cw, _ch, eqb, EQ_PTS, 4, 18, eqc, -1, eqnm + 8, -1, !eq_on,
+              eqbuf, 0.90, 0.92, 0.96, eq_on ? 1 : 0.35);
 
 // Nodes. rk_curve hands back where the grabbed node WANTS to be; clamping and
 // automation stay here, which is the whole reason it is reusable.
@@ -701,9 +728,26 @@ rk_curve_dblclk && _n >= 0 ? (
   _n == 2 ? ( eq_hmf = 0; slider_automate(eq_hmf); ) :
             ( eq_hi  = 0; slider_automate(eq_hi);  );
 );
-rk_curve_nodes_draw(eqnm, _cx, _cy, _cw, _ch, 18, eqf, eqd, 4,
-                    rk_curve_hov, ac_r, ac_g, ac_b);
+rk_curve_nodes_draw_ex(eqnm, _cx, _cy, _cw, _ch, 18, eqf, eqd, 4,
+                       rk_curve_hov, eqc, -1, eql);
+// The held or hovered node says what it is set to.
+rk_curve_hov >= 0 ? (
+  sprintf(#s, "%+.1f dB  %.2f oct", eqd[rk_curve_hov], eqw[rk_curve_hov]);
+  rk_curve_node_label(rk_curve_f2x(eqf[rk_curve_hov], _cx, _cw),
+                      rk_curve_d2y(eqd[rk_curve_hov], _cy, _ch, 18),
+                      rk_curve_node_r(_cw), _cx, _cy, _cw, _ch, #s);
+);
 ui_tip(_cx, _cy, _cw, _ch, "EQ curve — rk_curve. Drag a node, wheel for width, double-click to flatten");
+
+// The look: how a band is shown, how a node is shown. One library, three of
+// each, and every plugin built on it starts from the same pair.
+_gw = (w2 - px(26)) * 0.5;
+_nv = ui_segment3(m_gbands, c2 + px(10), st_y(248), _gw, px(20),
+                  eq_bands, "FILL", "LINES", "BOTH");
+_nv != eq_bands ? ( eq_bands = _nv; slider_automate(eq_bands); );
+_nv = ui_segment3(m_gnodes, c2 + px(16) + _gw, st_y(248), _gw, px(20),
+                  eq_nodes, "RING", "DOT", "BADGE");
+_nv != eq_nodes ? ( eq_nodes = _nv; slider_automate(eq_nodes); );
 
 _nv = ui_toggle(m_eqon, c2 + px(10), st_y(280), w2 - px(20), px(24),
                 eq_on, "EQ IN");

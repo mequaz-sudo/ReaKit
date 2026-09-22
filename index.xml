@@ -349,28 +349,28 @@ New: the Rainbow Arc, knob style 9. Elements shows all 20 knob styles.
 New: every knob answers the mouse. The styles that barely moved on hover now swell the way Spice does, and how strongly is the host's choice: rk_hover_mode 0 is Normal, 1 None, 2 Moderate, 3 Dramatic. The Knobs tab has a HOVER bar that flips it live.
 
 Fixed in rk_curve: a curve with more points than pixels no longer stair-steps, the analyser no longer looks cut off at the edges, a band's outline runs the full width and stays solid, the badge carries its name, the ruler's labels are quieter, and the shade reads its array the same way the outline does. The caller can set the label size, and a plate mode with a compact grid.]]></changelog>
-        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/ReaKit%20Elements.jsfx</source>
-        <source file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/ReaKit%20Starter.jsfx</source>
-        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/knobs_kbsg.jsfx-inc</source>
-        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/sliders_kbsg.jsfx-inc</source>
-        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/buttons_kbsg.jsfx-inc</source>
-        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_vu.jsfx-inc</source>
-        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/meters_kbsg.jsfx-inc</source>
-        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_padgrid.jsfx-inc</source>
-        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_piano.jsfx-inc</source>
-        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_ui_math.jsfx-inc</source>
-        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_ui_core.jsfx-inc</source>
-        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_ui_knob.jsfx-inc</source>
-        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_ui_button.jsfx-inc</source>
-        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_ui_slider.jsfx-inc</source>
-        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_ui_meter.jsfx-inc</source>
-        <source file="rk_curve.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_curve.jsfx-inc</source>
-        <source file="rk_popup.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_popup.jsfx-inc</source>
-        <source file="rk_ink.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_ink.jsfx-inc</source>
-        <source file="rk_tooltip.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_tooltip.jsfx-inc</source>
-        <source file="rk_textfield.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_textfield.jsfx-inc</source>
-        <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_colorpick.jsfx-inc</source>
-        <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2d34dcc4c3fab0071cef2108451e6d90578eeb15/Library/rk_adsr.jsfx-inc</source>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/ReaKit%20Elements.jsfx</source>
+        <source file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/ReaKit%20Starter.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_vu.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_curve.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_curve.jsfx-inc</source>
+        <source file="rk_popup.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_popup.jsfx-inc</source>
+        <source file="rk_ink.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_ink.jsfx-inc</source>
+        <source file="rk_tooltip.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_tooltip.jsfx-inc</source>
+        <source file="rk_textfield.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_textfield.jsfx-inc</source>
+        <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_colorpick.jsfx-inc</source>
+        <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_adsr.jsfx-inc</source>
       </version>
     </reapack>
   </category>

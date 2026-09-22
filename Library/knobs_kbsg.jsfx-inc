@@ -6,7 +6,7 @@ __knobs_kbsg_loaded = 1;
 // All knob types except EQ1979 (which needs off-screen buffers, see knobs_eq1979.jsfx-inc).
 //
 // Types included:
-//   1. BirdBird VIC     — rainbow color cycling arc, needle, 3-pass inner ring
+//   1. Rainbow Arc      — house-colour cycling arc, rimmed body, pointer (VIC look)
 //   2. Joanny/McFizz    — blue pot, 4-pass shadow, box hover, canChange gate
 //   3. Spice Pro        — themed arc fill (role hue, value heat + glow),
 //                         sweep needle, bipolar center-fill, panel-aware ring
@@ -52,7 +52,7 @@ __knobs_kbsg_loaded = 1;
 //   [3]  drag_start_val [4]  last_click_time  [5]  automate_flag
 //   [6]  is_active      [7]  aux_value        [8..15] type-specific
 //
-// BirdBird extra:  [8]=run_time  [9]=whr  [10]=whg  [11]=whb
+// Rainbow Arc extra: [8]=run time  [9..11]=colour state
 // Joanny extra:    [8]=hasEntered (canChange gate)
 //
 // INTERACT RETURN: new slider value. Caller checks change, calls sliderchange/automate.
@@ -74,82 +74,90 @@ RK_DBLCLICK_T = 0.3;
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 1. BIRDBIRD VIC
+// 1. RAINBOW ARC  (the look of BirdBird's VIC knob; EON's own code, 2026-09-21)
 // ═══════════════════════════════════════════════════════════════════════════
-// Globals used: bb_brightness (set to 0 at init), bb_tr/bb_tg/bb_tb (set by palette)
+// Globals used: bb_brightness (0 at init; lifts the colour toward white) and
+// bb_tr/bb_tg/bb_tb (set by bb_palette). The bb_ names stay for existing callers.
 
-// Palette: call once per frame before bb_knob_draw. Sets bb_tr, bb_tg, bb_tb.
-function bb_palette(t) (
-  bb_b = 0.2;
-  bb_tr = min(0.5 + bb_brightness + cos((t) * tau) * 0.5, 1) + bb_b;
-  bb_tg = min(0.5 + bb_brightness + cos((t + 0.33) * tau) * 0.5, 1) + bb_b;
-  bb_tb = min(0.5 + bb_brightness + cos((t + 0.67) * tau) * 0.5, 1) + bb_b;
+// One of EON's six band colours (Tone's six) into bb_sr/bb_sg/bb_sb.
+function bb_six(i) (
+  i == 0 ? ( bb_sr = 0.92; bb_sg = 0.30; bb_sb = 0.30; ) :   // red
+  i == 1 ? ( bb_sr = 0.96; bb_sg = 0.60; bb_sb = 0.18; ) :   // orange
+  i == 2 ? ( bb_sr = 0.38; bb_sg = 0.86; bb_sb = 0.36; ) :   // green
+  i == 3 ? ( bb_sr = 0.22; bb_sg = 0.82; bb_sb = 0.70; ) :   // teal
+  i == 4 ? ( bb_sr = 0.30; bb_sg = 0.66; bb_sb = 0.96; ) :   // blue
+           ( bb_sr = 0.68; bb_sg = 0.44; bb_sb = 0.96; );    // violet
 );
 
-// Draw: arc ring with color cycling, 3-pass inner circle, needle
-// mem[8]=run_time, mem[9..11]=whr/whg/whb (persistent color state)
-function bb_knob_draw(cx, cy, r, value, vmin, vmax, mem)
-local(col_timer_len, t_col, whr, whg, whb, dim_r, dim_g, dim_b,
-      aw, kw, km_, ki, kr, kas, af, _vn,
-      t_anim, draw_w, draw_inner, i, polar_angle, xo_, yo_)
+// Palette: the six, cross-faded in a loop, 0.6 s per step; t in seconds.
+// Sets bb_tr, bb_tg, bb_tb.
+function bb_palette(t)
+local(p, i, f, r0, g0, b0)
 (
-  // Normalize value to 0–1
-  _vn = (value - vmin) / (vmax - vmin);
+  p = t / 0.6;
+  p -= floor(p / 6) * 6;
+  i = floor(p);
+  f = p - i;
+  f = f * f * (3 - 2 * f);
+  bb_six(i);
+  r0 = bb_sr; g0 = bb_sg; b0 = bb_sb;
+  bb_six((i + 1) % 6);
+  bb_tr = r0 + (bb_sr - r0) * f;
+  bb_tg = g0 + (bb_sg - g0) * f;
+  bb_tb = b0 + (bb_sb - b0) * f;
+  bb_tr += (1 - bb_tr) * bb_brightness;
+  bb_tg += (1 - bb_tg) * bb_brightness;
+  bb_tb += (1 - bb_tb) * bb_brightness;
+);
 
-  // Color cycling
-  bb_palette(time_precise() * 1.75);
-  col_timer_len = 4;
-  t_col = min(mem[8] * col_timer_len, 1);
-  t_col = pow(t_col, 0.25);
-  mem[9]  = lerp(mem[9],  bb_tr, t_col);
-  mem[10] = lerp(mem[10], bb_tg, t_col);
-  mem[11] = lerp(mem[11], bb_tb, t_col);
-  whr = mem[9]; whg = mem[10]; whb = mem[11];
-  dim_r = whr / 6; dim_g = whg / 6; dim_b = whb / 6;
+// Draw: a 270-degree value arc in the cycling house colour over a dim track,
+// a dark body with a thin coloured rim, and a pointer ending in a dot.
+// mem[0] = hover ramp (from bb_knob_interact), mem[8] = run time,
+// mem[9..11] = colour state (eases toward the palette).
+function bb_knob_draw(cx, cy, r, value, vmin, vmax, mem)
+local(v, a0, sweep, av, ring_w, ring_in, rr, n, ease, cr, cg, cb, body_r, s, c)
+(
+  v = vmax > vmin ? min(max((value - vmin) / (vmax - vmin), 0), 1) : 0;
 
-  // Proportions: w=20+anim_w, margin=10, anim_w=3, rad=0.6
-  aw = r * 3 / 55;       // anim_w scaled
-  kw = r * 23 / 55;      // knob_w + anim_w
-  km_ = r * 10 / 55;     // margin
-  ki = r - kw - km_;      // inner radius
-  kr = 0.6;               // arc coverage (fraction of tau)
-  kas = -tau * (1 + kr / 2);  // arc start angle
-  af = 6;                 // arc fill density
+  // Colour: the loop runs while the knob is up; at zero it rests on red.
+  bb_palette(v > 0 ? mem[8] : 0);
+  ease = min(1, dt * 6);
+  mem[9]  += (bb_tr - mem[9])  * ease;
+  mem[10] += (bb_tg - mem[10]) * ease;
+  mem[11] += (bb_tb - mem[11]) * ease;
+  cr = mem[9]; cg = mem[10]; cb = mem[11];
 
-  // Hover animation
-  t_anim = pow(mem[0], 2);
-  draw_w = lerp(kw, kw - aw, t_anim);
-  draw_inner = lerp(ki, ki + aw, t_anim);
+  // Angles run clockwise from 12 o'clock: lower-left to lower-right.
+  sweep = $pi * 1.5;
+  a0 = -$pi * 0.75;
+  av = a0 + v * sweep;
+  ring_w = r * (0.16 + 0.04 * mem[0]);   // a touch thicker on hover
+  ring_in = r - ring_w;
+  n = ceil(ring_w * 2);                   // half-pixel passes
 
-  // Arc ring — two-pass: all dim arcs then all bright arcs
-  // (avoids ~138 redundant gfx_set color switches per frame)
-  gfx_set(dim_r, dim_g, dim_b, 1);
-  i = r - draw_w;
-  loop(draw_w * af,
-    gfx_arc(cx, cy, i, kas, tau * kr + kas);
-    i += 1 / af;
+  gfx_set(0.06 + cr * 0.2, 0.06 + cg * 0.2, 0.07 + cb * 0.2, 1);
+  rr = ring_in;
+  loop(n, gfx_arc(cx, cy, rr, a0, a0 + sweep, 1); rr += 0.5; );
+  v > 0 ? (
+    gfx_set(cr, cg, cb, 1);
+    rr = ring_in;
+    loop(n, gfx_arc(cx, cy, rr, a0, av, 1); rr += 0.5; );
   );
-  gfx_set(whr, whg, whb, 1);
-  i = r - draw_w;
-  loop(draw_w * af,
-    gfx_arc(cx, cy, i, kas, _vn * tau * kr + kas);
-    i += 1 / af;
-  );
 
-  // Inner circle (3-pass outline)
-  gfx_set(whr, whg, whb, 1);
-  gfx_circle(cx, cy, draw_inner, 0);
-  gfx_circle(cx, cy, draw_inner - 0.25, 0);
-  gfx_circle(cx, cy, draw_inner - 0.5, 0);
+  body_r = ring_in - max(2, r * 0.08);
+  gfx_set(0.10, 0.10, 0.12, 1);
+  gfx_circle(cx, cy, body_r, 1, 1);
+  gfx_set(cr, cg, cb, 0.55 + 0.35 * mem[0]);
+  gfx_circle(cx, cy, body_r, 0, 1);
 
-  // Needle
-  polar_angle = (_vn * 1.01) * tau * kr + kas;
-  xo_ = sin(polar_angle + tau / 2) * -1;
-  yo_ = cos(polar_angle + tau / 2);
-  gfx_line(cx, cy, cx + xo_ * (draw_inner - 1), cy + yo_ * (draw_inner - 1));
+  s = sin(av);
+  c = -cos(av);
+  gfx_set(cr, cg, cb, 1);
+  gfx_line(cx + s * body_r * 0.35, cy + c * body_r * 0.35,
+           cx + s * body_r * 0.85, cy + c * body_r * 0.85, 1);
+  gfx_circle(cx + s * body_r * 0.85, cy + c * body_r * 0.85, max(1.5, r * 0.05), 1, 1);
 
-  // Run time for color cycling trigger
-  _vn > 0 ? ( mem[8] += dt; ) : ( mem[8] = 0; );
+  v > 0 ? ( mem[8] += dt; ) : ( mem[8] = 0; );
 );
 
 // Interact: circular hover, drag, scroll, double-click reset to 0

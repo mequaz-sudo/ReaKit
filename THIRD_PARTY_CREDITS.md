@@ -20,7 +20,9 @@ meter in DSP", which is acknowledged here as the published reference for it.
 
 ## Knob styles (`knobs_kbsg.jsfx-inc`)
 
-- **BirdBird** — the VIC rainbow-arc knob (style 9).
+- **BirdBird** — the look of the rainbow-arc knob (style 9), after his Very
+  Important Compressor. ReaKit 1.5.3 and earlier carried a few lines of his
+  drawing code; the knob has been EON Studios' own code since September 2026.
 - **Joanny / MacFizz** — the blue pot knob (style 6).
 - **Spice Pro** — the blue arc-fill knob (style 10).
 - **Witti Sound** — the clean arc + dot knob (style 4).

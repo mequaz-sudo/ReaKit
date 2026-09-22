@@ -768,7 +768,6 @@ local(ht, scale, voffset, val_rad, i, ta, ra, t, sh, hwv, pxp, pyp, sxp, cyp)
              cx + sin(ta) * radius * 1.12, cy - cos(ta) * radius * 1.12);
     i += 1;
   );
-  radius = radius * (1 + 0.06 * ht);   // body swells on hover; the panel ticks stay put
   // Drop shadow + black side wall
   gfx_set(0, 0, 0, 0.50);
   gfx_circle(cx + 1, cy + 2, radius, 1);
@@ -789,12 +788,14 @@ local(ht, scale, voffset, val_rad, i, ta, ra, t, sh, hwv, pxp, pyp, sxp, cyp)
     t = i / 8;
     sh = lerp(0.065, 0.235, t * t);
     gfx_set(sh, sh, sh + 0.008, 1);
+    // The disc swells toward the side wall on hover; the wall and the panel
+    // ticks stay put, so nothing covers the scale.
     gfx_circle(cx - radius * 0.08 * t, cy - radius * 0.10 * t,
-               radius * 0.84 * (1 - t * 0.55), 1);
+               radius * lerp(0.84, 0.90, ht) * (1 - t * 0.55), 1);
     i += 1;
   );
   gfx_set(1, 1, 1, lerp(0.10, 0.25, ht));
-  gfx_circle(cx, cy, radius * 0.84, 0);
+  gfx_circle(cx, cy, radius * lerp(0.84, 0.90, ht), 0);
   // Silver-white pointer line w/ dark edging (quads)
   pxp = cos(val_rad); pyp = sin(val_rad); sxp = sin(val_rad); cyp = cos(val_rad);
   hwv = radius * 0.055;
@@ -1708,7 +1709,11 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
   _bl = (bgr + bgg + bgb) * 0.33333;          // panel luminance -> contrasting ink
   ink = _bl > 0.5 ? 0.0 : 1.0;                // dark ink on light panels, light on dark
   lift = _bl > 0.5 ? -0.07 : 0.075;           // body sits just off the panel shade
-  body_r = radius * lerp(0.86, 0.92, ht);
+  n_passes = max(3, floor(radius / 9));
+  body_r = radius * 0.86;
+  // Swell up to 6%, but never into the innermost value-arc pass: at r = 14 the
+  // two sit 0.6 px apart at rest, so a small knob swells less, or not at all.
+  body_r += max(0, min(radius * 0.06 * ht, radius - (n_passes - 1) * 0.7 - 0.6 - body_r));
 
   // Flat body disc + hairline outline
   gfx_set(min(max(bgr + lift, 0), 1), min(max(bgg + lift, 0), 1), min(max(bgb + lift, 0), 1), 1);
@@ -1722,7 +1727,6 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
   gfx_arc(cx, cy, radius - 0.7, -RAD130_, RAD130_, 1);
 
   // Value arc hugging the rim; bipolar (center start) when is_sym
-  n_passes = max(3, floor(radius / 9));
   gfx_set(cr, cg, cb, lerp(0.92, 1.0, ht));
   start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   i = 0;
@@ -2339,9 +2343,10 @@ local(_h, _r)
 (
   // Hover level, chosen by the host through the global rk_hover_mode. Unset
   // reads 0 in EEL2 and 0 is Normal, so a plugin that never sets it draws as
-  // before. 1 = None (the knob rests), 2 = Moderate (half the reach of every
-  // style's own response), 3 = Dramatic (the full response, and the whole knob
-  // grows 8%). The hit area stays the caller's radius whatever the level.
+  // before. 1 = None (the knob rests), 2 = Moderate (the hover value halved,
+  // which reads as a softer response: about half for a style that uses it as
+  // is, a quarter for one that squares it), 3 = Dramatic (the full response,
+  // and the whole knob grows 8%). The hit area stays the caller's radius.
   _h = rk_hover_mode == 1 ? 0 : rk_hover_mode == 2 ? hover_t * 0.5 : hover_t;
   _r = rk_hover_mode == 3 ? radius * (1 + 0.08 * hover_t) : radius;
   // Every style now takes real units; nothing is pre-normalised here any more.

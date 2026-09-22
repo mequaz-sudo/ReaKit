@@ -161,7 +161,7 @@ you passed, which is what the `rmb_down` line above is for.
 
 How strongly a knob answers the mouse is the host's choice: set the global
 `rk_hover_mode` once, anywhere before the knobs draw. 0 (or never set) is Normal,
-1 is None, 2 is Moderate (half the reach), 3 is Dramatic (the full reach, and the
+1 is None, 2 is Moderate (softer, about half), 3 is Dramatic (the full reach, and the
 whole knob grows 8%). The showcase's Knobs tab has a HOVER bar that flips it live.
 Sliders/buttons/meters are name-dispatched — see the headers in each inc and
 the showcase source for working examples of every element. The pad grid is

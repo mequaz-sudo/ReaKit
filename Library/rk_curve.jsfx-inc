@@ -656,9 +656,14 @@ function rk_curve_node_r(w) ( max(5, min(w * 0.020, 11)); );
 // nearest is the difference between this and 4BandEQ's first-come-wins, which
 // grabs the wrong node the moment two overlap.
 function rk_curve_nodes_hit(x, y, w, h, dr, fbuf, dbuf, n)
-local(i, nx, ny, d, best, bi, rad) (
-  rad = rk_curve_node_r(w) * 2.4;
+local(i, nx, ny, d, best, bi, rad, nr) (
+  nr = rk_curve_node_r(w);
+  rad = nr * 2.4;
   best = rad * rad; bi = -1;
+  // Only inside the plot, plus one node radius: a node sitting on the floor
+  // must not reach out and take a click meant for a control drawn under the
+  // graph (the showcase's look selectors sit 6 px below it).
+  mx < x - nr || mx > x + w + nr || my < y - nr || my > y + h + nr ? best = 0;
   i = 0;
   loop(n,
     nx = rk_curve_f2x(fbuf[i], x, w);

@@ -164,6 +164,25 @@ function rkth_lock_mem(mem) (
   mem + RKTH_LK_N;
 );
 
+// ── NAME BAR (house rule 4.5 rule 1, per-instance) ────────────────────────
+// Host hook, called EVERY FRAME just before rkth_cluster/rkth_cluster_hdr:
+//   rkth_namebar(xx_name_bar);   // the host's own hidden 0/1 slider
+//   rkth_cluster_hdr(x, y, has_vu, cur_vu);
+//   rkth_nb_pick >= 0 ? (
+//     xx_name_bar = rkth_nb_pick; slider_automate(xx_name_bar); rkth_nb_pick = -1;
+//   );
+// ⛔OPT-IN, and that is the whole contract: a host that never calls this
+// leaves rkth_nb_ok = 0, the row does not exist, and the panel measures, lays
+// out and paints byte-for-byte as it did before this row was added. That
+// matters more here than anywhere else in the file — this copy SHIPS in the
+// public ReaKit library, where faces carry the cluster and no name bar.
+// ⛔The cluster never writes a host slider (same rule as rkth_vu_pick): a pick
+// surfaces on rkth_nb_pick and the HOST applies it, because only the host
+// knows its slider number and its automation model.
+// ⚠️INVERTED SENSE at the host end: the row ON (bar SHOWN) means gfx_ext_flags
+// 0x100 CLEARED. The cluster only ever deals in 0 = hidden, 1 = shown.
+function rkth_namebar(cur) ( rkth_nb_ok = 1; rkth_nb_cur = cur | 0; );
+
 // Host hook, called from @serialize so a locked look survives a project
 // reload. ⚠️APPEND-GUARDED: an old project's blob simply ends before this, and
 // file_avail(0) == 0 leaves the instance unlocked, which is the right default.
@@ -554,7 +573,7 @@ function rkth_cl_chipdraw(cx, cy, cw, ch, lbl_str) local(_f) (
 // slider itself — picks surface on rkth_vu_pick for the host to apply.
 function rkth_cluster(x, y, has_vu, cur_vu)
 local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid, _ch, _rh,
-      _capw, _pad, _gap, _cw, _lkw) (
+      _capw, _pad, _gap, _cw, _lkw, _nbw) (
   // Chip height and dropdown row height, scaled once and reused by EVERY hit
   // test, dropdown anchor and draw below — a chip whose hit rect and drawn rect
   // disagree is the bug this function's comments keep warning about, and two
@@ -641,6 +660,14 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
       gfx_measurestr("LOCKED", _tw, _th); _lkw = _tw;
       gfx_measurestr("FOLLOW", _tw, _th); _lkw = max(_lkw, _tw) + 14*rkth_scale;
     );
+    // Same rule for NAME BAR: "SHOWN" and "HIDDEN" swap in the one chip, so the
+    // column must fit the wider. Measured here, while the chip font is still
+    // set, for the same load-bearing reason the LOCK pair above is.
+    _nbw = 0;
+    rkth_nb_ok ? (
+      gfx_measurestr("HIDDEN", _tw, _th); _nbw = _tw;
+      gfx_measurestr("SHOWN", _tw, _th); _nbw = max(_nbw, _tw) + 14*rkth_scale;
+    );
     // ── DROPPED PANEL geometry (user 2026-08-12: "make it drop down not
     // across"). The chips used to FLOW horizontally along the header, which put
     // them on a collision course with each host's right-hand chrome and forced
@@ -653,16 +680,23 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
     // paint is deferred. All 12 importers already call the overlay last.
     gfx_setfont(1, "Arial", (RKTH_F_CAP*rkth_scale)|0, 'b');
     gfx_measurestr("VU SYNC", _tw, _th);   // widest caption sets the left column
-    _capw = _tw + 6*rkth_scale;
+    _capw = _tw;
+    // …unless NAME BAR is present, which is wider. Measured ONLY when the row
+    // exists, so a host without one gets the identical left column it had.
+    rkth_nb_ok ? ( gfx_measurestr("NAME BAR", _tw, _th); _capw = max(_capw, _tw); );
+    _capw = _capw + 6*rkth_scale;
     _pad  = 6*rkth_scale;
     _gap  = 4*rkth_scale;
-    _cw = max(thw, knw); has_vu ? ( _cw = max(_cw, max(vuw, syw)); ); _cw = max(_cw, _lkw);
+    _cw = max(thw, knw); has_vu ? ( _cw = max(_cw, max(vuw, syw)); ); _cw = max(_cw, _lkw); _cw = max(_cw, _nbw);
     // LOCK gets its own row, last, because it governs the WHOLE look rather
     // than any one chip. It is HIDDEN outright on a host that never called
     // rkth_lock_mem() — no buffer, no lock, and a dead control would be worse
     // than an absent one.
-    rkth_clp_lockrow = rkth_lk_ok ? (has_vu ? 4 : 2) : -1;
-    rkth_clp_rows  = (has_vu ? 4 : 2) + (rkth_lk_ok ? 1 : 0);
+    // NAME BAR sits above LOCK: it is a per-instance display option, where LOCK
+    // governs the whole look and keeps the last row for that reason.
+    rkth_clp_nbrow   = rkth_nb_ok ? (has_vu ? 4 : 2) : -1;
+    rkth_clp_lockrow = rkth_lk_ok ? (has_vu ? 4 : 2) + (rkth_nb_ok ? 1 : 0) : -1;
+    rkth_clp_rows  = (has_vu ? 4 : 2) + (rkth_nb_ok ? 1 : 0) + (rkth_lk_ok ? 1 : 0);
     rkth_clp_pitch = _ch + _gap;
     rkth_clp_w = _pad + _capw + _cw + _pad;
     rkth_clp_h = _pad + rkth_clp_rows*_ch + (rkth_clp_rows - 1)*_gap + _pad;
@@ -731,6 +765,28 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
         rkth_sync_on ? ( gmem[GS_THEME_VU_REQ] = rkth_cl_vu + 1; );
         lmb_down = 0; rkth_consumed = 1;
       );
+    );
+
+    // ── NAME BAR chip: show or hide REAPER's own name bar over this
+    // instance's TCP/MCP embed (house rule 4.5 rule 1, made per-instance). ──
+    // ⭐A TOGGLE, not a dropdown, on purpose: every boolean already in this
+    // panel is a lit chip (>ALL, LOCKED), so a two-item list would be the odd
+    // one out — and a list of 2 would also need rkth_cl_openat's visible-row
+    // floor of 3 relaxed, which the THEME, KNOB and VU lists share. Not worth
+    // touching shared machinery in a file that ships publicly.
+    // ⭐LIVE WHILE LOCKED, deliberately. LOCK freezes the THEME BAND — colours,
+    // knob styles, theme id — and the name bar is REAPER's frame around the
+    // embed: it is in no snapshot, follows no broadcast and no other instance
+    // can change it. Freezing it would make LOCK mean something it does not.
+    // rkth_nb_cur is advanced here as well as surfaced, so the chip reads right
+    // in THIS frame's overlay — the host does not apply the pick until after.
+    rkth_clp_nbrow >= 0 && lmb_down &&
+      mx >= rkth_clp_cx && mx < rkth_clp_cx + rkth_clp_cw &&
+      my >= rkth_clp_r0 + rkth_clp_nbrow*rkth_clp_pitch &&
+      my <  rkth_clp_r0 + rkth_clp_nbrow*rkth_clp_pitch + _ch ? (
+      rkth_nb_pick = rkth_nb_cur ? 0 : 1;
+      rkth_nb_cur  = rkth_nb_pick;
+      lmb_down = 0; rkth_consumed = 1;
     );
 
     // ── LOCK chip: freeze / unfreeze this instance's whole look. ──
@@ -882,6 +938,22 @@ function rkth_cluster_overlay() local(_k, _idx, _ry, _f7, _f9, _cy) (
         rkth_sync_on ? gfx_set(0.10, 0.10, 0.12, 1) : rkth_setcol(2, 0.85, 0.87, 0.90, 1);
         gfx_x = rkth_clp_cx + 5*rkth_scale; gfx_y = _ry + (rkth_clp_ch - _f9) * 0.5; gfx_drawstr(">ALL");
       );
+      // ── NAME BAR row: the same lit chip as >ALL and LOCK. Absent entirely
+      // unless the host called rkth_namebar() this frame (rkth_clp_nbrow < 0).
+      rkth_clp_nbrow >= 0 ? (
+        _ry = rkth_clp_r0 + rkth_clp_nbrow*rkth_clp_pitch;
+        gfx_setfont(1, "Arial", _f7, 'b');
+        rkth_setcol(3, 0.62, 0.65, 0.70, 1);
+        gfx_x = rkth_clp_capx; gfx_y = _ry + _cy; gfx_drawstr("NAME BAR");
+        rkth_nb_cur ? ( rkth_setcol(4, 0.95, 0.65, 0.15, 0.9); )
+                    : ( rkth_setcol(1, 0.16, 0.18, 0.22, 1); );
+        gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch);
+        rkth_setcol(7, 0.32, 0.35, 0.42, 1); gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch, 0);
+        gfx_setfont(1, "Arial", _f9, 'b');
+        rkth_nb_cur ? gfx_set(0.10, 0.10, 0.12, 1) : rkth_setcol(2, 0.85, 0.87, 0.90, 1);
+        gfx_x = rkth_clp_cx + 5*rkth_scale; gfx_y = _ry + (rkth_clp_ch - _f9) * 0.5;
+        gfx_drawstr(rkth_nb_cur ? "SHOWN" : "HIDDEN");
+      );
       // ── LOCK row: same lit-chip language as >ALL, so "engaged" reads the
       // same way everywhere in the panel. Absent entirely when the host never
       // handed us a snapshot buffer (rkth_clp_lockrow < 0).
@@ -944,6 +1016,10 @@ function rkth_cluster_overlay() local(_k, _idx, _ry, _f7, _f9, _cy) (
 // before it existed (its serialized face wins; only future syncs are adopted).
 rkth_vu_pick = -1;
 rkth_dd_hrow = -1;
+rkth_nb_pick = -1;      // NAME BAR pick, surfaced for the host to apply
+rkth_nb_ok   = 0;       // host asked for the row? re-established every frame
+                        // by the host's rkth_namebar() call, so re-zeroing on
+                        // an @init rerun cannot strand the row
 rkth_vu_gen_seen = gmem[GS_THEME_VU_GEN];
 rkth_cl_open = 0;      // collapsible header starts closed (rkth_cluster_hdr)
 rkth_cl_paint = 0;     // per-frame "panel was requested"; set by rkth_cluster,

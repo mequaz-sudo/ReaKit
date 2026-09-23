@@ -46,6 +46,20 @@ __knobs_kbsg_loaded = 1;
 //   hv_speed      — hover animation speed (typ. 11)
 //   frame_wheel   — mouse_wheel / 120 (caller zeroes mouse_wheel after)
 //   tau           — 2 * $pi
+//   _srf_foreign  — OPTIONAL, 0 unless the host runs one instance on two
+//                   surfaces at once. A host that embeds a face in both the
+//                   TCP and the MCP must keep a drag alive on the surface the
+//                   pointer is NOT over, which it does by handing that pass the
+//                   owner's held LMB and pointer; otherwise the drag dies the
+//                   moment the unhovered pass sees LMB 0. But the drag maths
+//                   here divides by the CALLER'S radius, so the foreign pass
+//                   computes a different value from the same gesture and the
+//                   two alternate, frame by frame, while the button is held
+//                   (measured: 0.6747 vs 0.7000 on 277x462 against 82x137).
+//                   Set this on the foreign pass and every continue-drag branch
+//                   below returns cur_val untouched, while the press latch and
+//                   the drag state survive. Unset reads 0 in EEL2, so a host
+//                   that never sets it behaves exactly as before.
 //
 // MEMORY CONVENTION (16 slots per instance):
 //   [0]  hover_t        [1]  is_dragging     [2]  drag_y / start_y
@@ -118,6 +132,7 @@ local(p, i, f, r0, g0, b0)
 function rainbow_knob_paint(cx, cy, r, v, hov, cr, cg, cb)
 local(a0, sweep, av, ring_w, ring_in, rr, n, body_r, s, c)
 (
+  r = r * (1 + 0.06 * hov);              // the whole knob swells on hover
   sweep = $pi * 1.5;
   a0 = -$pi * 0.75;
   av = a0 + v * sweep;
@@ -647,9 +662,9 @@ local(ht, cap_a, ring_bright, scale, voffset, val_deg, val_rad,
   gfx_circle(cx, cy, radius * 0.78, 0);
   // Colored cap
   gfx_set(cr, cg, cb, cap_a);
-  gfx_circle(cx, cy, radius * 0.55, 1);
+  gfx_circle(cx, cy, radius * lerp(0.55, 0.61, ht), 1);
   gfx_set(cr * 0.6, cg * 0.6, cb * 0.6, cap_a);
-  gfx_circle(cx, cy, radius * 0.55, 0);
+  gfx_circle(cx, cy, radius * lerp(0.55, 0.61, ht), 0);
   // Pointer (3 lines for thickness) — auto-contrast against the cap so it reads
   // on light AND dark caps (e.g. a White or Black cap). Rec.601 luma; a light
   // cap (>0.6) gets a dark pointer, otherwise the classic near-white pointer.
@@ -787,12 +802,14 @@ local(ht, scale, voffset, val_rad, i, ta, ra, t, sh, hwv, pxp, pyp, sxp, cyp)
     t = i / 8;
     sh = lerp(0.065, 0.235, t * t);
     gfx_set(sh, sh, sh + 0.008, 1);
+    // The disc swells toward the side wall on hover; the wall and the panel
+    // ticks stay put, so nothing covers the scale.
     gfx_circle(cx - radius * 0.08 * t, cy - radius * 0.10 * t,
-               radius * 0.84 * (1 - t * 0.55), 1);
+               radius * lerp(0.84, 0.90, ht) * (1 - t * 0.55), 1);
     i += 1;
   );
-  gfx_set(1, 1, 1, 0.10);
-  gfx_circle(cx, cy, radius * 0.84, 0);
+  gfx_set(1, 1, 1, lerp(0.10, 0.25, ht));
+  gfx_circle(cx, cy, radius * lerp(0.84, 0.90, ht), 0);
   // Silver-white pointer line w/ dark edging (quads)
   pxp = cos(val_rad); pyp = sin(val_rad); sxp = sin(val_rad); cyp = cos(val_rad);
   hwv = radius * 0.055;
@@ -833,6 +850,7 @@ local(ht, scale, voffset, val_rad, i, ta, t, hwv, pxp, pyp, sxp, cyp)
              cx + sin(ta) * radius * 1.12, cy - cos(ta) * radius * 1.12);
     i += 1;
   );
+  radius = radius * (1 + 0.06 * ht);   // body swells on hover; the panel ticks stay put
   // Drop shadow + cream body (vertical-ish gradient, light drifting up)
   gfx_set(0, 0, 0, 0.35);
   gfx_circle(cx + 1.5, cy + 2.5, radius * 0.92, 1);
@@ -882,6 +900,7 @@ local(ht, chrome_bright, scale, voffset, val_deg, val_rad,
 (
   ht = pow(hover_t, 2);
   chrome_bright = lerp(0.72, 0.88, ht);
+  radius = radius * (1 + 0.06 * ht);   // the whole knob swells on hover
   scale = 260 / (vmax - vmin);
   voffset = -vmin * 260 / (vmax - vmin) - 130;
   val_deg = value * scale + voffset;
@@ -1270,6 +1289,7 @@ local(ht, _vn, i, a, led_orbit, led_r, led_pos, led_dist, led_bright,
   RAD130_ = 130 * $pi / 180;
   led_orbit = radius * 1.3;
   led_r = radius * 0.08;
+  radius = radius * (1 + 0.06 * ht);   // body swells on hover; the LED ring stays put
   led_pos = _vn * 15;  // 0–15 mapped across 16 LEDs
 
   // LED ring (270° arc: -130° to +130°)
@@ -1324,7 +1344,7 @@ local(ht, _vn, i, a, led_orbit, led_r, led_pos, led_dist, led_bright,
 
   // White pointer (270° arc)
   val_rad = (_vn * 260 - 130) * $pi / 180;
-  gfx_set(0.85, 0.85, 0.85, 1);
+  gfx_set(0.85 + 0.15 * ht, 0.85 + 0.15 * ht, 0.85 + 0.15 * ht, 1);
   gfx_line(cx + sin(val_rad) * radius * 0.3, cy - cos(val_rad) * radius * 0.3,
            cx + sin(val_rad) * radius * 0.8, cy - cos(val_rad) * radius * 0.8);
   gfx_line(cx + sin(val_rad) * radius * 0.3 + cos(val_rad),
@@ -1703,12 +1723,16 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
   _bl = (bgr + bgg + bgb) * 0.33333;          // panel luminance -> contrasting ink
   ink = _bl > 0.5 ? 0.0 : 1.0;                // dark ink on light panels, light on dark
   lift = _bl > 0.5 ? -0.07 : 0.075;           // body sits just off the panel shade
+  n_passes = max(3, floor(radius / 9));
   body_r = radius * 0.86;
+  // Swell up to 6%, but never into the innermost value-arc pass: at r = 14 the
+  // two sit 0.6 px apart at rest, so a small knob swells less, or not at all.
+  body_r += max(0, min(radius * 0.06 * ht, radius - (n_passes - 1) * 0.7 - 0.6 - body_r));
 
   // Flat body disc + hairline outline
   gfx_set(min(max(bgr + lift, 0), 1), min(max(bgg + lift, 0), 1), min(max(bgb + lift, 0), 1), 1);
   gfx_circle(cx, cy, body_r, 1);
-  gfx_set(ink, ink, ink, 0.10);
+  gfx_set(ink, ink, ink, lerp(0.10, 0.28, ht));
   gfx_circle(cx, cy, body_r, 0);
 
   // Faint rim track (unswept portion)
@@ -1717,7 +1741,6 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
   gfx_arc(cx, cy, radius - 0.7, -RAD130_, RAD130_, 1);
 
   // Value arc hugging the rim; bipolar (center start) when is_sym
-  n_passes = max(3, floor(radius / 9));
   gfx_set(cr, cg, cb, lerp(0.92, 1.0, ht));
   start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
   i = 0;
@@ -1753,7 +1776,7 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
   scale   = 260 / (vmax - vmin);
   voffset = -vmin * 260 / (vmax - vmin) - 130;
   val_rad = (value * scale + voffset) * $pi / 180;
-  body_r  = radius * 0.80;                       // large dark body, clean Serum look
+  body_r  = radius * lerp(0.80, 0.86, hover_t);                       // large dark body, clean Serum look
   glow_a  = lerp(0.75, 1.0, hover_t);
 
   // Beveled dark body: darker outer → slightly lighter inner
@@ -1765,7 +1788,7 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
     i += 1;
   );
   // Subtle rim
-  gfx_set(0.30, 0.32, 0.36, 0.6);
+  gfx_set(0.30, 0.32, 0.36, lerp(0.6, 1.0, hover_t));
   gfx_circle(cx, cy, body_r, 0);
 
   // Faint unlit track ring hugging the rim
@@ -1882,7 +1905,7 @@ local(RAD130_, scale, voffset, val_rad, n_passes, i,
   voffset = -vmin * 260 / (vmax - vmin) - 130;
   val_rad = (value * scale + voffset) * $pi / 180;
   n_passes = max(3, floor(radius / 4));        // BOLD halo
-  body_r   = radius * 0.76;
+  body_r   = radius * lerp(0.76, 0.82, hover_t);
   cap_r    = body_r * 0.80;
 
   // Drop shadow
@@ -1981,7 +2004,7 @@ function rotsel_knob_draw(cx, cy, radius, pos, n_pos, hover_t, cr, cg, cb, bgr, 
 local(i, ang, body_r, frac, dx, dy, tick_r1, tick_r2, sel_rad,
       ph_out, beak, pip_r)
 (
-  body_r = radius * 0.62;
+  body_r = radius * lerp(0.62, 0.68, hover_t);
 
   // Position pips (tick + dot); active one tinted
   i = 0;
@@ -2005,7 +2028,7 @@ local(i, ang, body_r, frac, dx, dy, tick_r1, tick_r2, sel_rad,
   // Body (shadow + fill + rim)
   gfx_set(0, 0, 0, 0.30);
   gfx_circle(cx + 1, cy + 2, body_r, 1, 1);
-  gfx_set(0.14, 0.14, 0.16, 1);
+  gfx_set(0.14 + 0.05 * hover_t, 0.14 + 0.05 * hover_t, 0.16 + 0.05 * hover_t, 1);
   gfx_circle(cx, cy, body_r, 1, 1);
   gfx_set(0.30, 0.30, 0.33, lerp(0.5, 0.9, hover_t));
   gfx_circle(cx, cy, body_r, 0);
@@ -2082,7 +2105,7 @@ local(RAD130_, scale, voffset, val_rad, body_r, n_passes, i, arc_a, start_rad,
   scale   = 260 / (vmax - vmin);
   voffset = -vmin * 260 / (vmax - vmin) - 130;
   val_rad = (value * scale + voffset) * $pi / 180;
-  body_r  = radius * 0.70;
+  body_r  = radius * lerp(0.70, 0.76, ht);
   n_passes = max(2, floor(radius / 6));
 
   // Faint background track arc
@@ -2134,7 +2157,7 @@ local(scale, voffset, val_rad, body_r, ht, i, n_passes, RAD130_,
   scale   = 260 / (vmax - vmin);
   voffset = -vmin * 260 / (vmax - vmin) - 130;
   val_rad = (value * scale + voffset) * $pi / 180;
-  body_r  = radius * 0.72;
+  body_r  = radius * lerp(0.72, 0.78, ht);
   n_passes = max(2, floor(radius / 8));
 
   // Green LED value arc above the cap (DigiRack indicator): faint track + lit value
@@ -2156,7 +2179,7 @@ local(scale, voffset, val_rad, body_r, ht, i, n_passes, RAD130_,
   gfx_set(0, 0, 0, 0.32);
   gfx_circle(cx, cy + 2, body_r, 1, 1);
   // Grey metallic housing ring (DigiRack collar around the cap)
-  gfx_set(0.42, 0.43, 0.46, 1);
+  gfx_set(0.42 + 0.10 * ht, 0.43 + 0.10 * ht, 0.46 + 0.10 * ht, 1);
   gfx_circle(cx, cy, body_r, 1, 1);
 
   // Glossy colour dome — DARK TOP -> BRIGHT LOWER reflection (DigiRack lighting):
@@ -2218,7 +2241,7 @@ local(ht, cap_a, val_rad, capr, i, fa, fw, px, py, ox, oy,
   ht = pow(hover_t, 2);
   cap_a = lerp(0.86, 1.0, ht);
   val_rad = ((value - vmin) / max(0.0000001, vmax - vmin) * 260 - 130) * $pi / 180;
-  capr = radius * 0.63;
+  capr = radius * lerp(0.63, 0.69, ht);
   px = sin(val_rad); py = -cos(val_rad);
   ox = cos(val_rad); oy = sin(val_rad);
 
@@ -2330,29 +2353,38 @@ local(ht, cap_a, val_rad, capr, i, fa, fw, px, py, ox, oy,
 
 function rk_knob_draw(style, cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
                       cr, cg, cb, n_det, bgr, bgg, bgb)
+local(_h, _r)
 (
+  // Hover level, chosen by the host through the global rk_hover_mode. Unset
+  // reads 0 in EEL2 and 0 is Normal, so a plugin that never sets it draws as
+  // before. 1 = None (the knob rests), 2 = Moderate (the hover value halved,
+  // which reads as a softer response: about half for a style that uses it as
+  // is, a quarter for one that squares it), 3 = Dramatic (the full response,
+  // and the whole knob grows 8%). The hit area stays the caller's radius.
+  _h = rk_hover_mode == 1 ? 0 : rk_hover_mode == 2 ? hover_t * 0.5 : hover_t;
+  _r = rk_hover_mode == 3 ? radius * (1 + 0.08 * hover_t) : radius;
   // Every style now takes real units; nothing is pre-normalised here any more.
-  style == 2  ? varimu_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 3  ? api_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb) :
-  style == 4  ? ws_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 5  ? neve_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb, n_det) :
-  style == 6  ? jo_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 7  ? mpc_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 8  ? jog_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 9  ? rainbow_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
-  style == 10 ? sp_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, is_sym, cr, cg, cb, bgr, bgg, bgb) :
-  style == 12 ? pultec_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
-  style == 13 ? ableton_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 14 ? fl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 15 ? pt_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 11 ? encoder_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb) :
-  style == 16 ? fabfilter_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 17 ? serum_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 18 ? roland_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, bgr, bgg, bgb) :
-  style == 19 ? pultec_cream_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t) :
-  style == 20 ? neve_alt_knob_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb, n_det) :
-  style == 21 ? sslg_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, n_det) :
-                ssl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t, cr, cg, cb, n_det);
+  style == 2  ? varimu_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb) :
+  style == 3  ? api_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb) :
+  style == 4  ? ws_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 5  ? neve_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb, n_det) :
+  style == 6  ? jo_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb) :
+  style == 7  ? mpc_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 8  ? jog_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb) :
+  style == 9  ? rainbow_knob_draw(cx, cy, _r, value, vmin, vmax, _h) :
+  style == 10 ? sp_knob_draw(cx, cy, _r, value, vmin, vmax, _h, is_sym, cr, cg, cb, bgr, bgg, bgb) :
+  style == 12 ? pultec_knob_draw(cx, cy, _r, value, vmin, vmax, _h) :
+  style == 13 ? ableton_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 14 ? fl_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 15 ? pt_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 11 ? encoder_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb) :
+  style == 16 ? fabfilter_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 17 ? serum_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 18 ? roland_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, bgr, bgg, bgb) :
+  style == 19 ? pultec_cream_knob_draw(cx, cy, _r, value, vmin, vmax, _h) :
+  style == 20 ? neve_alt_knob_draw(cx, cy, _r, value, vmin, vmax, _h, cr, cg, cb, n_det) :
+  style == 21 ? sslg_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, n_det) :
+                ssl_knob_draw(cx, cy, _r, value, vmin, vmax, is_sym, _h, cr, cg, cb, n_det);
 );
 
 // Uniform interaction for every style (visual dispatch only — see above).

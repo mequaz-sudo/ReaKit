@@ -19,10 +19,10 @@ __knobs_kbsg_loaded = 1;
 //  10. MPC Rubber Pad   — black domed rubber cap, white indicator, 270° arc
 //  10b. Jog Wheel       — iMPC-style metallic jog with grip notches
 //  11. Vari-Mu          — Manley brushed-aluminium, concentric rings, pointer
-//  12. Ableton Live     — flat minimal device knob, thin arc, notch (is_sym=bipolar)
+//  12. Ableton Live     — the Live 12 dial: thick arc band, dark needle (is_sym=bipolar)
 //  13. Serum            — modern softsynth: beveled body, glow arc, tick ring
 //  14. Roland 808/909   — colored plastic cap, knurled edge, white pointer
-//  15. FabFilter        — ultra-minimal flat value ring + dot (is_sym=bipolar)
+//  15. FabFilter        — the Pro-G knob: dome, white scoop, tick channel (is_sym=bipolar)
 //  16. Rotary Selector  — stepped chicken-head switch, snaps to N positions
 //                         (own interact: rotsel_interact; pos = integer 0..n-1)
 //
@@ -1696,66 +1696,117 @@ local(ht, ba, scale, voffset, val_rad,
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 12. ABLETON LIVE  (flat minimal device knob)
+// SHARED BY 12 (ABLETON) AND 15 (FABFILTER)
 // ═══════════════════════════════════════════════════════════════════════════
-// Flat dark body, thin 270° track arc, colored value arc, short radial notch.
-// is_sym = 1 → bipolar: arc fills from 12 o'clock center outward (pan/symmetric).
+
+// Thick radial line r0..r1 at clock angle a (0 = up, +CW), width w: a filled quad
+// with anti-aliased long edges, in the current colour.
+function rk_kn_ray(cx, cy, a, r0, r1, w)
+local(ux, uy, px, py, h, x0, y0, x1, y1)
+(
+  ux = sin(a); uy = -cos(a);
+  px = -uy; py = ux;
+  h = w * 0.5;
+  x0 = cx + ux * r0; y0 = cy + uy * r0;
+  x1 = cx + ux * r1; y1 = cy + uy * r1;
+  gfx_triangle(x0 + px * h, y0 + py * h, x1 + px * h, y1 + py * h,
+               x1 - px * h, y1 - py * h, x0 - px * h, y0 - py * h);
+  gfx_line(x0 + px * (h - 0.5), y0 + py * (h - 0.5), x1 + px * (h - 0.5), y1 + py * (h - 0.5), 1);
+  gfx_line(x0 - px * (h - 0.5), y0 - py * (h - 0.5), x1 - px * (h - 0.5), y1 - py * (h - 0.5), 1);
+);
+
+// Filled annular band r_in..r_out between clock angles a1 < a2 (stacked 1 px arcs,
+// so the ends are cut square), in the current colour.
+function rk_kn_band(cx, cy, r_in, r_out, a1, a2)
+local(rr)
+(
+  a2 > a1 ? (
+    rr = r_out - 0.5;
+    while (rr >= r_in + 0.5) ( gfx_arc(cx, cy, rr, a1, a2, 1); rr -= 0.6; );
+    gfx_arc(cx, cy, r_in + 0.5, a1, a2, 1);
+  );
+);
+
+// Fill disc(cx,cy,dd) ∩ disc(lcx,lcy,rho) in the current colour. Two discs make a
+// convex lens, so every pixel row crosses it in ONE span: exact, row by row. (A
+// triangle fan left a flat sliver at the lens tip.)
+function rk_kn_lens(cx, cy, dd, lcx, lcy, rho)
+local(i, y, dy0, dy1, hw, f, x0, x1)
+(
+  i = floor(max(cy - dd, lcy - rho));
+  while (i <= min(cy + dd, lcy + rho)) (
+    y = i + 0.5;
+    dy0 = y - cy; dy1 = y - lcy;
+    abs(dy0) < dd && abs(dy1) < rho ? (
+      hw = sqrt(dd * dd - dy0 * dy0); f = sqrt(rho * rho - dy1 * dy1);
+      x0 = max(cx - hw, lcx - f); x1 = min(cx + hw, lcx + f);
+      x1 > x0 + 0.25 ? gfx_rect(floor(x0 + 0.5), i, max(1, floor(x1 + 0.5) - floor(x0 + 0.5)), 1);
+    );
+    i += 1;
+  );
+);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12. ABLETON LIVE  (the Live 12 device dial)
+// ═══════════════════════════════════════════════════════════════════════════
+// Measured 2026-09-24 on Ableton's own art for Live 12.4 — the Saturator dial in the
+// Live 12 Reference Manual, and Roar's Drive dial on ableton.com for the dark theme.
+// No body: the arc IS the knob. One band 0.83R..R swept ±150°, square ends; the value
+// part in the accent (cr/cg/cb), the rest in a dark ink; a thick needle (0.14R) in the
+// same ink from the centre through the band; a short gap in the track just past the
+// needle. Live's ink sits DARKER than the panel (bgr/bgg/bgb): dark theme #363636 ->
+// #161316, light #a5a5a5 -> #242424. No Live theme puts a dial on a near-black panel,
+// so below panel luminance 0.16 the ink flips light to stay readable.
+// is_sym = 1 → bipolar: arc fills from 12 o'clock (fractional = anchor there).
+// Hover: the band thickens inward, the needle with it.
 // Draw args match ws/ssl family: (cx,cy,r,value,vmin,vmax,is_sym,hover_t,cr,cg,cb,bgr,bgg,bgb)
 // Interact: reuse ws_knob_interact (continuous drag/scroll/dbl-click reset).
 // For bipolar params, pass vdefault = center value so dbl-click snaps to centre.
-
-// Ableton Live macro knob: a flat disc whose BODY follows the theme (bgr/bgg/bgb =
-// the theme panel — light disc on light themes, dark on dark), a faint full-sweep
-// track, a bright perimeter VALUE arc in the accent (cr/cg/cb — any colour), and a
-// short indicator notch that auto-contrasts with the body. Interact: ws_knob_interact.
 function ableton_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
                            cr, cg, cb, bgr, bgg, bgb)
-local(RAD130_, scale, voffset, val_rad, n_passes, i, body_r,
-      start_rad, ht, _bl, ink, lift, nh, pxp, pyp, sxp, cyp)
+local(SW, t, val_a, start_a, ht, band, r_in, r_mid, nw, gap_a, bl, k,
+      ir, ig, ib, lo, hi)
 (
-  // 1:1 Live glyph: flat low-contrast body, thin rim track, thick value arc
-  // hugging the rim, needle joined to the arc in the same color/weight.
-  ht = pow(hover_t, 2);
-  RAD130_ = 130 * $pi / 180;
-  scale   = 260 / (vmax - vmin);
-  voffset = -vmin * 260 / (vmax - vmin) - 130;
-  val_rad = (value * scale + voffset) * $pi / 180;
-  _bl = (bgr + bgg + bgb) * 0.33333;          // panel luminance -> contrasting ink
-  ink = _bl > 0.5 ? 0.0 : 1.0;                // dark ink on light panels, light on dark
-  lift = _bl > 0.5 ? -0.07 : 0.075;           // body sits just off the panel shade
-  n_passes = max(3, floor(radius / 9));
-  body_r = radius * 0.86;
-  // Swell up to 6%, but never into the innermost value-arc pass: at r = 14 the
-  // two sit 0.6 px apart at rest, so a small knob swells less, or not at all.
-  body_r += max(0, min(radius * 0.06 * ht, radius - (n_passes - 1) * 0.7 - 0.6 - body_r));
+  SW = 150 * $pi / 180;
+  t = min(max((value - vmin) / (vmax - vmin), 0), 1);
+  val_a = -SW + 2 * SW * t;
+  start_a = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * SW : 0) : -SW;
+  ht = hover_t * hover_t;
 
-  // Flat body disc + hairline outline
-  gfx_set(min(max(bgr + lift, 0), 1), min(max(bgg + lift, 0), 1), min(max(bgb + lift, 0), 1), 1);
-  gfx_circle(cx, cy, body_r, 1);
-  gfx_set(ink, ink, ink, lerp(0.10, 0.28, ht));
-  gfx_circle(cx, cy, body_r, 0);
+  band  = max(1.5, radius * 0.17 * (1 + 0.22 * ht));
+  r_in  = radius - band;
+  r_mid = radius - band * 0.5;
+  nw    = max(1.5, radius * 0.14 * (1 + 0.15 * ht));
+  gap_a = (nw * 0.5 + max(1, radius * 0.12)) / r_mid;
 
-  // Faint rim track (unswept portion)
-  gfx_set(ink, ink, ink, lerp(0.11, 0.17, ht));
-  gfx_arc(cx, cy, radius, -RAD130_, RAD130_, 1);
-  gfx_arc(cx, cy, radius - 0.7, -RAD130_, RAD130_, 1);
-
-  // Value arc hugging the rim; bipolar (center start) when is_sym
-  gfx_set(cr, cg, cb, lerp(0.92, 1.0, ht));
-  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
-  i = 0;
-  loop(n_passes,
-    gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1);
-    i += 1;
+  bl = (bgr + bgg + bgb) * 0.33333;
+  bl >= 0.16 ? (
+    k = bl > 0.45 ? 0.22 : 0.45;
+    ir = bgr * k; ig = bgg * k; ib = bgb * k;
+  ) : (
+    ir = bgr + 0.30; ig = bgg + 0.30; ib = bgb + 0.30;
   );
 
-  // Needle center→rim, same color/weight as the arc (one glyph) — quad
-  nh = max(1.0, n_passes * 0.35);
-  pxp = cos(val_rad); pyp = sin(val_rad); sxp = sin(val_rad); cyp = cos(val_rad);
-  gfx_triangle(cx + pxp * nh, cy + pyp * nh,
-               cx - pxp * nh, cy - pyp * nh,
-               cx + sxp * body_r - pxp * nh, cy - cyp * body_r - pyp * nh,
-               cx + sxp * body_r + pxp * nh, cy - cyp * body_r + pyp * nh);
+  // Track: everything that is neither value nor the gap past the needle
+  gfx_set(ir, ig, ib, 1);
+  val_a >= start_a ? (
+    rk_kn_band(cx, cy, r_in, radius, -SW, start_a);
+    rk_kn_band(cx, cy, r_in, radius, val_a + gap_a, SW);
+  ) : (
+    rk_kn_band(cx, cy, r_in, radius, -SW, val_a - gap_a);
+    rk_kn_band(cx, cy, r_in, radius, start_a, SW);
+  );
+
+  // Value, in the accent
+  gfx_set(cr, cg, cb, 1);
+  lo = min(start_a, val_a); hi = max(start_a, val_a);
+  rk_kn_band(cx, cy, r_in, radius, lo, hi);
+
+  // Needle: centre -> through the band, round inner end
+  gfx_set(ir, ig, ib, 1);
+  rk_kn_ray(cx, cy, val_a, 0, radius - 0.5, nw);
+  gfx_circle(cx, cy, nw * 0.5, 1, 1);
 );
 
 
@@ -1888,108 +1939,126 @@ local(scale, voffset, val_rad, body_r, i, ang, n_knurl,
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 15. FABFILTER  (ultra-minimal flat value ring)
+// 15. FABFILTER  (the Pro-G knob)
 // ═══════════════════════════════════════════════════════════════════════════
-// No body fill: faint background ring + bright value ring + dot. is_sym →
-// bipolar fill from centre. Hover adds a faint inner glow. ws_knob_interact.
-
+// Measured 2026-09-24 on FabFilter's own Pro-G 1.42 screenshot — the plug-in this
+// style was first drawn from; its small knob is also Pro-MB's and Pro-L 2's.
+// D = disc radius; the tick channel's outer edge is the caller's radius.
+//   · a dome that follows the panel (bgr/bgg/bgb), lit from above, blue lifted most
+//     (Pro-G: body #7a83a4 at the centre on panel #312f45). FabFilter has no light
+//     theme; on a light panel the dome settles at a mid-tone (centre ~0.58) so the
+//     white scoop still reads, and the channel sinks below the panel instead.
+//   · a near-black outline; a dark tick channel 1.02D..1.155D, ±150°, a tick every
+//     30°, the accent filling it up to the value — the one place Pro-G puts colour
+//     (its Threshold knob's level meter). is_sym fills from the anchor.
+//   · a white SCOOP at the rim — a lens meeting the rim at ±27° — with a short grey
+//     line in it: tip at 0.30D on small knobs, 0.42D on the big one
+//   · the big knob's GRIP: 12 shallow dimples, 30° apart, 0.23D deep, fading in from
+//     D = 36 to 48 px (Pro-G grips only its big Threshold knob). They turn with the
+//     knob here; one screenshot cannot show whether Pro-G's do.
+// Hover: the dome swells 3% and lifts. ws_knob_interact.
 function fabfilter_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
                              cr, cg, cb, bgr, bgg, bgb)
-local(RAD130_, scale, voffset, val_rad, n_passes, i,
-      start_rad, arc_a, body_r, frac, gr, gg, gb, n_in, n_out, rr, yo,
-      cap_r, n_teeth, ta, kn_in, perp_x, perp_y, fa, ar_lo, ar_hi, n_band,
-      t1r, t1g, t1b, t2r, t2g, t2b)
+local(SW, TH, t, val_a, start_a, ht, dd, ch_in, ch_out, i, a, y, hw, f, lift,
+      g, tip, c, rho, ph, ux, uy, lcx, lcy, s, w, olr, rr, lo, hi, tw, dc, drho, dph, k,
+      bl, sc, lp)
 (
-  RAD130_ = 130 * $pi / 180;
-  scale   = 260 / (vmax - vmin);
-  voffset = -vmin * 260 / (vmax - vmin) - 130;
-  val_rad = (value * scale + voffset) * $pi / 180;
-  n_passes = max(3, floor(radius / 4));        // BOLD halo
-  body_r   = radius * lerp(0.76, 0.82, hover_t);
-  cap_r    = body_r * 0.80;
+  SW = 150 * $pi / 180;
+  TH = 27 * $pi / 180;                          // the scoop meets the rim at ±27°
+  t = min(max((value - vmin) / (vmax - vmin), 0), 1);
+  val_a = -SW + 2 * SW * t;
+  start_a = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * SW : 0) : -SW;
+  ht = hover_t * hover_t;
 
-  // Drop shadow
-  gfx_set(0, 0, 0, 0.30);
-  gfx_circle(cx, cy + 2, body_r, 1, 1);
+  dd     = radius / 1.155;
+  ch_in  = dd * 1.02;
+  ch_out = radius - max(1, radius * 0.015);
+  g = min(max((dd - 36) / 12, 0), 1);           // 0 = small knob, 1 = the big gripped one
+  bl = (bgr + bgg + bgb) * 0.33333;
+  sc = bl <= 0.25 ? 0.33 : 0.58 - bl;           // the dome centre's lift over the panel
+  lp = bl > 0.5;                                // light panel: the channel sinks
 
-  // Knurled grip ring (accent-tinted): dark backing + alternating light/dark ridges.
-  gfx_set(cr * 0.18 + 0.10, cg * 0.18 + 0.10, cb * 0.18 + 0.12, 1);
-  gfx_circle(cx, cy, body_r, 1, 1);
-  kn_in   = body_r * 0.78;
-  n_teeth = max(20, floor(radius * 1.6));
-  // Both tooth colours are loop-invariant — precompute. (A two-pass split was
-  // evaluated and rejected: below r~11 n_teeth clamps at 20 and the AA fringes
-  // of adjacent teeth touch, so reordering would change shared pixels.)
-  t1r = cr * 0.35 + 0.34; t1g = cg * 0.35 + 0.34; t1b = cb * 0.35 + 0.36;
-  t2r = cr * 0.28 + 0.14; t2g = cg * 0.28 + 0.14; t2b = cb * 0.28 + 0.16;
+  // Channel: panel +0.03 across the sweep, the accent up to the value, a dark line
+  // just outside, ticks every 30° (faint over the accent)
+  f = lp ? -0.05 : 0.03;
+  gfx_set(bgr + f, bgg + f, bgb + f, 1);
+  rk_kn_band(cx, cy, ch_in, ch_out, -SW, SW);
+  lo = min(start_a, val_a); hi = max(start_a, val_a);
+  gfx_set(cr, cg, cb, 1);
+  rk_kn_band(cx, cy, ch_in, ch_out, lo, hi);
+  f = lp ? 0.12 : 0.05;
+  gfx_set(max(bgr - f, 0), max(bgg - f, 0), max(bgb - f, 0), 1);
+  gfx_arc(cx, cy, ch_out + 0.5, -SW, SW, 1);
+  tw = max(1, dd * 0.02);
   i = 0;
-  loop(n_teeth,
-    ta = (i / n_teeth) * 2 * $pi;
-    (i % 2 == 0) ? gfx_set(t1r, t1g, t1b, 1)
-                 : gfx_set(t2r, t2g, t2b, 1);
-    gfx_line(cx + sin(ta) * kn_in,   cy - cos(ta) * kn_in,
-             cx + sin(ta) * body_r,  cy - cos(ta) * body_r);
+  loop(11,
+    a = -SW + i * (30 * $pi / 180);
+    f = lp ? -0.20 : 0.15;
+    gfx_set(bgr + f, bgg + f, bgb + f, (a >= lo) && (a <= hi) ? 0.45 : 1);
+    rk_kn_ray(cx, cy, a, ch_in, ch_out, tw);
     i += 1;
   );
 
-  // 2-TONE domed cap (accent-tinted): dark bottom → light top, stacked & shifted up.
-  gfx_set(cr * 0.38 + 0.10, cg * 0.38 + 0.10, cb * 0.38 + 0.10, 1);
-  gfx_circle(cx, cy, cap_r, 1, 1);
-  i = 0;
-  loop(8,
-    frac = i / 7;
-    rr = cap_r * (1 - frac * 0.58);
-    yo = -cap_r * 0.30 * frac;
-    gr = lerp(cr * 0.38 + 0.12, cr * 0.45 + 0.52, frac);
-    gg = lerp(cg * 0.38 + 0.12, cg * 0.45 + 0.52, frac);
-    gb = lerp(cb * 0.38 + 0.12, cb * 0.45 + 0.52, frac);
-    gfx_set(gr, gg, gb, 1);
-    gfx_circle(cx, cy + yo, rr, 1, 1);
-    i += 1;
-  );
-  // Specular gloss (tinted) + cap edge + outer rim
-  gfx_set(min(cr * 0.5 + 0.55, 1), min(cg * 0.5 + 0.55, 1), min(cb * 0.5 + 0.58, 1), 0.45);
-  gfx_circle(cx, cy - cap_r * 0.42, cap_r * 0.26, 1, 1);
-  gfx_set(0.10, 0.12, 0.16, 0.8);
-  gfx_circle(cx, cy, cap_r, 0);
-  gfx_circle(cx, cy, body_r, 0);
-
-  // Halo: ALWAYS-visible neutral track groove + BOLD accent value ring on top
-  gfx_set(0.32, 0.34, 0.39, lerp(0.55, 0.80, hover_t));
-  i = 0;
-  loop(n_passes,
-    gfx_arc(cx, cy, radius - i * 0.7, -RAD130_, RAD130_, 1);
-    i += 1;
-  );
-  arc_a = lerp(0.9, 1.0, hover_t);
-  gfx_set(cr, cg, cb, arc_a);
-  start_rad = is_sym ? (is_sym < 1 ? (is_sym * 2 - 1) * RAD130_ : 0) : -RAD130_;
-  i = 0;
-  loop(n_passes,
-    gfx_arc(cx, cy, radius - i * 0.7, start_rad, val_rad, 1);
+  // Dome: vertical gradient row by row, whole pixel rows so none is skipped
+  dd *= 1 + 0.03 * ht;
+  lift = 0.05 * ht;
+  i = floor(cy - dd);
+  while (i <= cy + dd) (
+    y = i + 0.5 - cy;
+    hw = sqrt(max(dd * dd - y * y, 0)) - 0.6;
+    hw > 0 ? (
+      f = (y + dd) / (2 * dd);                  // 0 top .. 1 bottom
+      s = sc + 0.16 - 0.32 * f + lift;
+      gfx_set(bgr + s - 0.044, bgg + s, bgb + s + 0.042, 1);
+      gfx_rect(floor(cx - hw + 0.5), i, max(1, floor(2 * hw + 0.5)), 1);
+    );
     i += 1;
   );
 
-  // Indicator: a bright BEVELED FACET (angled flat catching light, narrow at the
-  // centre → wide at the rim) with a recessed line down the middle — the FabFilter
-  // "scoop" by the pointer.
-  // Indicator: a thick WHITE ARC band centred on the pointer, hugging the cap's curve
-  // (a true arc — not a pointy wedge). Filled by stacked arc passes. Recessed line.
-  fa     = 0.42;                 // half-angle of the band
-  ar_lo  = cap_r * 0.50;
-  ar_hi  = cap_r * 0.96;
-  n_band = max(8, floor((ar_hi - ar_lo) / 0.6));
-  gfx_set(0.90, 0.93, 0.97, lerp(0.72, 0.92, hover_t));
-  i = 0;
-  loop(n_band + 1,
-    rr = ar_lo + (ar_hi - ar_lo) * (i / n_band);
-    gfx_arc(cx, cy, rr, val_rad - fa, val_rad + fa, 1);
-    i += 1;
+  // Grip: 12 dimples — lenses like the scoop (rim ±15°, tip 0.77D), a shade darker
+  // than the dome where they sit, with a darker inner edge
+  g > 0 ? (
+    dc = 1.039 * dd; drho = 0.269 * dd;
+    dph = acos((drho * drho + dc * dc - dd * dd) / (2 * drho * dc));
+    k = 0;
+    loop(12,
+      a = val_a + (15 + 30 * k) * $pi / 180;
+      lcx = cx + sin(a) * dc; lcy = cy - cos(a) * dc;
+      f = 0.5 - cos(a) * 0.45;                  // the dome's shade at the dimple
+      s = sc + 0.16 - 0.32 * f + lift - 0.07 * g;
+      gfx_set(bgr + s - 0.044, bgg + s, bgb + s + 0.042, 1);
+      rk_kn_lens(cx, cy, dd - 0.6, lcx, lcy, drho);
+      gfx_set(bgr + s - 0.144, bgg + s - 0.10, bgb + s - 0.058, g);
+      gfx_arc(lcx, lcy, drho, a + $pi - dph, a + $pi + dph, 1);
+      k += 1;
+    );
   );
-  // Recessed centre line
-  gfx_set(0.20, 0.22, 0.28, lerp(0.6, 0.85, hover_t));
-  gfx_line(cx + sin(val_rad) * cap_r * 0.30, cy - cos(val_rad) * cap_r * 0.30,
-           cx + sin(val_rad) * cap_r * 0.96, cy - cos(val_rad) * cap_r * 0.96);
+
+  // Scoop: the same lens, bigger, on the pointer — #e2e2e2, then a core inset
+  // 0.14 rho in #f2f2f2 (edges a touch darker), an anti-aliased inner edge
+  tip = 0.30 + 0.12 * g;
+  c = dd * (1 - tip * tip) / (2 * (cos(TH) - tip));
+  rho = c - tip * dd;
+  ph = acos((rho * rho + c * c - dd * dd) / (2 * rho * c));
+  ux = sin(val_a); uy = -cos(val_a);
+  lcx = cx + ux * c; lcy = cy + uy * c;
+  gfx_set(0.885, 0.885, 0.885, 1);
+  rk_kn_lens(cx, cy, dd - 0.6, lcx, lcy, rho);
+  gfx_set(0.95, 0.95, 0.95, 1);
+  rk_kn_lens(cx, cy, dd - 0.10 * rho, lcx, lcy, rho * 0.86);
+  gfx_set(0.885, 0.885, 0.885, 1);
+  gfx_arc(lcx, lcy, rho - 0.6, val_a + $pi - ph, val_a + $pi + ph, 1);
+  gfx_set(0.10, 0.10, 0.10, 0.55);
+  gfx_arc(lcx, lcy, rho, val_a + $pi - ph, val_a + $pi + ph, 1);
+  gfx_set(0.44, 0.44, 0.44, 1);
+  rk_kn_ray(cx, cy, val_a, dd * (0.56 + 0.06 * g), dd * (0.81 + 0.04 * g), max(1.2, dd * 0.026));
+
+  // Outline, near-black, over the dome's, the dimples' and the scoop's edges
+  olr = min(bgr * 0.45, 0.08);
+  gfx_set(olr, olr, min(bgb * 0.45, 0.08), 1);
+  w = max(1, dd * 0.035);
+  rr = dd - 0.3;
+  while (rr <= dd + w - 0.3) ( gfx_circle(cx, cy, rr, 0, 1); rr += 0.6; );
 );
 
 

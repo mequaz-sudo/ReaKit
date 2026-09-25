@@ -11,11 +11,11 @@ __knobs_kbsg_loaded = 1;
 //   3. Spice Pro        — themed arc fill (role hue, value heat + glow),
 //                         sweep needle, bipolar center-fill, panel-aware ring
 //   4. Witti Sound      — clean arc, dot indicator (3 color variants)
-//   5. SSL 4000E        — knurled body, colored cap, detented scroll
+//   5. SSL 4000E        — the E-Series knob: light fluted skirt, big colour cap, painted bar
 //   6. Pultec EQP-1A    — cream bakelite, chicken-head pointer, shadow
 //   7. API 550 Dual     — chrome dual-concentric, drag=gain, scroll=freq
 //   8. Neve 1073        — blue body, full-diameter wedge stripe, detents
-//   9. Encoder          — grey metal, 16 green LEDs, wrapping 0-127
+//   9. Encoder          — X-Touch Mini style: 13-bar LED collar (fill), no pointer; wraps 0-127
 //  10. MPC Rubber Pad   — black domed rubber cap, white indicator, 270° arc
 //  10b. Jog Wheel       — iMPC-style metallic jog with grip notches
 //  11. Vari-Mu          — Manley brushed-aluminium, concentric rings, pointer
@@ -85,6 +85,88 @@ function sign_of(x) ( x < 0 ? -1 : x > 0 ? 1 : 0; );
 // (which runs after every import) to retune reset-on-double-click for all
 // knobs and sliders at once.
 RK_DBLCLICK_T = 0.3;
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHARED DRAWING HELPERS — styles 1 (SSL), 9 (encoder), 12 (Ableton), 15 (FabFilter)
+// ═══════════════════════════════════════════════════════════════════════════
+// Up here, before every style, because EEL2 needs a function defined before any
+// function that calls it.
+
+// Thick radial line r0..r1 at clock angle a (0 = up, +CW), width w: a filled quad
+// with anti-aliased long edges, in the current colour.
+function rk_kn_ray(cx, cy, a, r0, r1, w)
+local(ux, uy, px, py, h, x0, y0, x1, y1)
+(
+  ux = sin(a); uy = -cos(a);
+  px = -uy; py = ux;
+  h = w * 0.5;
+  x0 = cx + ux * r0; y0 = cy + uy * r0;
+  x1 = cx + ux * r1; y1 = cy + uy * r1;
+  gfx_triangle(x0 + px * h, y0 + py * h, x1 + px * h, y1 + py * h,
+               x1 - px * h, y1 - py * h, x0 - px * h, y0 - py * h);
+  gfx_line(x0 + px * (h - 0.5), y0 + py * (h - 0.5), x1 + px * (h - 0.5), y1 + py * (h - 0.5), 1);
+  gfx_line(x0 - px * (h - 0.5), y0 - py * (h - 0.5), x1 - px * (h - 0.5), y1 - py * (h - 0.5), 1);
+);
+
+// Filled annular band r_in..r_out between clock angles a1 < a2 (stacked 1 px arcs,
+// so the ends are cut square), in the current colour.
+function rk_kn_band(cx, cy, r_in, r_out, a1, a2)
+local(rr)
+(
+  a2 > a1 ? (
+    rr = r_out - 0.5;
+    while (rr >= r_in + 0.5) ( gfx_arc(cx, cy, rr, a1, a2, 1); rr -= 0.6; );
+    gfx_arc(cx, cy, r_in + 0.5, a1, a2, 1);
+  );
+);
+
+// Fill disc(cx,cy,dd) ∩ disc(lcx,lcy,rho) in the current colour. Two discs make a
+// convex lens, so every pixel row crosses it in ONE span: exact, row by row. (A
+// triangle fan left a flat sliver at the lens tip.)
+function rk_kn_lens(cx, cy, dd, lcx, lcy, rho)
+local(i, y, dy0, dy1, hw, f, x0, x1)
+(
+  i = floor(max(cy - dd, lcy - rho));
+  while (i <= min(cy + dd, lcy + rho)) (
+    y = i + 0.5;
+    dy0 = y - cy; dy1 = y - lcy;
+    abs(dy0) < dd && abs(dy1) < rho ? (
+      hw = sqrt(dd * dd - dy0 * dy0); f = sqrt(rho * rho - dy1 * dy1);
+      x0 = max(cx - hw, lcx - f); x1 = min(cx + hw, lcx + f);
+      x1 > x0 + 0.25 ? gfx_rect(floor(x0 + 0.5), i, max(1, floor(x1 + 0.5) - floor(x0 + 0.5)), 1);
+    );
+    i += 1;
+  );
+);
+
+// A disc filled row by row with a vertical gradient: (tr,tg,tb) at the top to
+// (br,bg_,bb) at the bottom. Its edge is left to an anti-aliased circle drawn after.
+function rk_kn_vdisc(cx, cy, r, tr, tg, tb, br, bg_, bb)
+local(i, y, hw, f)
+(
+  i = floor(cy - r);
+  while (i <= cy + r) (
+    y = i + 0.5 - cy;
+    hw = sqrt(max(r * r - y * y, 0)) - 0.5;
+    hw > 0 ? (
+      f = (y + r) / (2 * r);
+      gfx_set(tr + (br - tr) * f, tg + (bg_ - tg) * f, tb + (bb - tb) * f, 1);
+      gfx_rect(floor(cx - hw + 0.5), i, max(1, floor(2 * hw + 0.5)), 1);
+    );
+    i += 1;
+  );
+);
+
+// A radial pill (rounded bar) r0..r1 at clock angle a, width w, current colour.
+function rk_kn_pill(cx, cy, a, r0, r1, w)
+local(h)
+(
+  h = w * 0.5;
+  r1 - r0 > w ? rk_kn_ray(cx, cy, a, r0 + h, r1 - h, w);
+  gfx_circle(cx + sin(a) * (r0 + h), cy - cos(a) * (r0 + h), h, 1, 1);
+  gfx_circle(cx + sin(a) * (r1 - h), cy - cos(a) * (r1 - h), h, 1, 1);
+);
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -640,44 +722,61 @@ local(hover, d, new_val, fine, step, now)
 // 5. SSL 4000 E
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Draw: knurled dark body, colored cap, white pointer, detent dots
+// Draw: the SSL E-Series knob, measured 2026-09-24 on SSL's own photo of its
+// E-Series EQ module (SSL's 4K E plug-in draws the same knob): a LARGE flat colour
+// cap, a light-grey rim round it, a grey fluted skirt, and a white bar painted on
+// the cap from the centre to its edge. R = the skirt's outer edge: cap 0.74R
+// (0.78R at full hover — the cap grows, as before), rim to 0.88R, 24 flutes to R,
+// lit from the top-left, a soft shadow below-right (it reaches ~1.12R there).
+// Unchanged: a light cap (Rec.601 luma > 0.6) gets a dark bar; n_detents > 0
+// draws the detent-dot ring at 1.25R.
 function ssl_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
                         cr, cg, cb, n_detents)
-local(ht, cap_a, ring_bright, scale, voffset, val_deg, val_rad,
-      i, da, dx, dy, active_det, det_step, px, py, ptr_len)
+local(ht, val_rad, cap, rim, i, a, sh, f, n, w, det_step, active_det, da, dx, dy)
 (
-  ht = pow(hover_t, 2);
-  cap_a = lerp(0.7, 1.0, ht);
-  ring_bright = lerp(0.45, 0.70, ht);
-  scale = 260 / (vmax - vmin);
-  voffset = -vmin * 260 / (vmax - vmin) - 130;
-  val_deg = value * scale + voffset;
-  val_rad = val_deg * $pi / 180;
-  // Knurled body
-  gfx_set(0.12, 0.12, 0.14, 1);
-  gfx_circle(cx, cy, radius, 1);
-  gfx_set(ring_bright, ring_bright, ring_bright + 0.02, 1);
-  gfx_circle(cx, cy, radius * 0.92, 0);
-  gfx_circle(cx, cy, radius * 0.85, 0);
-  gfx_circle(cx, cy, radius * 0.78, 0);
-  // Colored cap
-  gfx_set(cr, cg, cb, cap_a);
-  gfx_circle(cx, cy, radius * lerp(0.55, 0.61, ht), 1);
-  gfx_set(cr * 0.6, cg * 0.6, cb * 0.6, cap_a);
-  gfx_circle(cx, cy, radius * lerp(0.55, 0.61, ht), 0);
-  // Pointer (3 lines for thickness) — auto-contrast against the cap so it reads
-  // on light AND dark caps (e.g. a White or Black cap). Rec.601 luma; a light
-  // cap (>0.6) gets a dark pointer, otherwise the classic near-white pointer.
-  // Mid-tone accent caps stay white (luma < 0.6), so normal knobs are unchanged.
-  (cr * 0.299 + cg * 0.587 + cb * 0.114) > 0.6 ? gfx_set(0.12, 0.12, 0.14, 1) : gfx_set(0.95, 0.95, 0.95, 1);
-  ptr_len = radius * 0.82;
-  px = sin(val_rad) * ptr_len;
-  py = -cos(val_rad) * ptr_len;
-  gfx_line(cx, cy, cx + px, cy + py);
-  gfx_line(cx + cos(val_rad), cy + sin(val_rad),
-           cx + px + cos(val_rad), cy + py + sin(val_rad));
-  gfx_line(cx - cos(val_rad), cy - sin(val_rad),
-           cx + px - cos(val_rad), cy + py - sin(val_rad));
+  ht = hover_t * hover_t;
+  val_rad = ((value - vmin) / max(0.0000001, vmax - vmin) * 260 - 130) * $pi / 180;
+  cap = radius * (0.74 + 0.04 * ht);
+  rim = radius * 0.88;
+
+  // soft shadow below-right
+  gfx_set(0, 0, 0, 0.18); gfx_circle(cx + radius * 0.06, cy + radius * 0.10, radius * 1.02, 1, 1);
+  gfx_set(0, 0, 0, 0.22); gfx_circle(cx + radius * 0.04, cy + radius * 0.06, radius, 1, 1);
+
+  // fluted skirt: lit top-left, shade bottom-right; 24 flutes
+  rk_kn_vdisc(cx, cy, radius, 0.66, 0.67, 0.68, 0.36, 0.36, 0.37);
+  n = 24; w = max(1, radius * 0.035);
+  i = 0;
+  loop(n,
+    a = i * 2 * $pi / n;
+    sh = 0.5 + 0.5 * cos(a + 0.785);          // 1 at the top-left, 0 at the bottom-right
+    gfx_set(0.26 + 0.20 * sh, 0.26 + 0.20 * sh, 0.27 + 0.20 * sh, 1);
+    rk_kn_ray(cx, cy, a, rim, radius - 0.5, w);
+    i += 1;
+  );
+  gfx_set(0.20, 0.20, 0.21, 0.9); gfx_circle(cx, cy, radius, 0, 1);
+
+  // rim: a light-grey band round the cap, lit top-left
+  n = 12;
+  i = 0;
+  loop(n,
+    a = -$pi + i * 2 * $pi / n;
+    sh = 0.5 + 0.5 * cos(a + $pi / n + 0.785);
+    f = 0.60 + 0.20 * sh;
+    gfx_set(f, f + 0.01, f + 0.01, 1);
+    rk_kn_band(cx, cy, cap, rim, a, a + 2 * $pi / n + 0.02);
+    i += 1;
+  );
+
+  // flat colour cap, a touch lighter at the top, a dark seam at its edge
+  rk_kn_vdisc(cx, cy, cap, min(cr + 0.05, 1), min(cg + 0.05, 1), min(cb + 0.05, 1), cr * 0.85, cg * 0.85, cb * 0.85);
+  gfx_set(cr * 0.45, cg * 0.45, cb * 0.45, 1); gfx_circle(cx, cy, cap, 0, 1);
+  gfx_set(cr * 0.45, cg * 0.45, cb * 0.45, 0.6); gfx_circle(cx, cy, cap + 0.6, 0, 1);
+
+  // painted pointer bar, centre -> cap edge; a light cap gets a dark bar
+  (cr * 0.299 + cg * 0.587 + cb * 0.114) > 0.6 ? gfx_set(0.12, 0.12, 0.14, 1) : gfx_set(0.95, 0.96, 0.96, 1);
+  rk_kn_ray(cx, cy, val_rad, cap * 0.05, cap * 0.97, max(1.5, cap * 0.22));
+
   // Detent dots
   det_step = (vmax - vmin) / max(1, n_detents - 1);
   active_det = floor((value - vmin) / det_step + 0.5);
@@ -687,10 +786,10 @@ local(ht, cap_a, ring_bright, scale, voffset, val_deg, val_rad,
     dx = cx + sin(da) * radius * 1.25;
     dy = cy - cos(da) * radius * 1.25;
     i == active_det ? (
-      gfx_set(cr, cg, cb, cap_a);
+      gfx_set(cr, cg, cb, 1);
       gfx_circle(dx, dy, radius * 0.08, 1);
     ) : (
-      gfx_set(0.4, 0.4, 0.4, lerp(0.5, 0.8, ht));
+      gfx_set(0.4, 0.4, 0.4, 0.5 + 0.3 * ht);
       gfx_circle(dx, dy, radius * 0.05, 1);
     );
     i += 1;
@@ -1279,78 +1378,58 @@ local(ht, ba, scale, voffset, val_rad, i, ta, ca, cpx, cpy, csx, ccy, fw, fw2,
 // 9. ENDLESS ROTARY ENCODER
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Draw: grey metal body, 24 edge notches, 16 green LED ring, white pointer
+// Draw: the Behringer X-TOUCH MINI encoder, measured 2026-09-24 on Behringer's
+// top-view product image. NO pointer — the LED collar is the display: 13
+// pill-shaped bars from -140° to +140°, filling from the start to the value (the
+// last one partly lit), lit pale with a soft bloom, unlit a dim shade of the
+// accent, in a dark recessed well; a small black knob with a flat grey top and a
+// chamfer lit from the top. The footprint is what it was (the old 16-LED ring
+// reached ~1.4R): well 1.38R, bars 1.02R..1.31R, knob 0.73R (top 0.40R). Accent =
+// LED colour. Hover: the knob swells 6% and its top lifts.
 function encoder_draw(cx, cy, radius, value, vmin, vmax, hover_t, cr, cg, cb)
-local(ht, _vn, i, a, led_orbit, led_r, led_pos, led_dist, led_bright,
-      notch_in, notch_out, val_rad, RAD130_, lx, ly)
+local(ht, t, pos, i, a, b, wr, k, r0, r1, w, SW)
 (
-  ht = pow(hover_t, 2);
-  _vn = clamp((value - vmin) / (vmax - vmin), 0, 1);
-  RAD130_ = 130 * $pi / 180;
-  led_orbit = radius * 1.3;
-  led_r = radius * 0.08;
-  radius = radius * (1 + 0.06 * ht);   // body swells on hover; the LED ring stays put
-  led_pos = _vn * 15;  // 0–15 mapped across 16 LEDs
+  ht = hover_t * hover_t;
+  t = min(max((value - vmin) / (vmax - vmin), 0), 1);
+  SW = 140 * $pi / 180;
+  wr = radius * 1.38;
+  r0 = radius * 1.02; r1 = radius * 1.31; w = max(1.2, radius * 0.11);
+  pos = t * 12;
 
-  // LED ring (270° arc: -130° to +130°)
+  // recessed well: darker than any panel, dark edge
+  gfx_set(0, 0, 0, 0.38); gfx_circle(cx, cy, wr, 1, 1);
+  gfx_set(0, 0, 0, 0.55); gfx_circle(cx, cy, wr, 0, 1);
+
+  // 13 LED bars, pill-shaped like the hardware's, filling to the value; a lit bar
+  // blooms softly
   i = 0;
-  loop(16,
-    a = (-130 + i * 260 / 15) * $pi / 180;
-    led_dist = abs(i - led_pos);
-    led_bright = max(0, 1 - led_dist * 0.4) * lerp(0.7, 1.0, ht);
-    lx = cx + sin(a) * led_orbit;
-    ly = cy - cos(a) * led_orbit;
-    // LED housing (neutral dark)
-    gfx_set(0.12, 0.12, 0.13, 0.6);
-    gfx_circle(lx, ly, led_r * 1.2, 1);
-    // Lit LED (parameterized color)
-    led_bright > 0.05 ? (
-      gfx_set(cr * led_bright, cg * led_bright, cb * led_bright, 1);
-      gfx_circle(lx, ly, led_r * (0.8 + led_bright * 0.5), 1);
-      // Glow halo on bright LEDs
-      led_bright > 0.5 ? (
-        gfx_set(cr * led_bright, cg * led_bright, cb * led_bright, 0.2 * led_bright);
-        gfx_circle(lx, ly, led_r * 2, 1);
-      );
+  loop(13,
+    a = -SW + i * (2 * SW / 12);
+    b = min(max(pos - i + 1, 0), 1);
+    gfx_set(cr * 0.20, cg * 0.20, cb * 0.20, 1);                       // unlit
+    rk_kn_pill(cx, cy, a, r0, r1, w);
+    b > 0.02 ? (
+      gfx_set(cr, cg, cb, 0.10 * b);                                     // bloom: two soft discs
+      gfx_circle(cx + sin(a) * (r0 + r1) * 0.5, cy - cos(a) * (r0 + r1) * 0.5, (r1 - r0) * 0.80, 1, 1);
+      gfx_set(cr, cg, cb, 0.14 * b);
+      gfx_circle(cx + sin(a) * (r0 + r1) * 0.5, cy - cos(a) * (r0 + r1) * 0.5, (r1 - r0) * 0.55, 1, 1);
+      // core: opaque, its colour blended unlit -> lit by b (a translucent pill would
+      // double up where its rounded ends overlap the bar)
+      gfx_set(cr * 0.20 + (min(cr * 0.45 + 0.55, 1) - cr * 0.20) * b,
+              cg * 0.20 + (min(cg * 0.45 + 0.55, 1) - cg * 0.20) * b,
+              cb * 0.20 + (min(cb * 0.45 + 0.55, 1) - cb * 0.20) * b, 1);
+      rk_kn_pill(cx, cy, a, r0, r1, w);
     );
     i += 1;
   );
 
-  // Metal body
-  gfx_set(0.42 + 0.05 * ht, 0.42 + 0.05 * ht, 0.44 + 0.05 * ht, 1);
-  gfx_circle(cx, cy, radius, 1);
-  gfx_set(0.52 + 0.05 * ht, 0.52 + 0.05 * ht, 0.54 + 0.05 * ht, 1);
-  gfx_circle(cx, cy, radius * 0.75, 1);
-  gfx_set(0.46, 0.46, 0.48, 1);
-  gfx_circle(cx, cy, radius * 0.5, 1);
-
-  // Edge notches
-  notch_in = radius * 0.88;
-  notch_out = radius;
-  gfx_set(0.30, 0.30, 0.32, 1);
-  i = 0;
-  loop(24,
-    a = i * tau / 24;
-    gfx_line(cx + sin(a) * notch_in, cy - cos(a) * notch_in,
-             cx + sin(a) * notch_out, cy - cos(a) * notch_out);
-    i += 1;
-  );
-
-  // Outline + center
-  gfx_set(0.30, 0.30, 0.32, 1);
-  gfx_circle(cx, cy, radius, 0);
-  gfx_set(0.2, 0.2, 0.22, 1);
-  gfx_circle(cx, cy, radius * 0.12, 1);
-
-  // White pointer (270° arc)
-  val_rad = (_vn * 260 - 130) * $pi / 180;
-  gfx_set(0.85 + 0.15 * ht, 0.85 + 0.15 * ht, 0.85 + 0.15 * ht, 1);
-  gfx_line(cx + sin(val_rad) * radius * 0.3, cy - cos(val_rad) * radius * 0.3,
-           cx + sin(val_rad) * radius * 0.8, cy - cos(val_rad) * radius * 0.8);
-  gfx_line(cx + sin(val_rad) * radius * 0.3 + cos(val_rad),
-           cy - cos(val_rad) * radius * 0.3 + sin(val_rad),
-           cx + sin(val_rad) * radius * 0.8 + cos(val_rad),
-           cy - cos(val_rad) * radius * 0.8 + sin(val_rad));
+  // knob: black body, chamfer lit from the top, flat grey top face, no pointer
+  k = radius * 0.73 * (1 + 0.06 * ht);
+  gfx_set(0, 0, 0, 0.35); gfx_circle(cx + k * 0.05, cy + k * 0.09, k, 1, 1);
+  gfx_set(0.08, 0.08, 0.08, 1); gfx_circle(cx, cy, k, 1, 1);
+  rk_kn_vdisc(cx, cy, k * 0.85, 0.52, 0.52, 0.52, 0.10, 0.10, 0.10);
+  gfx_set(0.29 + 0.04 * ht, 0.29 + 0.04 * ht, 0.29 + 0.04 * ht, 1); gfx_circle(cx, cy, k * 0.55, 1, 1);
+  gfx_set(0.05, 0.05, 0.05, 1); gfx_circle(cx, cy, k, 0, 1);
 );
 
 // Interact: wrapping 0-127, scroll ±1, drag continuous, double-click → 64
@@ -1693,58 +1772,6 @@ local(ht, ba, scale, voffset, val_rad,
   );
 );
 
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SHARED BY 12 (ABLETON) AND 15 (FABFILTER)
-// ═══════════════════════════════════════════════════════════════════════════
-
-// Thick radial line r0..r1 at clock angle a (0 = up, +CW), width w: a filled quad
-// with anti-aliased long edges, in the current colour.
-function rk_kn_ray(cx, cy, a, r0, r1, w)
-local(ux, uy, px, py, h, x0, y0, x1, y1)
-(
-  ux = sin(a); uy = -cos(a);
-  px = -uy; py = ux;
-  h = w * 0.5;
-  x0 = cx + ux * r0; y0 = cy + uy * r0;
-  x1 = cx + ux * r1; y1 = cy + uy * r1;
-  gfx_triangle(x0 + px * h, y0 + py * h, x1 + px * h, y1 + py * h,
-               x1 - px * h, y1 - py * h, x0 - px * h, y0 - py * h);
-  gfx_line(x0 + px * (h - 0.5), y0 + py * (h - 0.5), x1 + px * (h - 0.5), y1 + py * (h - 0.5), 1);
-  gfx_line(x0 - px * (h - 0.5), y0 - py * (h - 0.5), x1 - px * (h - 0.5), y1 - py * (h - 0.5), 1);
-);
-
-// Filled annular band r_in..r_out between clock angles a1 < a2 (stacked 1 px arcs,
-// so the ends are cut square), in the current colour.
-function rk_kn_band(cx, cy, r_in, r_out, a1, a2)
-local(rr)
-(
-  a2 > a1 ? (
-    rr = r_out - 0.5;
-    while (rr >= r_in + 0.5) ( gfx_arc(cx, cy, rr, a1, a2, 1); rr -= 0.6; );
-    gfx_arc(cx, cy, r_in + 0.5, a1, a2, 1);
-  );
-);
-
-// Fill disc(cx,cy,dd) ∩ disc(lcx,lcy,rho) in the current colour. Two discs make a
-// convex lens, so every pixel row crosses it in ONE span: exact, row by row. (A
-// triangle fan left a flat sliver at the lens tip.)
-function rk_kn_lens(cx, cy, dd, lcx, lcy, rho)
-local(i, y, dy0, dy1, hw, f, x0, x1)
-(
-  i = floor(max(cy - dd, lcy - rho));
-  while (i <= min(cy + dd, lcy + rho)) (
-    y = i + 0.5;
-    dy0 = y - cy; dy1 = y - lcy;
-    abs(dy0) < dd && abs(dy1) < rho ? (
-      hw = sqrt(dd * dd - dy0 * dy0); f = sqrt(rho * rho - dy1 * dy1);
-      x0 = max(cx - hw, lcx - f); x1 = min(cx + hw, lcx + f);
-      x1 > x0 + 0.25 ? gfx_rect(floor(x0 + 0.5), i, max(1, floor(x1 + 0.5) - floor(x0 + 0.5)), 1);
-    );
-    i += 1;
-  );
-);
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2300,8 +2327,9 @@ local(scale, voffset, val_rad, body_r, ht, i, n_passes, RAD130_,
 // (e.g. logarithmic) positions are the CALLER's job — Weld prints its own.
 // Below radius 14 the flutes and sheen drop out (they read as noise at
 // synthview sizes); the silhouette, cap and pointer survive any size.
-// ⚠ ssl_knob_draw is the suite-wide DEFAULT style and stays untouched —
-// adopting this look elsewhere is a per-plugin decision with an eyeball.
+// ssl_knob_draw is the suite-wide DEFAULT style; since 2026-09-24 it draws the
+// flat-cap E-Series knob (user-approved). This G sibling keeps its domed cap,
+// sheen and skirt notch.
 function sslg_knob_draw(cx, cy, radius, value, vmin, vmax, is_sym, hover_t,
                         cr, cg, cb, n_det)
 local(ht, cap_a, val_rad, capr, i, fa, fw, px, py, ox, oy,

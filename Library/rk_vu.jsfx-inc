@@ -938,7 +938,11 @@ function _rk_vu_led_pos() local(lx, ly, lr, s1, c1, tlo, thi, kw, has, ex, ey, h
     fr = rkvu_ox + rkvu_ow - min(rkvu_ow, rkvu_oh) * 0.075 * 0.55;   // the face's right edge
     ok = 0; k = 0;
     while (!ok && k < 8) (
-      rho = lr * 1.45 + 1; lm = lr * 1.45 + 2.5 * rkvu_sc;
+      // rho keeps the ring clear of the needle and the numerals; lm keeps the
+      // LIT glow (2.1 lr, _rk_vu_led) inside the plate on a flat face, where
+      // the LED sits at the plate's bottom and right edge (Codex delta audit,
+      // 2026-09-28: the glow ran ~4 px into the bezel of a 600x150 ticks face).
+      rho = lr * 1.45 + 1; lm = lr * 2.1 + 2.5 * rkvu_sc;
       lx = rkvu_cx + rkvu_r * 0.66; ly = rkvu_cy - rkvu_r * 0.16;
       p = max(ly - (rkvu_fb - lm), 0); ly -= p; lx += p;
       has && ly - rho < ey + hh + 1 ? lx = max(lx, ex + hw + 1 + rho);
@@ -998,7 +1002,11 @@ function _rk_vu_label(s, fsz) local(tw, th, ok, f, n, k, ri, lo, cm, c) (
         f > RKVU_FMIN * rkvu_sc ? (
           f -= 1;
         ) : n > 1 ? (
-          n -= 1; strcpy_substr(#_rkvu_lb, s, 0, n); strcat(#_rkvu_lb, "..");
+          // Cut to about the width that fits, then by one: a long name used to
+          // lose one character per pass and run out of passes (64) still too
+          // wide, and drew nothing (Codex delta audit, 2026-09-28).
+          n = min(n - 1, max(1, floor(n * rkvu_r / max(tw, 1))));
+          strcpy_substr(#_rkvu_lb, s, 0, n); strcat(#_rkvu_lb, "..");
         ) : (
           k = 64;                                         // no room: no label
         );
@@ -1221,8 +1229,13 @@ function rk_vu_sample_gr(gain) local(tgt, a, dt) (
 
 function rk_vu_sample(x) local(amp, tgt, a, dt, peg) (
   x = abs(x);
-  x >= 0 ? ( x > 16 ? x = 16; ) : ( x = 0; );   // +inf -> +24 dBFS, NaN -> silence
-  this.acc = this.legacy ? max(this.acc, x) : this.acc + x;
+  // NaN -> silence; +inf -> a finite peak (+120 dBFS). The MOVEMENT's sum is
+  // capped at 16 (+24 dBFS, far past the stop) so one hot sample cannot swamp
+  // the block; the peak readout and the warn LED take the true value (Codex
+  // delta audit, 2026-09-28: a +30 dBFS burst read +24.1, and a warn threshold
+  // above +24 could never light).
+  x >= 0 ? ( x > 1000000 ? x = 1000000; ) : ( x = 0; );
+  this.acc = this.legacy ? max(this.acc, min(x, 16)) : this.acc + min(x, 16);
   this.pkb = max(this.pkb, x);
   x > this.lim ? this.over = this.led_hold;
   this.cnt += 1;

@@ -401,6 +401,19 @@ gfx_ext_flags & 1 ? (
   xo_font = val_font;
   lbl_gap = main_r * 1.55;
   lbl_val_gap = lbl_font + 5*ret;
+  // A wide, SHORT window: the value text under the knobs must clear the legend.
+  // The window factor above is set by the knob radius alone, and the fonts
+  // floor at 11 px x ret, so on a 1400x400 window the readouts ran into the
+  // legend (Codex delta audit, 2026-09-28). The knob row moves up as far as
+  // the header allows; past that the knobs shrink, and the fonts and gaps
+  // follow them. A window the design size or taller is untouched.
+  stack_h = lbl_gap + lbl_val_gap + val_font + 4*ret;
+  knob_cy = min(knob_cy, gfx_h - legend_h - stack_h);
+  knob_cy - main_r < hdr_h + 4*ret ? (
+    main_r = max(22*ret, knob_cy - hdr_h - 4*ret);
+    lbl_font = floor(kf(12, main_r)); val_font = floor(kf(10, main_r)); xo_font = val_font;
+    lbl_gap = main_r * 1.55; lbl_val_gap = lbl_font + 5*ret;
+  );
 
   // Title
   gfx_set(_th_tx_r, _th_tx_g, _th_tx_b, 1);

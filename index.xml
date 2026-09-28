@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <index version="1" name="ReaKit">
   <category name="Library">
-    <reapack name="ReaKit Elements.jsfx" type="effect" desc="ReaKit - UI widget library for JSFX (20 knobs / 17 faders / 10 buttons / 12 meters / analog VU / pads / piano) + showcase">
+    <reapack name="ReaKit Elements.jsfx" type="effect" desc="ReaKit - UI widget library for JSFX (21 knobs / 17 faders / 10 buttons / 12 meters / analog VU / pads / piano) + showcase">
       <metadata>
         <description><![CDATA[ReaKit is a free, procedural UI/widget library for JSFX. 20 knob styles, 17 slider/fader types, 10 buttons, 12 meters with DSP, analog VU with 20 faces. Crisp at any size, themable with one call, one shared interaction model (drag / ctrl-fine / shift-finer / wheel / right-click or double-click reset / automation-safe). Installing this package brings the library incs plus the all-elements showcase JSFX. MIT licensed.]]></description>
         <link rel="website">https://forum.cockos.com/showthread.php?p=2952442</link>
@@ -372,6 +372,35 @@ Fixed in rk_curve: a curve with more points than pixels no longer stair-steps, t
         <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_colorpick.jsfx-inc</source>
         <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/e6127f04bee69082243b0f4e18cf6d759989f751/Library/rk_adsr.jsfx-inc</source>
       </version>
+      <version name="1.7.0" author="Quaz (EON Studios)" time="2026-09-28T14:45:01Z">
+        <changelog><![CDATA[The analog VU (rk_vu), audited to be right at every size. A small face shrinks its dial so the numerals stay clear of the scale and the red zone (a default mixer strip reads -20 -10 -3 0 1 2 3, and -7 comes back as the face widens); the tick marks are at least 9 and 6 px long on every face; a long mark is one solid bar; the face label sits where the marks leave room, smaller or cut with ".." when they do not; digits under 10 px draw regular, because bold Arial at 8 and 9 px turns a 5 into a 6.
+
+New: vu.rk_vu_set_numbers(0) draws the ticks only, with the bigger dial that leaves room for; vu.rk_vu_set_flat(1) lets a face wider than 1.7:1 grow into a flatter dial instead of keeping a 1.6:1 face in the middle of the rect (a widened mixer strip). Every existing call keeps its signature.
+
+Fixed in the movement: the needle stops at the far end instead of hanging past it; a host that keeps its state across a reload gets the 300 ms movement, not a faster one; a window resize or DPI change no longer doubles the text scale; the numerals no longer blink while the window is dragged; a NaN in the audio reads as silence instead of freezing the meter; the peak readout and the warn LED take the true sample value; the GR scale's labels drop like the level scale's when the face is small. rk_curve: a node name with a digit draws regular under 10 px. The header now says 21 knob styles, which is what the library has.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/ReaKit%20Elements.jsfx</source>
+        <source file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/ReaKit%20Starter.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_vu.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_curve.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_curve.jsfx-inc</source>
+        <source file="rk_popup.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_popup.jsfx-inc</source>
+        <source file="rk_ink.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_ink.jsfx-inc</source>
+        <source file="rk_tooltip.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_tooltip.jsfx-inc</source>
+        <source file="rk_textfield.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_textfield.jsfx-inc</source>
+        <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_colorpick.jsfx-inc</source>
+        <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_adsr.jsfx-inc</source>
+      </version>
     </reapack>
   </category>
   <category name="Floatter">
@@ -420,6 +449,22 @@ Needs js_ReaScriptAPI (ReaTeam Extensions). The panel needs ReaImGui; without it
         <source file="ReaKit/rk_theme.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2117f4f192b9b4da8052b671acfe296e25781a5b/FX/ReaKit/rk_theme.jsfx-inc</source>
         <source file="ReaKit/smooth_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2117f4f192b9b4da8052b671acfe296e25781a5b/FX/ReaKit/smooth_kbsg.jsfx-inc</source>
         <source file="ReaKit/utils_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/2117f4f192b9b4da8052b671acfe296e25781a5b/FX/ReaKit/utils_kbsg.jsfx-inc</source>
+      </version>
+      <version name="1.0.1" author="Quaz (EON Studios)" time="2026-09-28T14:45:01Z">
+        <changelog><![CDATA[The THEME panel gains a NAME BAR row: per instance, show or hide REAPER's own name bar over the plugin's mixer-strip and track-panel embed (hidden by default, as before). A click on the strip closes the plugin's floating window. Digits under 10 px draw regular (bold Arial at 8 and 9 px turns a 5 into a 6), in the plugins and in the link badge. The panel's KNOB chip names the knob actually on screen. 3-Band EQ: the standalone window draws everything at one scale that follows the window, and in a wide, short window the readouts stay clear of the legend.]]></changelog>
+        <source file="Eon_JSFX/FX/Saturation_ReaKit.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/Eon_JSFX/FX/Saturation_ReaKit.jsfx</source>
+        <source file="Eon_JSFX/FX/3BandEQ_ReaKit.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/Eon_JSFX/FX/3BandEQ_ReaKit.jsfx</source>
+        <source file="Eon_JSFX/FX/DDC_ReaKit.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/Eon_JSFX/FX/DDC_ReaKit.jsfx</source>
+        <source file="Eon_JSFX/FX/DeEsser_ReaKit.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/Eon_JSFX/FX/DeEsser_ReaKit.jsfx</source>
+        <source file="ReaKit/buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/buttons_kbsg.jsfx-inc</source>
+        <source file="ReaKit/knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/knobs_kbsg.jsfx-inc</source>
+        <source file="ReaKit/meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/meters_kbsg.jsfx-inc</source>
+        <source file="ReaKit/oversample_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/oversample_kbsg.jsfx-inc</source>
+        <source file="ReaKit/rk_gmem_link.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/rk_gmem_link.jsfx-inc</source>
+        <source file="ReaKit/rk_playstate.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/rk_playstate.jsfx-inc</source>
+        <source file="ReaKit/rk_theme.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/rk_theme.jsfx-inc</source>
+        <source file="ReaKit/smooth_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/smooth_kbsg.jsfx-inc</source>
+        <source file="ReaKit/utils_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/FX/ReaKit/utils_kbsg.jsfx-inc</source>
       </version>
     </reapack>
   </category>

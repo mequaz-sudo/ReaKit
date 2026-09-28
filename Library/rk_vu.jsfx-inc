@@ -86,10 +86,35 @@ desc:ReaKit analog VU meter — self-contained face, 20 themes
 //   vu.rk_vu_set_peak_hold(sec)            peak readout hold (-1 = needle's)
 //   vu.rk_vu_set_speed(mult)               1 = standard 300 ms, 2 = twice as fast
 //   rk_vu_set_text_scale(mult)             numerals and labels, 1 = as designed
+//   vu.rk_vu_set_numbers(0|1)              numerals on the scale (1) or TICKS ONLY (0),
+//                                          the dial then as large as the face allows.
+//                                          rk_vu_face / rk_vu_geom callers without an
+//                                          instance set rkvu_nums themselves (default 1)
+//   vu.rk_vu_set_flat(0|1)                 1: a rect wider than 1.7:1 draws a bigger,
+//                                          FLATTER dial, its pivot below the plate,
+//                                          growing with the rect up to the flattest
+//                                          (a strip dragged wide); 0 (default): the
+//                                          1.6:1 face, centred. Sets rkvu_flat_on /
+//                                          rkvu_fb for the host. Callers without an
+//                                          instance set rkvu_flat (default 0)
 //   vu.rk_vu_picker(x,y,w,h,cur) -> theme  click the cover: a sheet of live
 //                                          miniatures; returns the pick or -1.
 //                                          Call LAST in @gfx. Needs mx/my/lmb_down.
-//   rk_vu_set_hold(seconds)                hold-needle fall time (0 = off)
+//                                          ⚠️ CALL IT THROUGH THE INSTANCE (vu.): its
+//                                          open flag is this.pk_open, and EEL2 binds
+//                                          `this` in an UNPREFIXED call to the
+//                                          function's own name (measured 2026-09-25:
+//                                          f() writes f.q, not q), so a host that
+//                                          tests vu.pk_open to hold clicks off its
+//                                          widgets while the sheet is up tests a
+//                                          flag nothing ever sets.
+//   rk_vu_set_hold(seconds)                hold-needle fall time (0 = off). PLUGIN-WIDE,
+//                                          on purpose: every meter in the plugin (an L/R
+//                                          pair must fall alike), the peak readout's
+//                                          default hold and whether the hold needle is
+//                                          drawn at all. Call it once, no vu. prefix: a
+//                                          prefixed call still sets every meter. No plugin
+//                                          in the suite sets it (all run the 1.6 s default).
 //   rk_vu_theme_name(i, #dst)              theme name for a picker
 //
 // THEMES  0 Cream  1 Dark Studio  2 Black & Gold  3 Modern White  4 Broadcast
@@ -108,7 +133,46 @@ RKVU_HOLD_S = 1.6;                 // hold needle fall time, seconds
 RKVU_GR_FALL = 16;                 // GR hold needle fall rate, dB per second
 rkvu_hold_style = 1;               // default for callers that draw ink themselves
 rkvu_text_scale = 1;
+// The movement's right-hand stop, as the linear ratio the physics runs on:
+// +3 VU, where the scale ends. A real pointer cannot travel past its peg, so
+// when an overload ends it leaves the stop at once; without this the model
+// kept climbing (a +10 dB burst reached ratio 3.16) and then sat pinned at +3
+// for 123 ms while it fell back (measured). The GR movement pegs at 20 dB.
+RKVU_PEG    = 10 ^ (RKVU_DB_HI / 20);
+RKVU_PEG_LEGACY = 0.9553;          // the same stop through rk_vu_legacy_ratio
+RKVU_FMIN   = 7;                   // smallest numeral, in LOGICAL px (x the DPI hint)
+RKVU_REF_F  = 100;                 // numeral widths are measured once at this size
+rkvu_wr_ok  = 0;                   // ...per instance, on the first draw
+RKVU_SNAP   = 1.5;                 // px a numeral may land sideways: pixel snapping + hinting
+RKVU_MINUS_LO = 0.22;              // a minus sign's ink ends this x font below its label's centre
+                                   // (0.10..0.21 measured in REAPER, sizes 7..40, 2026-09-25)
+RKVU_CRUSH  = 0.6;                 // a face whose numerals need the arc below this share: none
+                                   // (⚠️ NOT "RKVU_NONUM": EEL2 is case-blind, that IS rkvu_nonum)
+rkvu_gmode  = 0;                   // the label set rk_vu_geom solves for: 0 level, 1 GR
+// ⚠️ DIGITS UNDER 10 px ARE REGULAR, NOT BOLD. REAPER draws Arial BOLD at 8 and
+// 9 px with the "5" closed into a "6" (captured in the sandbox 2026-09-25: "-5"
+// read "-6", "-15" read "-16"; the user's own mixer shot showed a "-6" that can
+// only have been -5). Regular is right at every size, and Arial's digits and
+// minus have the same advance in both weights, so no fit or spacing changes.
+RKVU_BOLD   = 10;                  // smallest numeral size, in drawn px, set in bold
+// Numeral vs numeral, up and down, the test clears the DIGITS' ink, not the
+// whole font cell: REAPER's digits are at most 0.636 of the font size tall
+// (every size 7..40, measured 2026-09-25). On the steep left end of a small
+// dial that lets -20 and -10 stagger (round 3: the user wanted -10 on strips).
+RKVU_INK_H  = 0.66;
+rkvu_l10    = 0;                   // the level set in use: 1 the -10-first ladder (_rk_vu_fit)
+rkvu_nums   = 1;                   // the face being laid out carries numerals: 1, or 0 = ticks only
+                                   // (rk_vu_draw and rk_vu_picker set it from the instance, then put 1 back)
+// FLAT faces (vu.rk_vu_set_flat, 2026-09-27): a rect wider than RKVU_FLAT_A0:1 gets a
+// bigger, flatter dial whose pivot sinks below the plate (rk_vu_geom says how).
+RKVU_FLAT_A0 = 1.7;                // width:height past which a flat face flattens
+RKVU_FLAT_M  = 2.5;                // px (x the DPI hint) the scale's lowest ink keeps above the bezel
+rkvu_flat    = 0;                  // the face being laid out may flatten: 1, or 0 (the default)
+                                   // (rk_vu_draw and rk_vu_picker set it from the instance, then put 0 back)
+rkvu_flat_on = 0;                  // out: the last geometry IS flat (its pivot may be below the plate)
+rkvu_fb      = 0;                  // out: the last geometry's face bottom, the bezel's inner edge
 
+// PLUGIN-WIDE by design (see the API list): one hold for every meter in the plugin.
 function rk_vu_set_hold(sec) ( RKVU_HOLD_S = max(sec, 0); );
 
 // ── Scale ───────────────────────────────────────────────────────────────
@@ -263,11 +327,99 @@ function rk_vu_pal_rgb(slot, r, g, b) (
               ( rkvu_ar_r = r; rkvu_ar_g = g; rkvu_ar_b = b; );
 );
 
+// ── Numerals: the labels a face carries ─────────────────────────────────
+// By mode: level (the eleven marks) or gain reduction (0 -5 -10 -15 -20,
+// evenly spaced at frac i/4). For each: its angle, its reference width, and
+// whether it sits over the red zone. rkvu_gmode is the mode the NEXT geometry
+// is solved for; rk_vu_face sets it from its own mode argument.
+// Reference width of level mark i's numeral at RKVU_REF_F.
+function _rk_vu_wr(i) (
+  i == 0 ? rkvu_wr0 : i == 1 ? rkvu_wr1 : i == 2 ? rkvu_wr2 : i == 3 ? rkvu_wr3 :
+  i == 4 ? rkvu_wr4 : i == 5 ? rkvu_wr5 : i == 6 ? rkvu_wr6 : i == 7 ? rkvu_wr7 :
+  i == 8 ? rkvu_wr8 : i == 9 ? rkvu_wr9 : rkvu_wr10;
+);
+function _rk_vu_lab_n(mode) ( mode == 1 ? 5 : 11; );
+function _rk_vu_lab_a(mode, i) (
+  mode == 1 ? rk_vu_ang(i / 4) : rk_vu_ang(rk_vu_db2frac(rk_vu_mark_db(i)));
+);
+function _rk_vu_lab_w(mode, i) (
+  mode == 1 ? ( i == 0 ? rkvu_wr7 : i == 1 ? rkvu_wr3 : i == 2 ? rkvu_wr1 : i == 3 ? rkvu_wr15 : rkvu_wr0 )
+            : _rk_vu_wr(i);
+);
+function _rk_vu_lab_red(mode, i) ( mode == 1 ? i >= 3 : rk_vu_mark_db(i) >= 0; );
+function _rk_vu_lab_neg(mode, i) ( mode == 1 ? i >= 1 : rk_vu_mark_db(i) < 0; );
+
+// Measure every numeral ONCE, at RKVU_REF_F, in a font slot of its own (16,
+// which nothing else in the tree uses), then re-select the slot the caller
+// had: fonts exist only in @gfx, the font is global state (wiki 4.3), and a
+// geometry call must not change a host's font as a side effect.
+function _rk_vu_measure() local(fi, th) (
+  !rkvu_wr_ok ? (
+    fi = gfx_getfont();
+    gfx_setfont(16, "Arial", RKVU_REF_F, 'b');
+    gfx_measurestr("-20", rkvu_wr0, rkvu_hr);
+    gfx_measurestr("-10", rkvu_wr1, th); gfx_measurestr("-7", rkvu_wr2, th);
+    gfx_measurestr("-5", rkvu_wr3, th);  gfx_measurestr("-3", rkvu_wr4, th);
+    gfx_measurestr("-2", rkvu_wr5, th);  gfx_measurestr("-1", rkvu_wr6, th);
+    gfx_measurestr("0", rkvu_wr7, th);   gfx_measurestr("1", rkvu_wr8, th);
+    gfx_measurestr("2", rkvu_wr9, th);   gfx_measurestr("3", rkvu_wr10, th);
+    gfx_measurestr("-15", rkvu_wr15, th); gfx_measurestr("-", rkvu_wrm, th);
+    gfx_setfont(fi);
+    rkvu_wr_ok = rkvu_hr > 0;
+  );
+);
+
+// How far outside the scale line (rkvu_r) the label ring must sit so that no
+// label's ink reaches the scale's: the line's antialiased edge at r + 1, the
+// red zone's at r + n - 1 (it is n rows, r-1 .. r+n-2). A label is a box
+// centred on the ring, so its reach toward the pivot is its half-width times
+// |sin a| plus its half-height times cos a; the half-width carries RKVU_SNAP
+// for pixel snapping and small-size hinting, and the box's own blank rows
+// (the font's descent) are the visible air below the digits.
+// Right of centre the pivot lies down-LEFT, so a negative label's nearest
+// corner is its minus sign — a bar that ends RKVU_MINUS_LO x font below the
+// centre, with no blank under it (so it gets 1 px of its own) — and its
+// digits start one minus-advance further right. Treating that corner as ink
+// pushed every large GR face's ring out for nothing (its -20 sits there).
+// Sets rkvu_fsz_x.
+// The red zone's rows (drawn from r-1 outward): the scale line's own two on a
+// small dial, so the arc simply turns red past 0, then 0.03 r — unchanged from
+// r ~133 up. It was max(4, ...): a four-row band that bunched up on a
+// strip-sized dial (the user, 2026-09-26). The ring below clears whatever it is.
+function _rk_vu_redn(r) ( max(2, floor(r * 0.03)); );
+function _rk_vu_ringc(r) local(f, hh, n, c, i, a, hw, s) (
+  f  = max(RKVU_FMIN * rkvu_sc, r * 0.12 * rkvu_text_scale);
+  rkvu_fsz_x = f;
+  hh = rkvu_hr * f / RKVU_REF_F * 0.5;
+  n  = _rk_vu_redn(r);
+  c  = 0;
+  i  = 0;
+  loop(_rk_vu_lab_n(rkvu_gmode),
+    a  = _rk_vu_lab_a(rkvu_gmode, i);
+    hw = _rk_vu_lab_w(rkvu_gmode, i) * f / RKVU_REF_F * 0.5;
+    s  = abs(sin(a));
+    c = max(c, (_rk_vu_lab_red(rkvu_gmode, i) ? n - 1 : 1) + (
+      a > 0 && _rk_vu_lab_neg(rkvu_gmode, i)
+        ? max((hw - rkvu_wrm * f / RKVU_REF_F + RKVU_SNAP) * s + hh * cos(a),
+              (hw + RKVU_SNAP) * s + RKVU_MINUS_LO * f * cos(a) + 1)
+        : (hw + RKVU_SNAP) * s + hh * cos(a)));
+    i += 1;
+  );
+  c;
+);
+
 // ── Geometry ────────────────────────────────────────────────────────────
-// Publishes rkvu_cx / rkvu_cy / rkvu_r for the rect. The label ring is the
-// outermost thing drawn, so the radius is solved from ITS extent — that is
-// what keeps the numbers inside the plate at any aspect ratio.
-function rk_vu_geom(x, y, w, h) local(pad, rl, half, tx, ty) (
+// Publishes rkvu_cx / rkvu_cy / rkvu_r (the scale line) and rkvu_ring (the
+// label ring) for the rect, plus rkvu_sc, the numeral size (rkvu_fsz_x exact,
+// rkvu_fsz drawn) and rkvu_nonum (1 = too small for numerals, or a ticks-only
+// face: rkvu_nums 0, see rk_vu_set_numbers). The label ring
+// is the outermost thing drawn, so the radius is solved from ITS extent —
+// that is what keeps the numbers inside the plate at any aspect ratio.
+// A host calling this directly for a gain-reduction face sets rkvu_gmode = 1
+// first; rk_vu_face and rk_vu_picker set it themselves.
+// (This is the face rule. rk_vu_geom, below, is what hosts call: it runs this
+// rule as it stands, or twice more for a flat face.)
+function _rk_vu_face_geom(x, y, w, h) local(pad, rl, half, tx, ty, c, hh, hwe, ins, fh, fw, rs) (
   // A VU face is wider than tall. With the pivot at 90% of the height and the
   // radius bound by the width, any rect taller than ~1.6:1 turns its extra
   // height into empty plate ABOVE the arc — a 195x300 stereo half was 60%
@@ -294,6 +446,138 @@ function rk_vu_geom(x, y, w, h) local(pad, rl, half, tx, ty) (
   rkvu_r  = min((rkvu_ow * 0.5 - pad) / (half * rl + tx),
                 (rkvu_cy - rkvu_oy - pad) / (rl + ty));
   rkvu_r  = max(rkvu_r, 4);
+
+  // ⚠️ SMALL FACES (2026-09-25 audit). That budget assumes numerals at 0.12 r,
+  // but they never go below RKVU_FMIN px, and the red zone never below four
+  // rows — so on a small face both are BIGGER than it planned. Measured
+  // against the ink REAPER itself draws: every level face up to 140 px wide
+  // had numerals touching the scale line or standing in the red zone, and
+  // every gain-reduction face up to ~240 px (the +3 / -20 labels merged into
+  // the red). So the label ring sits wherever the labels' real boxes clear
+  // the scale (_rk_vu_ringc) — never inside the 1.11 r it always had — and
+  // if that ring's labels would leave the face, the scale line shrinks
+  // until they fit: the bezel's inner edge, less 1.5 px above and 2 px at
+  // the sides for pixel snapping. A face that is already clean keeps its
+  // radius (level from ~125 px wide, GR from ~150) and, from ~355 px (level)
+  // and ~465 px (GR), its ring too; between, the labels step out at most
+  // 2 px (level) or 3 px (GR). In a default mixer strip the level scale is
+  // ~14 % smaller than before, in a short track panel ~21 %.
+  rkvu_sc = max(1, gfx_ext_retina);
+  _rk_vu_measure();
+  // Ticks only (rkvu_nums = 0, vu.rk_vu_set_numbers(0)): no numerals, so no
+  // ring to fit and no shrink — the dial keeps the whole budget above, the
+  // radius the smallest faces already get.
+  rkvu_nonum = rkvu_nums ? 0 : 1;
+  rkvu_wr_ok && rkvu_nums ? (
+    c = _rk_vu_ringc(rkvu_r);
+    rkvu_ring = max(rkvu_r * rl, rkvu_r + c);
+    hh  = rkvu_hr * rkvu_fsz_x / RKVU_REF_F * 0.5;
+    hwe = max(_rk_vu_lab_w(rkvu_gmode, 0), _rk_vu_lab_w(rkvu_gmode, _rk_vu_lab_n(rkvu_gmode) - 1))
+        * rkvu_fsz_x / RKVU_REF_F * 0.5;                     // the end labels' half widths
+    ins = min(rkvu_ow, rkvu_oh) * 0.075 * 0.55;             // _rk_vu_plate's bezel
+    fh  = rkvu_cy - rkvu_oy - ins - 1.5 * rkvu_sc;           // pivot to the highest a label may reach
+    fw  = rkvu_ow * 0.5 - ins - 2 * rkvu_sc;                 // centre to the furthest, sideways
+    rkvu_ring + hh > fh || rkvu_ring * half + hwe > fw ? (
+      // Shrinking can only keep or shrink the font and the red zone, so a
+      // radius solved with this c and these boxes fits at the smaller size.
+      rs = min(min(fh - hh - c, (fw - hwe) / half - c), min((fh - hh) / rl, (fw - hwe) / (rl * half)));
+      // Text that would crush the dial below RKVU_CRUSH of its budget: this
+      // face (under ~45 px wide at 100 %) shows no numerals and keeps its arc.
+      rs < rkvu_r * RKVU_CRUSH ? rkvu_nonum = 1 : (
+        rkvu_r = max(rs, 4);
+        rkvu_ring = max(rkvu_r * rl, rkvu_r + _rk_vu_ringc(rkvu_r));
+      );
+    );
+  ) : (
+    rkvu_fsz_x = max(RKVU_FMIN * rkvu_sc, rkvu_r * 0.12 * rkvu_text_scale);
+    rkvu_ring  = rkvu_r * rl;
+  );
+  rkvu_fsz = floor(rkvu_fsz_x + 0.5);
+);
+
+// ── Flat faces (2026-09-27) ─────────────────────────────────────────────
+// The user: a widened mixer strip's meter should grow with the strip, "from
+// flatter to flattest". A face capped at 1.6:1 cannot: past that its extra
+// width is plate. So a meter set flat (vu.rk_vu_set_flat(1)) whose rect is
+// wider than RKVU_FLAT_A0:1 draws TODAY'S FACE AT A BIGGER SIZE, wv x wv/1.6,
+// by the rule above unchanged, slid up so its numerals' top sits where this
+// rect's own face puts them, and cut off at the rect's bottom edge. The pivot
+// sinks below the plate and the scale is a flatter slice of a bigger dial.
+// wv grows twice as fast as the rect (the plate reaches the rect's width by
+// 1.8:1) and stops at the flattest: where the scale's lowest ink, the end
+// ticks or the level band, would come within RKVU_FLAT_M px of the bezel.
+// Wider than that the plate stops growing and is centred.
+// Every face up to RKVU_FLAT_A0:1 is today's face exactly, and past it the
+// flat face starts as that same face (2e-6 px apart). PROVEN MODEL FIRST
+// (.dev_tests/rk_vu_audit/vu_rule4_sim.py --flat --libw, this code line for
+// line): ~150,000 flat faces, 20..150 px tall, 1.55..4.5:1, level and GR,
+// numerals and ticks only, 100 % and 150 %: every numeral's ink a pixel or
+// more from the scale, the bezel on all four sides and each other; the
+// scale's own ink 1.5 px or more above the bezel and inside it at the top;
+// no numeral leaves a widening face, and the dial never shrinks as its rect
+// widens except where numerals first appear (today's rule does that at
+// ~46 px: the arc makes room for them).
+// A scale mark's length, inward from the line, on the face just laid out: never
+// under 9 px (the long marks) / 6 px, x the DPI hint, while that stays within
+// 0.30 r / 0.20 r. Above those floors, 0.13 r / 0.07 r with numerals; with NO
+// numerals (ticks only, or a face too small for them) the marks ARE the scale
+// and run longer, 0.24 r / 0.15 r. The user, 2026-09-28, on strips: "i can
+// barley see thos things", then "the numbers version needs longer ticks too"
+// (the floors were 7 / 4 px within 0.22 r / 0.12 r since 2026-09-26; a face
+// big enough for its proportion, the plugin windows' meters, is unchanged).
+// One rule for the drawing, the flat fit and the label.
+function _rk_vu_tl(lng) (
+  rkvu_nonum ? ( lng ? max(rkvu_r * 0.24, min(9 * rkvu_sc, rkvu_r * 0.30))
+                     : max(rkvu_r * 0.15, min(6 * rkvu_sc, rkvu_r * 0.20)) )
+             : ( lng ? max(rkvu_r * 0.13, min(9 * rkvu_sc, rkvu_r * 0.30))
+                     : max(rkvu_r * 0.07, min(6 * rkvu_sc, rkvu_r * 0.20)) );
+);
+// The numerals' top as the fit sees it: the label ring less half a label cell.
+function _rk_vu_top() ( rkvu_cy - rkvu_ring - rkvu_hr * rkvu_fsz_x / RKVU_REF_F * 0.5; );
+// Does a virtual face wv wide keep its lowest scale ink RKVU_FLAT_M px clear
+// of the bezel of a plate h tall, once slid up to put its numerals at t0?
+function _rk_vu_flat_fits(wv, h, t0) local(cy, tl) (
+  _rk_vu_face_geom(0, 0, wv, wv / 1.6);
+  cy = rkvu_cy - max(_rk_vu_top() - t0, 0);
+  tl = _rk_vu_tl(1);                                                  // the end marks are long
+  cy - min(rkvu_r - tl, rkvu_r * 0.945 - max(3, floor(rkvu_r * 0.048))) * cos(RKVU_SWEEP * 0.5)
+    <= h - h * 0.075 * 0.55 - RKVU_FLAT_M * rkvu_sc;
+);
+// The flattest: the widest virtual face that fits, searched over a bracket set
+// by h alone, so every rect wider than it gets exactly the same face.
+function _rk_vu_flat_max(h, t0) local(lo, hi, mid) (
+  lo = h * 1.6; hi = h * 8;
+  _rk_vu_flat_fits(hi, h, t0) ? lo = hi : (
+    loop(20,
+      mid = (lo + hi) * 0.5;
+      _rk_vu_flat_fits(mid, h, t0) ? lo = mid : hi = mid;
+    );
+  );
+  lo;
+);
+
+// Publishes rkvu_cx / rkvu_cy / rkvu_r / rkvu_ring, the plate (rkvu_ox/oy/ow/oh),
+// the numeral size, rkvu_nonum, rkvu_flat_on and rkvu_fb (see the face rule
+// above). rkvu_flat is an INPUT: 0 unless rk_vu_draw or rk_vu_picker set it.
+function rk_vu_geom(x, y, w, h) local(t0, wv, dy) (
+  rkvu_flat_on = 0;
+  rkvu_flat && w > h * RKVU_FLAT_A0 ? (
+    // A face too small for numerals (or ticks only) reports a label top the
+    // bezel would hide: no flat face puts its numerals higher than the fit
+    // lets any face.
+    _rk_vu_face_geom(0, 0, h * 1.6, h);
+    t0 = max(_rk_vu_top(), h * 0.075 * 0.55 + 1.5 * rkvu_sc);
+    wv = min(w, h * 1.6 + 2 * (w - h * RKVU_FLAT_A0));
+    !_rk_vu_flat_fits(wv, h, t0) ? wv = _rk_vu_flat_max(h, t0);
+    _rk_vu_face_geom(0, 0, wv, wv / 1.6);
+    dy = max(_rk_vu_top() - t0, 0);
+    rkvu_ox = x + (w - wv) * 0.5; rkvu_ow = wv;
+    rkvu_oy = y;                  rkvu_oh = h;
+    rkvu_cx = rkvu_ox + wv * 0.5;
+    rkvu_cy = y + rkvu_cy - dy;
+    rkvu_flat_on = 1;
+  ) : _rk_vu_face_geom(x, y, w, h);
+  rkvu_fb = rkvu_oy + rkvu_oh - min(rkvu_ow, rkvu_oh) * 0.075 * 0.55;
 );
 
 // ── Plate ───────────────────────────────────────────────────────────────
@@ -339,26 +623,90 @@ function _rk_vu_plate(x, y, w, h) local(i, n, t, br) (
   rkvu_fx = x; rkvu_fy = y; rkvu_fw = w; rkvu_fh = h;   // the face, for cover + glass
 );
 
+// ── Numerals: as many as fit, and never a flicker ───────────────────────
+// A face shows the longest PREFIX of a fixed LADDER of its labels whose
+// numerals all clear one another:
+//     level   0, -20, +3, -3, -10, +1, +2, -1, -5, -7, -2    once -10 fits
+//             0, -20, +3, -3, -7, +1, +2, -1, -5, -10, -2    below that
+//     GR      0, -20, -10, -5, -15
+// The first three always show. A ladder is nested — each rung is the previous
+// set plus one numeral — so growing a face only ADDS numerals, with one
+// planned exception: -7 and -10 cannot both fit until a face is ~120 px wide,
+// so on a small level face -10 takes -7's place as soon as it clears -20 (the
+// user, round 3, 2026-09-25: -10 is the mark they read; from ~74 px at 100 %).
+// It is then never fewer numerals than the -7 ladder would show at that size
+// (-5 even arrives sooner, having only -10 and -3 to clear), and -7 returns
+// once both fit. The -7 order was computed offline with Windows' own Arial
+// Bold metrics (GetTextExtentPoint32, the call LICE measures with) as the
+// order in which marks first fit.
+// ⚠️ It replaces a tier test (2026-09-25) that measured widths at each ROUNDED
+// font size and compared them with ARC length: pixel rounding flipped the four
+// minors on and off every few pixels as a window was dragged, and above a
+// ~160 px radius it hid them for good. The user saw exactly that.
+// Two things keep this one steady: widths are measured ONCE at RKVU_REF_F and
+// scaled to the exact (unrounded) size, so the decision is a smooth function
+// of the face; and the test is a real 2D box overlap at the label ring (gap =
+// max(2 px, 0.15 x font); across, the measured widths; up and down, the
+// digits' ink height RKVU_INK_H, not the whole cell).
+// CHECKED (2026-09-25, and again for round 3) against the ink REAPER itself
+// draws — every numeral at every font size 5..40 px, captured from LICE in the
+// sandbox — at every face from 25 to 700 px wide in four shapes, level and GR,
+// at 100 % and 150 %: numerals at least 1 px apart after pixel snapping, at
+// least 1 px clear of the scale and of the bezel, never one fewer on a bigger
+// face, and none leaving a growing face but -7 making way for -10.
+// (The GR scale's five used to be drawn unconditionally, "they always fit":
+// on a small face -10 and -15 touched.)
+// Rung k -> label index. Level labels: 0 -20, 1 -10, 2 -7, 3 -5, 4 -3, 5 -2,
+// 6 -1, 7 0, 8 +1, 9 +2, 10 +3; rungs 4 and 9 hold -10 and -7 (rkvu_l10) or
+// -7 and -10.
+function _rk_vu_ladder(mode, k) (
+  mode == 1 ? ( k == 0 ? 0 : k == 1 ? 4 : k == 2 ? 2 : k == 3 ? 1 : 3 ) : (
+  k == 0 ? 7 : k == 1 ? 0 : k == 2 ? 10 : k == 3 ? 4 : k == 4 ? (rkvu_l10 ? 1 : 2) :
+  k == 5 ? 8 : k == 6 ? 9 : k == 7 ? 6 : k == 8 ? 3 : k == 9 ? (rkvu_l10 ? 2 : 1) : 5 );
+);
+// Label index -> its rung on the ladder in use.
+function _rk_vu_rank(mode, i) (
+  mode == 1 ? ( i == 0 ? 0 : i == 4 ? 1 : i == 2 ? 2 : i == 1 ? 3 : 4 ) : (
+  i == 7 ? 0 : i == 0 ? 1 : i == 10 ? 2 : i == 4 ? 3 : i == 2 ? (rkvu_l10 ? 9 : 4) :
+  i == 8 ? 5 : i == 9 ? 6 : i == 6 ? 7 : i == 3 ? 8 : i == 1 ? (rkvu_l10 ? 4 : 9) : 10 );
+);
+// Would labels i and j overlap on the face just laid out, at font size f?
+function _rk_vu_clash(mode, i, j, f, air) local(ai, aj) (
+  ai = _rk_vu_lab_a(mode, i);
+  aj = _rk_vu_lab_a(mode, j);
+  abs(sin(ai) - sin(aj)) * rkvu_ring < (_rk_vu_lab_w(mode, i) + _rk_vu_lab_w(mode, j)) * f / RKVU_REF_F * 0.5 + air &&
+  abs(cos(ai) - cos(aj)) * rkvu_ring < RKVU_INK_H * f + air;
+);
+// The longest clean prefix of the ladder in use (the first three always).
+function _rk_vu_prefix(mode, f, air) local(k, j, ok) (
+  k = 3; ok = rkvu_wr_ok;
+  loop(_rk_vu_lab_n(mode) - 3,
+    ok ? (
+      j = 0;
+      loop(k, _rk_vu_clash(mode, _rk_vu_ladder(mode, k), _rk_vu_ladder(mode, j), f, air) ? ok = 0; j += 1; );
+      ok ? k += 1;
+    );
+  );
+  k;
+);
+// How many rungs fit: none on a face too small for numerals (rk_vu_geom),
+// else the prefix. Level: the -10 ladder when -10 fits beside the first four
+// (rung 4), else the -7 one. Sets rkvu_l10, which _rk_vu_rank then reads.
+function _rk_vu_fit(mode, f) local(air, k) (
+  air = max(2 * rkvu_sc, 0.15 * f);
+  rkvu_l10 = mode == 0;
+  k = _rk_vu_prefix(mode, f, air);
+  mode == 0 && k < 5 ? ( rkvu_l10 = 0; k = _rk_vu_prefix(mode, f, air); );
+  rkvu_nonum ? 0 : k;
+);
+
 // ── Scale: arc, red zone, ticks, numbers ────────────────────────────────
 function _rk_vu_scale(mode, fsz)
-local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv,
-      air, w2, w3, w7, w10, w20, ring, tier, minor, mid, show) (
+local(i, n, frac, a, r1, r2, tl, x1, y1, x2, y2, ox, oy, tw, th, lx, ly, a0, a1, ared, dbv, nshow, show) (
   a0 = rk_vu_ang(0); a1 = rk_vu_ang(1);
 
-  // Which numerals fit: measure, don't guess. All numerals are ONE size; a
-  // tier drops the minors (-2 -1 1 2), then the mids (-7 -5 -3), then swaps
-  // -10 for a lone -5 (tier 3: -20 -5 0 3), never shrinks them. A numeral is kept only with clear AIR beside its
-  // neighbour (0.35 of the font): the earlier rule tolerated a small overlap,
-  // and at 8 px that read as one smear on the Drum Strip's embedded face.
-  gfx_setfont(1, "Arial", fsz, 'b');
-  gfx_measurestr("-3", w3, th); gfx_measurestr("-7", w7, th); gfx_measurestr("-2", w2, th);
-  gfx_measurestr("-20", w20, th); gfx_measurestr("-10", w10, th);
-  ring = RKVU_SWEEP * rkvu_r * 1.11;            // arc length of the label ring
-  air  = fsz * 0.35;                            // clear space between neighbours, px
-  tier = 0;
-  (w3 + w2) * 0.5 + air > (rk_vu_db2frac(-2) - rk_vu_db2frac(-3)) * ring ? tier = 1;
-  tier == 1 && (w7 + w7) * 0.5 + air > (rk_vu_db2frac(-5) - rk_vu_db2frac(-7)) * ring ? tier = 2;
-  tier == 2 && (w20 + w10) * 0.5 + air > (rk_vu_db2frac(-10) - rk_vu_db2frac(-20)) * ring ? tier = 3;
+  // How many numerals this face shows (the ladders above).
+  nshow = _rk_vu_fit(mode == 1, rkvu_fsz_x);
 
   gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 1);
   gfx_arc(rkvu_cx, rkvu_cy, rkvu_r, a0, a1, 1);
@@ -369,12 +717,12 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv,
   ared = mode == 1 ? rk_vu_ang(0.55) : rk_vu_ang(rk_vu_db2frac(0));
   gfx_set(rkvu_rd_r, rkvu_rd_g, rkvu_rd_b, 1);
   i = -1;
-  loop(max(4, floor(rkvu_r * 0.03)),
+  loop(_rk_vu_redn(rkvu_r),
     gfx_arc(rkvu_cx, rkvu_cy, rkvu_r + i, ared, a1, 1);
     i += 1;
   );
 
-  gfx_setfont(1, "Arial", fsz, 'b');
+  gfx_setfont(1, "Arial", fsz, fsz >= RKVU_BOLD ? 'b' : 0);
   n = mode == 1 ? 5 : 11;
   i = 0;
   loop(n,
@@ -382,31 +730,38 @@ local(i, n, frac, a, r1, r2, tw, th, lx, ly, a0, a1, ared, dbv,
               : ( dbv = rk_vu_mark_db(i); frac = rk_vu_db2frac(dbv); );
     a  = rk_vu_ang(frac);
     r1 = rkvu_r - 1;
-    r2 = rkvu_r - rkvu_r * ((mode == 1 || i == 0 || i == 1 || i == 7 || i == 10) ? 0.13 : 0.07);
+    // Inward from the line, _rk_vu_tl: longer on a face with no numerals.
+    tl = _rk_vu_tl(mode == 1 || i == 0 || i == 1 || i == 7 || i == 10);
+    r2 = rkvu_r - tl;
 
     (mode == 0 && dbv >= 0) || (mode == 1 && frac >= 0.55) ?
       gfx_set(rkvu_rd_r, rkvu_rd_g, rkvu_rd_b, 1) :
       gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 1);
 
-    gfx_line(rk_vu_px(rkvu_cx, r1, a), rk_vu_py(rkvu_cy, r1, a),
-             rk_vu_px(rkvu_cx, r2, a), rk_vu_py(rkvu_cy, r2, a), 1);
-    (mode == 1 || i == 0 || i == 1 || i == 7 || i == 10) ?
-      gfx_line(rk_vu_px(rkvu_cx, r1, a) + 1, rk_vu_py(rkvu_cy, r1, a),
-               rk_vu_px(rkvu_cx, r2, a) + 1, rk_vu_py(rkvu_cy, r2, a), 1);
+    // A long mark is a 2 px bar: two lines half a pixel either side of its
+    // radius, offset ALONG the arc (cos a, sin a). The second line used to sit
+    // 1 px to the RIGHT, which is along the arc only at the top: toward the
+    // ends it sheared the bar, and the user saw bent ticks (2026-09-26).
+    x1 = rk_vu_px(rkvu_cx, r1, a); y1 = rk_vu_py(rkvu_cy, r1, a);
+    x2 = rk_vu_px(rkvu_cx, r2, a); y2 = rk_vu_py(rkvu_cy, r2, a);
+    // The bar itself is one filled quad between those two lines, and the lines
+    // are its soft edges: the two hairlines alone left a lighter seam where a
+    // leaning mark's antialiasing stepped them onto separate pixels, and a
+    // strip meter zoomed in read "double lines" (the user, 2026-09-28).
+    (mode == 1 || i == 0 || i == 1 || i == 7 || i == 10) ? (
+      ox = cos(a) * 0.5; oy = sin(a) * 0.5;
+      gfx_triangle(x1 - ox, y1 - oy, x1 + ox, y1 + oy, x2 + ox, y2 + oy, x2 - ox, y2 - oy);
+      gfx_line(x1 - ox, y1 - oy, x2 - ox, y2 - oy, 1);
+      gfx_line(x1 + ox, y1 + oy, x2 + ox, y2 + oy, 1);
+    ) : gfx_line(x1, y1, x2, y2, 1);
 
-    minor = mode == 0 && (i == 5 || i == 6 || i == 8 || i == 9);   // -2 -1 1 2
-    mid   = mode == 0 && (i == 2 || i == 3 || i == 4);             // -7 -5 -3
-    // tier 3 (the Drum Strip's embedded face): -20 and -10 sit too close on the
-    // log scale, so -10 goes and -5 comes back as the one numeral in between.
-    show  = minor ? tier == 0
-          : mid   ? (tier < 2 || (tier == 3 && i == 3))
-          : (mode == 0 && i == 1) ? tier < 3 : 1;
+    show = _rk_vu_rank(mode == 1, i) < nshow;
     show ? (
-      gfx_setfont(1, "Arial", fsz, 'b');
+      gfx_setfont(1, "Arial", fsz, fsz >= RKVU_BOLD ? 'b' : 0);
       sprintf(#_rkvu_l, "%d", dbv);
       gfx_measurestr(#_rkvu_l, tw, th);
-      lx = rk_vu_px(rkvu_cx, rkvu_r * 1.11, a);
-      ly = rk_vu_py(rkvu_cy, rkvu_r * 1.11, a);
+      lx = rk_vu_px(rkvu_cx, rkvu_ring, a);
+      ly = rk_vu_py(rkvu_cy, rkvu_ring, a);
       gfx_x = lx - tw * 0.5; gfx_y = ly - th * 0.5;
       gfx_drawstr(#_rkvu_l);
     );
@@ -432,28 +787,36 @@ function _rk_vu_arc_fill(frac, slot) local(a0, a1, rr, i, n) (
 // ── Needle ──────────────────────────────────────────────────────────────
 // `wide` tapers the root; `alpha` lets the hold needle share the code.
 function _rk_vu_needle(frac, wide, alpha, cr, cg, cb)
-local(a, tipx, tipy, rootx, rooty, i, sx, sy, hw, px, py, n) (
+local(a, tipx, tipy, rootx, rooty, i, sx, sy, hw, px, py, n, t, ts) (
   a = rk_vu_ang(frac);
   tipx  = rk_vu_px(rkvu_cx, rkvu_r * 0.955, a);
   tipy  = rk_vu_py(rkvu_cy, rkvu_r * 0.955, a);
-  rootx = rk_vu_px(rkvu_cx, rkvu_r * 0.10, a);
-  rooty = rk_vu_py(rkvu_cy, rkvu_r * 0.10, a);
+  hw = wide > 1 ? rkvu_r * 0.020 : 0;         // hold needle stays a hairline
+  sx = rkvu_r * 0.012; sy = rkvu_r * 0.020;
+  // A flat face's pivot can be below the plate: the needle then comes out
+  // from under the bezel, its root (and its shadow's) where it crosses the
+  // face's bottom edge, its widest corner half a pixel above it.
+  t = rkvu_r * 0.10; ts = t;
+  rkvu_flat_on ? (
+    t  = max(t, (rkvu_cy - (rkvu_fb - 0.5 - abs(sin(a)) * hw)) / cos(a));
+    ts = max(t, (rkvu_cy + sy - (rkvu_fb - 0.5)) / cos(a));
+  );
+  rootx = rk_vu_px(rkvu_cx, t, a);
+  rooty = rk_vu_py(rkvu_cy, t, a);
 
   // Fixed light, upper-left: the offset is constant in the world, so it is
   // the needle's ANGLE that decides how much shadow shows beside it. The
   // offset scales with the meter — a 2px shadow vanishes on a 300px face.
   alpha >= 0.9 ? (
-    sx = rkvu_r * 0.012; sy = rkvu_r * 0.020;
     gfx_set(0, 0, 0, 0.15);
     i = 0;
     loop(max(1, wide) + 1,
-      gfx_line(rootx + sx + i, rooty + sy, tipx + sx + i, tipy + sy, 1);
+      gfx_line(rk_vu_px(rkvu_cx, ts, a) + sx + i, rk_vu_py(rkvu_cy, ts, a) + sy, tipx + sx + i, tipy + sy, 1);
       i += 1;
     );
   );
 
   gfx_set(cr, cg, cb, alpha);
-  hw = wide > 1 ? rkvu_r * 0.020 : 0;         // hold needle stays a hairline
   px = cos(a); py = sin(a);
   n  = max(1, floor(hw * 2) + 1);
   i  = 0;
@@ -470,28 +833,59 @@ local(a, tipx, tipy, rootx, rooty, i, sx, sy, hw, px, py, n) (
 // low the pivot sits, and the pivot itself is never seen. (This is also why
 // there is no counterweight tail: on a covered movement it is inside the
 // dome. Draw one and you are drawing something a real meter hides.)
-function _rk_vu_cover() local(R, i, dy, hw, n) (
+function _rk_vu_cover() local(R, i, dy, hw, n, am) (
   R = rkvu_r * 0.19;
   n = max(floor(R), 2);
-  gfx_set(0, 0, 0, 0.22);                              // its shadow on the face
-  i = 0;
-  loop(n,
-    dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
-    gfx_rect(rkvu_cx - hw + 2, rkvu_cy - dy + 3, hw * 2, 1);
-    i += 1;
+  !rkvu_flat_on ? (
+    gfx_set(0, 0, 0, 0.22);                            // its shadow on the face
+    i = 0;
+    loop(n,
+      dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
+      gfx_rect(rkvu_cx - hw + 2, rkvu_cy - dy + 3, hw * 2, 1);
+      i += 1;
+    );
+    gfx_set(rkvu_cp_r, rkvu_cp_g, rkvu_cp_b, 1);       // the dome
+    i = 0;
+    loop(n,
+      dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
+      gfx_rect(rkvu_cx - hw, rkvu_cy - dy, hw * 2, 1);
+      i += 1;
+    );
+    gfx_rect(rkvu_cx - R, rkvu_cy, R * 2, max(rkvu_fy + rkvu_fh - rkvu_cy, 0));
+    gfx_set(1, 1, 1, 0.14);                            // rim light
+    gfx_arc(rkvu_cx, rkvu_cy, R - 1, -$pi * 0.5, $pi * 0.5, 1);
+    gfx_set(1, 1, 1, 0.06);
+    gfx_arc(rkvu_cx, rkvu_cy, R - 3, -$pi * 0.40, $pi * 0.40, 1);
+  ) : rkvu_cy - R < rkvu_fb - 1 ? (
+    // A flat face: only the part of the dome above the face's bottom edge,
+    // the same rows; none at all once the pivot is a dome's height below it.
+    gfx_set(0, 0, 0, 0.22);
+    i = 0;
+    loop(n,
+      dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
+      rkvu_cy - dy + 3 <= rkvu_fb - 1 ? gfx_rect(rkvu_cx - hw + 2, rkvu_cy - dy + 3, hw * 2, 1);
+      i += 1;
+    );
+    gfx_set(rkvu_cp_r, rkvu_cp_g, rkvu_cp_b, 1);
+    i = 0;
+    loop(n,
+      dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
+      rkvu_cy - dy <= rkvu_fb - 1 ? gfx_rect(rkvu_cx - hw, rkvu_cy - dy, hw * 2, 1);
+      i += 1;
+    );
+    rkvu_cy < rkvu_fb ? gfx_rect(rkvu_cx - R, rkvu_cy, R * 2, rkvu_fb - rkvu_cy);
+    // the rim light's arcs, cut where they would cross the bottom edge
+    am = acos(min(max((rkvu_cy - (rkvu_fb - 1)) / (R - 1), -1), 1));
+    am > 0.05 ? (
+      gfx_set(1, 1, 1, 0.14);
+      gfx_arc(rkvu_cx, rkvu_cy, R - 1, -min(am, $pi * 0.5), min(am, $pi * 0.5), 1);
+    );
+    am = acos(min(max((rkvu_cy - (rkvu_fb - 1)) / max(R - 3, 1), -1), 1));
+    am > 0.05 ? (
+      gfx_set(1, 1, 1, 0.06);
+      gfx_arc(rkvu_cx, rkvu_cy, R - 3, -min(am, $pi * 0.40), min(am, $pi * 0.40), 1);
+    );
   );
-  gfx_set(rkvu_cp_r, rkvu_cp_g, rkvu_cp_b, 1);         // the dome
-  i = 0;
-  loop(n,
-    dy = i / n * R; hw = sqrt(max(R * R - dy * dy, 0));
-    gfx_rect(rkvu_cx - hw, rkvu_cy - dy, hw * 2, 1);
-    i += 1;
-  );
-  gfx_rect(rkvu_cx - R, rkvu_cy, R * 2, max(rkvu_fy + rkvu_fh - rkvu_cy, 0));
-  gfx_set(1, 1, 1, 0.14);                              // rim light
-  gfx_arc(rkvu_cx, rkvu_cy, R - 1, -$pi * 0.5, $pi * 0.5, 1);
-  gfx_set(1, 1, 1, 0.06);
-  gfx_arc(rkvu_cx, rkvu_cy, R - 3, -$pi * 0.40, $pi * 0.40, 1);
 );
 
 // Glass. A soft diagonal highlight across the upper-left of the face and
@@ -509,28 +903,115 @@ function _rk_vu_glass() local(rows, i, t, a) (
   );
 );
 
-function _rk_vu_led(on) local(lx, ly, lr) (
+// Distance from a point to a segment.
+function _rk_vu_segd(px, py, ax, ay, bx, by) local(vx, vy, t) (
+  vx = bx - ax; vy = by - ay;
+  t = max(0, min(1, ((px - ax) * vx + (py - ay) * vy) / max(vx * vx + vy * vy, 0.000000001)));
+  sqrt(sqr(px - (ax + t * vx)) + sqr(py - (ay + t * vy)));
+);
+
+// The peak LED's spot and size on the face just laid out: rkvu_lx, rkvu_ly,
+// rkvu_lr (0: no room on a flat face). Geometry only, no drawing.
+function _rk_vu_led_pos() local(lx, ly, lr, s1, c1, tlo, thi, kw, has, ex, ey, hw, hh, rho, lm, p, k, ok, fr) (
   lr = rkvu_r * 0.055;
   lx = rkvu_cx + rkvu_r * 0.66;
   ly = rkvu_cy - rkvu_r * 0.16;
-  gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.28);
-  gfx_circle(lx, ly, lr * 1.45, 0, 1);
-  on ? (
-    gfx_set(rkvu_ld_r, rkvu_ld_g, rkvu_ld_b, 0.28);
-    gfx_circle(lx, ly, lr * 2.1, 1, 1);
-    gfx_set(rkvu_ld_r, rkvu_ld_g, rkvu_ld_b, 1);
-  ) : gfx_set(rkvu_ld_r * 0.30, rkvu_ld_g * 0.30, rkvu_ld_b * 0.30, 1);
-  gfx_circle(lx, ly, lr, 1, 1);
+  rkvu_flat_on ? (
+    // A flat face: the bezel pushes the LED up and it moves right by as much,
+    // staying outside the needle's travel; left level with the far-end
+    // numeral it goes right of it; never past the plate's right edge. It must
+    // clear, by a pixel of plate, the keep-out along the far stop (the needle
+    // there, the end tick, the red zone's end) and that numeral's box. If it
+    // cannot it shrinks by a fifth and tries again, eight times, and a face
+    // with no room shows none. (vu_rule4_sim.py led_pos, proven with the rest.)
+    s1 = sin(RKVU_SWEEP * 0.5); c1 = cos(RKVU_SWEEP * 0.5);
+    tlo = rkvu_r * 0.10;
+    rkvu_cy - tlo * c1 > rkvu_fb - 0.5 ? tlo = (rkvu_cy - (rkvu_fb - 0.5)) / c1;
+    thi = rkvu_r + _rk_vu_redn(rkvu_r) - 1.25;
+    kw  = max(0.5, rkvu_r * 0.020) + 0.5;
+    has = !rkvu_nonum;
+    has ? (
+      ex = rkvu_cx + s1 * rkvu_ring; ey = rkvu_cy - c1 * rkvu_ring;
+      hw = _rk_vu_lab_w(rkvu_gmode, _rk_vu_lab_n(rkvu_gmode) - 1) * rkvu_fsz_x / RKVU_REF_F * 0.5 + RKVU_SNAP;
+      hh = rkvu_hr * rkvu_fsz_x / RKVU_REF_F * 0.5;
+    );
+    fr = rkvu_ox + rkvu_ow - min(rkvu_ow, rkvu_oh) * 0.075 * 0.55;   // the face's right edge
+    ok = 0; k = 0;
+    while (!ok && k < 8) (
+      rho = lr * 1.45 + 1; lm = lr * 1.45 + 2.5 * rkvu_sc;
+      lx = rkvu_cx + rkvu_r * 0.66; ly = rkvu_cy - rkvu_r * 0.16;
+      p = max(ly - (rkvu_fb - lm), 0); ly -= p; lx += p;
+      has && ly - rho < ey + hh + 1 ? lx = max(lx, ex + hw + 1 + rho);
+      lx = min(lx, fr - lm);
+      ok = _rk_vu_segd(lx, ly, rkvu_cx + s1 * tlo, rkvu_cy - c1 * tlo,
+                               rkvu_cx + s1 * thi, rkvu_cy - c1 * thi) - kw - rho >= 1;
+      has && ok ? ok = sqrt(sqr(max(max(ex - hw - lx, 0), lx - ex - hw))
+                          + sqr(max(max(ey - hh - ly, 0), ly - ey - hh))) - rho >= 1;
+      !ok ? lr *= 0.8;
+      k += 1;
+    );
+    !ok ? lr = 0;
+  );
+  rkvu_lx = lx; rkvu_ly = ly; rkvu_lr = lr;
 );
 
-function _rk_vu_label(s, fsz) local(tw, th) (
+function _rk_vu_led(on) (
+  _rk_vu_led_pos();
+  rkvu_lr > 0 ? (
+    gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.28);
+    gfx_circle(rkvu_lx, rkvu_ly, rkvu_lr * 1.45, 0, 1);
+    on ? (
+      gfx_set(rkvu_ld_r, rkvu_ld_g, rkvu_ld_b, 0.28);
+      gfx_circle(rkvu_lx, rkvu_ly, rkvu_lr * 2.1, 1, 1);
+      gfx_set(rkvu_ld_r, rkvu_ld_g, rkvu_ld_b, 1);
+    ) : gfx_set(rkvu_ld_r * 0.30, rkvu_ld_g * 0.30, rkvu_ld_b * 0.30, 1);
+    gfx_circle(rkvu_lx, rkvu_ly, rkvu_lr, 1, 1);
+  );
+);
+
+function _rk_vu_label(s, fsz) local(tw, th, ok, f, n, k, ri, lo, cm, c) (
   strlen(s) > 0 ? (
-    gfx_setfont(1, "Arial", floor(fsz * 1.4 + 0.5), 'b');
-    gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.90);
-    gfx_measurestr(s, tw, th);
-    gfx_x = rkvu_cx - tw * 0.5;
-    gfx_y = rkvu_cy - rkvu_r * 0.56 - th * 0.5;
-    gfx_drawstr(s);
+    // The label sits on the line through the pivot, its centre 0.56 r above it
+    // (the classic spot), in the band between the coil cover (on a flat face
+    // whose pivot is below the plate, the bezel) and the scale marks: its top
+    // corners a pixel inside the circle the marks end on (_rk_vu_tl), its
+    // width within the dial's radius. Where the band is short it sits lower;
+    // where that is not enough it is set smaller, down to RKVU_FMIN, then cut
+    // with ".."; a face with no room shows none. Labels that fit (every "GR"
+    // on an ordinary meter, 2026-09-28) draw where and as they always have,
+    // bold (10 px or more); a label set under 10 px is regular (RKVU_BOLD).
+    // (Longer marks on small numbered faces, 2026-09-28, reached a small GR
+    // face's label; a typed name, 2026-09-27, can be as wide as the dial.)
+    ri = rkvu_r - _rk_vu_tl(1) - 1;
+    lo = max(rkvu_r * 0.19, rkvu_cy - rkvu_fb) + 1;
+    strcpy(#_rkvu_lb, s);
+    f = floor(fsz * 1.4 + 0.5);
+    n = strlen(s);
+    ok = 0; k = 0;
+    while (!ok && k < 64) (
+      gfx_setfont(1, "Arial", f, f >= RKVU_BOLD ? 'b' : 0);
+      tw = 0; th = 0; gfx_measurestr(#_rkvu_lb, tw, th);
+      cm = sqr(ri) - sqr(tw * 0.5);
+      cm = cm > 0 ? sqrt(cm) - th * 0.5 : -1;            // the highest centre clear of the marks
+      ok = tw <= rkvu_r && cm >= lo + th * 0.5;
+      !ok ? (
+        f > RKVU_FMIN * rkvu_sc ? (
+          f -= 1;
+        ) : n > 1 ? (
+          n -= 1; strcpy_substr(#_rkvu_lb, s, 0, n); strcat(#_rkvu_lb, "..");
+        ) : (
+          k = 64;                                         // no room: no label
+        );
+      );
+      k += 1;
+    );
+    ok ? (
+      c = max(lo + th * 0.5, min(rkvu_r * 0.56, cm));
+      gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.90);
+      gfx_x = rkvu_cx - tw * 0.5;
+      gfx_y = rkvu_cy - c - th * 0.5;
+      gfx_drawstr(#_rkvu_lb);
+    );
   );
 );
 
@@ -561,6 +1042,9 @@ function rk_vu_init(ref_db) (
   this.pk_hold  = -1;                    // peak readout hold; -1 = same as the needle's
   this.speed    = 1;                     // ballistic multiplier, 1 = the standard
   this.pk_open  = 0;                     // theme picker sheet
+  this.gr       = 0;                     // a level meter (rk_vu_init_gr sets 1)
+  this.nums     = 1;                     // numerals on the scale (rk_vu_set_numbers)
+  this.flat     = 0;                     // a wide rect keeps the 1.6:1 face (rk_vu_set_flat)
 );
 
 // ── The four switches ───────────────────────────────────────────────────
@@ -598,6 +1082,24 @@ function rk_vu_set_speed(mult) (
 
 // Text size multiplier for every numeral and label, 1 = as designed.
 function rk_vu_set_text_scale(mult) ( rkvu_text_scale = min(max(mult, 0.5), 2); );
+
+// Numerals on the scale: 1 (the default), or 0 for a TICKS-ONLY face — the
+// ticks, the arc and the red zone, no numbers, the dial as large as the face
+// allows (the user, 2026-09-26: "the option to be no numbers, just ticks",
+// what the old ZenoMOD face did on small meters). Per meter, and it can
+// change from one draw to the next: a host may set it for its strip view and
+// clear it for its window.
+function rk_vu_set_numbers(on) ( this.nums = on ? 1 : 0; );
+
+// Flat: 1 lets a rect wider than RKVU_FLAT_A0:1 draw a bigger, flatter dial
+// whose pivot sinks below the plate, growing with the rect up to the flattest
+// (rk_vu_geom); 0 (the default) keeps the 1.6:1 face centred in it. For a
+// strip that can be dragged wide (the user, 2026-09-27: GainKit's stacked
+// mixer strip, "from flatter to flattest"). Per meter, and it can change from
+// one draw to the next, like rk_vu_set_numbers. A flat face shows its coil
+// cover only while the pivot is on the plate, and draws no readout box
+// (rk_vu_set_readout): there is no room for it beside the scale's ends.
+function rk_vu_set_flat(on) ( this.flat = on ? 1 : 0; );
 
 // LEGACY: read like the meter EON has been shipping (vu_kbsg section 7 at
 // speed 61 with a reference of 0 baked in). That meter is peak-driven, its
@@ -646,6 +1148,8 @@ function rk_vu_init_gr() (
   this.led_hold = 1.6; this.pk_hold = -1; this.speed = 1; this.pk_open = 0;
   this.hold_style = 1;                     // the thin needle that falls behind the main one
   this.readout = 0; this.warn_on = 0;      // same fresh state rk_vu_init leaves
+  this.nums = 1;
+  this.flat = 0;
 );
 
 // Linear gain -> dB of reduction with no transcendental: double the value
@@ -668,49 +1172,81 @@ function rk_vu_gain2db(g) local(k, m, t, t2, l) (
 // gain measured 314 ms and +1.0 dB of overshoot on a 20 dB step. The block
 // detector keeps the DEEPEST gain (the peak of reduction), converted once
 // per 16 samples.
-function rk_vu_sample_gr(gain) local(tgt, a) (
-  gain = min(max(gain, 0), 1);
+// Reliability, both movements (2026-09-25 audit):
+//  - A NaN or infinite input sample is refused before it reaches the state.
+//    The old code survived one only by ACCIDENT (measured): EEL2 calls
+//    NaN < 0 true, so the rest peg happened to catch a NaN position and the
+//    velocity snap a NaN velocity. A guard should not lean on that.
+//    ⚠️ The test is `abs(x) >= 0`, MEASURED in the sandbox with a genuine IEEE
+//    NaN (injected through gmem): EEL2 calls NaN == NaN true and NaN != NaN
+//    false (=== and !== too), and NaN < 0 TRUE; only >= on abs() cleanly
+//    separates every real number (true) from NaN (false). Do not "simplify"
+//    it to x != x — that passes the NaN straight through.
+//  - The step length is taken from the LIVE srate every step. rk_vu_init's
+//    this.dt went stale on a samplerate change in hosts that set
+//    ext_noinit = 1 (Swing, Weld, ExpressBus: wiki 3.2 — then @init never
+//    re-runs). MEASURED with the plugin loaded at 44.1 kHz and the device
+//    switched to 96 kHz: the needle reached 99 % in 138 ms instead of 300,
+//    until the project was reloaded. Now 300.5 ms.
+//  - Both movements have a right-hand stop (RKVU_PEG / 20 dB) as well as the
+//    rest peg, so an overload ends with the pointer leaving the stop at once.
+//    MEASURED after one second at +10 VU: the old model sat on the stop for
+//    123 ms after the burst ended (its reading had climbed to 3.16); now 10 ms.
+// The same run confirmed what did NOT change: sines at -38/-28/-21/-18/-15
+// dBFS read -20.00/-10.00/-3.00/0.00/+3.00 VU, and a 0 VU step reaches 99 %
+// in 300.1 ms (44.1k) / 300.5 ms (96k) with 1.2 % overshoot and falls to 1 %
+// in 300 ms — the ANSI C16.5 / IEC 60268-17 movement, old and new alike.
+function rk_vu_sample_gr(gain) local(tgt, a, dt) (
+  abs(gain) >= 0 ? ( gain = min(max(gain, 0), 1); ) : ( gain = 1; );   // NaN: no reduction
   this.acc = this.cnt == 0 ? gain : min(this.acc, gain);   // deepest in the block
   this.cnt += 1;
   this.cnt >= RKVU_DEC ? (
+    dt  = RKVU_DEC / max(srate, 1);
     tgt = rk_vu_gain2db(this.acc);
     a   = this.wn * this.wn * (tgt - this.pos)
         - 2 * this.zeta * this.wn * this.vel;
-    this.vel += a * this.dt;
-    this.pos += this.vel * this.dt;
-    this.pos < 0 ? ( this.pos = 0; this.vel = max(this.vel, 0); );   // the rest peg
+    this.vel += a * dt;
+    this.pos += this.vel * dt;
+    this.pos < 0 ? ( this.pos = 0; this.vel = max(this.vel, 0); );     // the rest peg
+    this.pos > 20 ? ( this.pos = 20; this.vel = min(this.vel, 0); );   // the far stop
     abs(this.vel) < 0.0000001 ? this.vel = 0;
+    abs(this.pos) >= 0 && abs(this.vel) >= 0 ? 0 : ( this.pos = 0; this.vel = 0; );
 
     this.pos > this.hold ? ( this.hold = this.pos; this.hold_t = RKVU_HOLD_S; );
-    this.hold_t > 0 ? this.hold_t -= this.dt
-                    : this.hold = max(this.hold - this.dt * RKVU_GR_FALL, this.pos);
+    this.hold_t > 0 ? this.hold_t -= dt
+                    : this.hold = max(this.hold - dt * RKVU_GR_FALL, this.pos);
     this.cnt = 0;
   );
 );
 
-function rk_vu_sample(x) local(amp, tgt, a) (
+function rk_vu_sample(x) local(amp, tgt, a, dt, peg) (
   x = abs(x);
+  x >= 0 ? ( x > 16 ? x = 16; ) : ( x = 0; );   // +inf -> +24 dBFS, NaN -> silence
   this.acc = this.legacy ? max(this.acc, x) : this.acc + x;
   this.pkb = max(this.pkb, x);
   x > this.lim ? this.over = this.led_hold;
   this.cnt += 1;
   this.cnt >= RKVU_DEC ? (
+    dt  = RKVU_DEC / max(srate, 1);
+    peg = this.legacy ? RKVU_PEG_LEGACY : RKVU_PEG;
     amp = this.legacy ? this.acc : (this.acc / RKVU_DEC) * ($pi * 0.5);
     tgt = this.legacy ? amp : amp / max(this.ref, 0.0000001);
     a   = this.wn * this.wn * (tgt - this.pos)
         - 2 * this.zeta * this.wn * this.vel;
-    this.vel += a * this.dt;
-    this.pos += this.vel * this.dt;
+    this.vel += a * dt;
+    this.pos += this.vel * dt;
     this.pos < 0 ? ( this.pos = 0; this.vel = max(this.vel, 0); );
+    this.pos > peg ? ( this.pos = peg; this.vel = min(this.vel, 0); );
     abs(this.vel) < 0.0000001 ? this.vel = 0;
+    abs(this.pos) >= 0 && abs(this.vel) >= 0 ? 0 : ( this.pos = 0; this.vel = 0; );
 
     this.pos > this.hold ? ( this.hold = this.pos; this.hold_t = RKVU_HOLD_S; );
-    this.hold_t > 0 ? this.hold_t -= this.dt
-                    : this.hold = max(this.hold - this.dt * 0.8, this.pos);
-    this.over > 0 ? this.over -= this.dt;
+    this.hold_t > 0 ? this.hold_t -= dt
+                    : this.hold = max(this.hold - dt * 0.8, this.pos);
+    this.over > 0 ? this.over -= dt;
     // sample peak, held RKVU_HOLD_S then released, plus an all-time max
     this.pkb > this.pk_cur ? ( this.pk_cur = this.pkb; this.pk_t = this.pk_hold >= 0 ? this.pk_hold : RKVU_HOLD_S; )
-                           : ( this.pk_t > 0 ? this.pk_t -= this.dt : this.pk_cur = this.pkb; );
+                           : ( this.pk_t > 0 ? this.pk_t -= dt : this.pk_cur = this.pkb; );
     this.pk_max = max(this.pk_max, this.pkb);
     this.pkb = 0;
     this.acc = 0; this.cnt = 0;
@@ -740,8 +1276,17 @@ function rk_vu_sample(x) local(amp, tgt, a) (
 
 function rk_vu_face(x, y, w, h, mode, theme, label) (
   theme >= 0 ? rk_vu_theme(theme);      // -1: the host set the rkvu_* colours itself
+  rkvu_gmode = mode == 1;               // the labels this face carries decide its geometry
   rk_vu_geom(x, y, w, h);
-  rkvu_fsz = max(8, floor(rkvu_r * 0.12 * rkvu_text_scale * max(1, gfx_ext_retina) + 0.5));
+  // ONE scale authority: the rect. rkvu_r is already in the canvas's own
+  // pixels (on Windows gfx_w itself grows with the display scale, wiki 4.6),
+  // so the numerals follow r alone (rk_vu_geom sizes them) and gfx_ext_retina
+  // only sets the smallest legible size. Multiplying r by it again (until
+  // 2026-09-25) scaled the text twice on a scaled screen (1.5x too big at
+  // 150 %), and the fit then hid the numerals it had inflated. (By the wiki
+  // 4.6 rule; this machine is 100 %, so that case is reasoned, not measured.)
+  // rkvu_fsz_x is the exact size the numeral fit reasons with; rkvu_fsz is
+  // the whole-pixel size everything draws at.
   _rk_vu_plate(rkvu_ox, rkvu_oy, rkvu_ow, rkvu_oh);
   _rk_vu_scale(mode, rkvu_fsz);
   _rk_vu_label(label, rkvu_fsz);
@@ -766,21 +1311,28 @@ function rk_vu_ink(pos, hold, mode, slot) local(frac, hfrac) (
 
 // The readout: a box on the lower-left of the face, and PEAK beside the LED.
 function _rk_vu_readout(val, is_peak, blank)
-local(bw, bh, bx, by, tw, th, lx, ly, lr) (
+local(bw, bh, bx, by, tw, th, lx, ly, lr, fb) (
   lr = rkvu_r * 0.040; lx = rkvu_cx + rkvu_r * 0.62; ly = rkvu_cy - rkvu_r * 0.30;
-  gfx_setfont(1, "Arial", max(7, floor(rkvu_fsz * 0.85 + 0.5)));
+  gfx_setfont(1, "Arial", max(7 * rkvu_sc, floor(rkvu_fsz * 0.85 + 0.5)));
   gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 0.70);
   gfx_measurestr("PEAK", tw, th);
   gfx_x = lx - lr * 2.2 - tw; gfx_y = ly - th * 0.5; gfx_drawstr("PEAK");
 
-  bw = rkvu_r * 0.42; bh = rkvu_r * 0.16;
+  // The box holds its widest reading at any size: below a ~50 px radius the
+  // proportional 0.16r box was shorter than its own minimum-size text.
+  // Bold from RKVU_BOLD px only: an 8 or 9 px bold "5" draws as a "6", and
+  // this is the one number on the face a user reads as a value.
+  fb = max(8 * rkvu_sc, floor(rkvu_fsz * 0.95 + 0.5));
+  gfx_setfont(1, "Arial", fb, fb >= RKVU_BOLD ? 'b' : 0);
+  blank ? strcpy(#_rkvu_ro, "--") : sprintf(#_rkvu_ro, is_peak ? "%.1f" : "%+.1f", val);
+  gfx_measurestr(is_peak ? "-60.0" : "-20.0", bw, bh);
+  gfx_measurestr(#_rkvu_ro, tw, th);
+  bw = max(rkvu_r * 0.42, max(bw, tw) + 6 * rkvu_sc);
+  bh = max(rkvu_r * 0.16, th + 2 * rkvu_sc);
   bx = rkvu_fx + rkvu_r * 0.10; by = rkvu_fy + rkvu_fh - bh - rkvu_r * 0.08;
   gfx_set(0, 0, 0, 0.30);
-  _rk_vu_rrect(bx, by, bw, bh, 3);
-  gfx_setfont(1, "Arial", max(8, floor(rkvu_fsz * 0.95 + 0.5)), 'b');
+  _rk_vu_rrect(bx, by, bw, bh, 3 * rkvu_sc);
   gfx_set(rkvu_ik_r, rkvu_ik_g, rkvu_ik_b, 1);
-  blank ? strcpy(#_rkvu_ro, "--") : sprintf(#_rkvu_ro, is_peak ? "%.1f" : "%+.1f", val);
-  gfx_measurestr(#_rkvu_ro, tw, th);
   gfx_x = bx + bw * 0.5 - tw * 0.5; gfx_y = by + bh * 0.5 - th * 0.5;
   gfx_drawstr(#_rkvu_ro);
 );
@@ -802,13 +1354,15 @@ function rk_vu_legacy_ratio(p) local(l) (
 
 // One movement, one rect.
 function rk_vu_draw(x, y, w, h, mode, theme, label) local(v, pk) (
+  rkvu_nums = this.nums;                   // this meter's numerals setting, for rk_vu_geom
+  rkvu_flat = this.flat;                   // ...and whether a wide rect may flatten it
   rk_vu_face(x, y, w, h, mode, theme, label);
   rkvu_hold_style = this.hold_style;
   this.legacy && mode == 0
     ? rk_vu_ink(rk_vu_legacy_ratio(this.pos), rk_vu_legacy_ratio(this.hold), mode, 0)
     : rk_vu_ink(this.pos, this.hold, mode, 0);
   rk_vu_cap_led(this.over > 0);
-  this.readout > 0 && mode == 0 ? (
+  this.readout > 0 && mode == 0 && !rkvu_flat_on ? (
     this.readout <= 2 ? (
       v = this.readout == 2 ? this.hold : this.pos;
       this.legacy ? v = rk_vu_legacy_ratio(v);
@@ -818,6 +1372,8 @@ function rk_vu_draw(x, y, w, h, mode, theme, label) local(v, pk) (
       _rk_vu_readout(20 * log10(max(pk, 0.0000001)), 1, pk < 0.0000001);
     );
   );
+  rkvu_nums = 1;                           // the defaults again, for rk_vu_face / rk_vu_geom callers
+  rkvu_flat = 0;
 );
 
 // Two movements, two plates, one rect — stereo or mid/side.
@@ -858,38 +1414,56 @@ function rk_vu_picker(x, y, w, h, cur)
 local(chosen, cols, rows, sw, sh, sx, sy, cw, ch, fw, fh, i, cx, cy, hit, hover,
       hx, hy, hw, hh, tw, th) (
   chosen = -1;
+  // The cover to click is where THIS meter's face put it: a small face's
+  // scale radius depends on its labels, and a GR instance carries GR labels.
+  // (rk_vu_geom also sets rkvu_sc: the sheet's fixed sizes are logical px.)
+  // A ticks-only meter has the bigger dial, so its numerals setting counts too.
+  rkvu_gmode = this.gr ? 1 : 0;
+  rkvu_nums = this.nums;
+  rkvu_flat = this.flat;                 // a flat meter's cover is where ITS pivot is
   rk_vu_geom(x, y, w, h);
+  rkvu_flat = 0;                         // the sheet's cards are plain faces
   hw = rkvu_r * 0.38; hx = rkvu_cx - hw * 0.5;
-  hy = rkvu_cy - rkvu_r * 0.19; hh = rkvu_r * 0.19 + max(rkvu_oy + rkvu_oh - rkvu_cy, 0);
+  // The cover, down to the plate's edge. On a flat face whose pivot is below
+  // the plate there is none: the spot is the band where the needle comes out
+  // of the bezel, as tall as the cover would be.
+  hy = min(rkvu_cy, rkvu_fb) - rkvu_r * 0.19; hh = rkvu_oy + rkvu_oh - hy;
   hover = mx >= hx && mx < hx + hw && my >= hy && my < hy + hh;
 
   !this.pk_open ? (
-    hover ? ( gfx_set(1, 1, 1, 0.10); gfx_circle(rkvu_cx, rkvu_cy, rkvu_r * 0.19, 1, 1); );
+    hover ? ( gfx_set(1, 1, 1, 0.10);
+              rkvu_cy <= rkvu_fb ? gfx_circle(rkvu_cx, rkvu_cy, rkvu_r * 0.19, 1, 1)
+                                 : gfx_rect(hx, hy, hw, rkvu_fb - hy); );
     hover && lmb_down ? this.pk_open = 1;
   ) : (
     cols = 5; rows = ceil(RKVU_THEMES / cols);
-    sw = max(w, 380); sh = max(h, 264);
+    sw = max(w, 380 * rkvu_sc); sh = max(h, 264 * rkvu_sc);
     sx = min(max(x, 0), max(gfx_w - sw, 0)); sy = min(max(y, 0), max(gfx_h - sh, 0));
     gfx_set(0, 0, 0, 0.72); gfx_rect(0, 0, gfx_w, gfx_h);
-    gfx_set(0.10, 0.10, 0.11, 1); _rk_vu_rrect(sx, sy, sw, sh, 6);
-    cw = (sw - 12) / cols; ch = (sh - 12 - 20) / rows;
-    fw = cw - 8; fh = min(fw / 1.6, ch - 16);
-    gfx_setfont(1, "Arial", 11, 'b'); gfx_set(0.85, 0.85, 0.85, 1);
-    gfx_x = sx + 8; gfx_y = sy + 5; gfx_drawstr("THEME");
+    gfx_set(0.10, 0.10, 0.11, 1); _rk_vu_rrect(sx, sy, sw, sh, 6 * rkvu_sc);
+    cw = (sw - 12 * rkvu_sc) / cols; ch = (sh - 32 * rkvu_sc) / rows;
+    fw = cw - 8 * rkvu_sc; fh = min(fw / 1.6, ch - 16 * rkvu_sc);
+    gfx_setfont(1, "Arial", 11 * rkvu_sc, 'b'); gfx_set(0.85, 0.85, 0.85, 1);
+    gfx_x = sx + 8 * rkvu_sc; gfx_y = sy + 5 * rkvu_sc; gfx_drawstr("THEME");
     i = 0;
     loop(RKVU_THEMES,
-      cx = sx + 6 + (i % cols) * cw; cy = sy + 20 + floor(i / cols) * ch;
+      cx = sx + 6 * rkvu_sc + (i % cols) * cw; cy = sy + 20 * rkvu_sc + floor(i / cols) * ch;
       hit = mx >= cx && mx < cx + cw && my >= cy && my < cy + ch;
-      (hit || i == cur) ? ( gfx_set(1, 1, 1, hit ? 0.18 : 0.09); _rk_vu_rrect(cx, cy, cw - 2, ch - 2, 4); );
-      rk_vu_face(cx + 4, cy + 2, fw, fh, 0, i, "");
+      (hit || i == cur) ? ( gfx_set(1, 1, 1, hit ? 0.18 : 0.09);
+                            _rk_vu_rrect(cx, cy, cw - 2 * rkvu_sc, ch - 2 * rkvu_sc, 4 * rkvu_sc); );
+      // "this same face": a GR meter's cards are GR faces (they were always level
+      // faces; outside audit round 2, 2026-09-25). Every host draws the instance
+      // it calls this through in that instance's own mode, so this.gr is the face.
+      rk_vu_face(cx + 4 * rkvu_sc, cy + 2 * rkvu_sc, fw, fh, this.gr ? 1 : 0, i, "");
       rk_vu_theme_name(i, #_rkvu_pn);
-      gfx_setfont(1, "Arial", 9); gfx_set(0.85, 0.85, 0.85, 1);
+      gfx_setfont(1, "Arial", 9 * rkvu_sc); gfx_set(0.85, 0.85, 0.85, 1);
       gfx_measurestr(#_rkvu_pn, tw, th);
-      gfx_x = cx + cw * 0.5 - tw * 0.5; gfx_y = cy + 2 + fh + 1; gfx_drawstr(#_rkvu_pn);
+      gfx_x = cx + cw * 0.5 - tw * 0.5; gfx_y = cy + (3 * rkvu_sc) + fh; gfx_drawstr(#_rkvu_pn);
       hit && lmb_down ? chosen = i;
       i += 1;
     );
     lmb_down ? this.pk_open = 0;
   );
+  rkvu_nums = 1;
   chosen;
 );

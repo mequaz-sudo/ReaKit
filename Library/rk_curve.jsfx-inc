@@ -652,6 +652,22 @@ function rk_curve_palette(cbuf, n) (
 
 function rk_curve_node_r(w) ( max(5, min(w * 0.020, 11)); );
 
+// The weight of a node name drawn at fs px: bold, except a name with a DIGIT
+// below 10 px -- bold Arial at 8-9 px draws 5 as 6 and 6, 9 as 8 (wiki 4.7),
+// so band "5" read "6". Letter names ("LS", "HP") keep their bold.
+function rk_curve_name_wt(fs, s) local(i, c, dig) (
+  dig = 0;
+  fs < 10 ? (
+    i = 0;
+    loop(strlen(s),
+      c = str_getchar(s, i);
+      (c >= '0' && c <= '9') ? ( dig = 1; );
+      i += 1;
+    );
+  );
+  dig ? 0 : 'b';
+);
+
 // Nearest node within reach, or -1. Scanning all of them and taking the
 // nearest is the difference between this and 4BandEQ's first-come-wins, which
 // grabs the wrong node the moment two overlap.
@@ -770,7 +786,7 @@ local(i, hov, mods, dx, dy, sens, now) (
 //          number itself, sized from RKCV_BADGE_K.)
 // `al` scales every alpha, for a band that is switched off.
 function rk_curve_node_paint_ex(nx, ny, rad, ht, on, al, r, g, b, lbl)
-local(tw, th, br) (
+local(tw, th, br, fs) (
   rkcv_sty_nodes == RKCV_DOT ? (
     ht > 0.01 ? ( gfx_set(r, g, b, 0.22 * ht * al); gfx_circle(nx, ny, rad * 1.7, 1, 1); );
     gfx_set(r, g, b, al);
@@ -789,7 +805,8 @@ local(tw, th, br) (
     on ? ( gfx_set(1, 1, 1, 0.80 * al); gfx_circle(nx, ny, br + 3, 0, 1); );
     lbl >= 0 ? (
       // the name, dark on the band's colour
-      gfx_setfont(1, "Arial", max(7, floor(rad * 1.05)), 'b');
+      fs = max(7, floor(rad * 1.05));
+      gfx_setfont(1, "Arial", fs, rk_curve_name_wt(fs, lbl));
       gfx_measurestr(lbl, tw, th);
       // Dark on the band's colour -- unless the band is off, when the disc is
       // dimmed almost to the plate and dark type on it vanishes ("HP" / "LP" on
@@ -814,7 +831,8 @@ local(tw, th, br) (
     gfx_circle(nx, ny, rad, 0, 1);
     lbl >= 0 ? (
       // the name, where the centre dot would be
-      gfx_setfont(1, "Arial", max(7, floor(rad * 0.95)), 'b');
+      fs = max(7, floor(rad * 0.95));
+      gfx_setfont(1, "Arial", fs, rk_curve_name_wt(fs, lbl));
       gfx_measurestr(lbl, tw, th);
       gfx_set(1, 1, 1, (on ? 1 : 0.88) * al);
       gfx_x = nx - tw * 0.5 + 0.5; gfx_y = ny - th * 0.5;

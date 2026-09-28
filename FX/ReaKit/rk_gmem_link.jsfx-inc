@@ -513,7 +513,7 @@ function rk_link_draw_gear(gx, gy, gr, ar, ag, ab, _mx, _my, _lmb)
 // Right-click → open options menu at badge position
 // Badge fill color is the group's fixed hue (not plugin accent).
 function rk_link_draw_badge(bx, by, sz, ar, ag, ab, _mx, _my, _lmb)
-  local(cx, cy, r, hov, g, new_g, tw, th)
+  local(cx, cy, r, hov, g, new_g, tw, th, fs)
 (
   g = slider(rk_link_group_slider) | 0;
   cx = bx + sz / 2;
@@ -557,15 +557,18 @@ function rk_link_draw_badge(bx, by, sz, ar, ag, ab, _mx, _my, _lmb)
       gfx_set(rk_gc_r, rk_gc_g, rk_gc_b, 0.40);
       gfx_circle(cx, cy, r + 1, 0, 1);
     );
-    // Number — dark text for legibility on bright fills
+    // Number — dark text for legibility on bright fills. Bold from 10 px
+    // only: bold Arial at 8-9 px draws 5 as 6 and 6, 9 as 8 (wiki 4.7).
     gfx_set(0.0, 0.0, 0.0, 1);
     g < 10 ? (
-      gfx_setfont(1, "Arial", max(7, floor(sz * 0.65)), 'b');
+      fs = max(7, floor(sz * 0.65));
+      gfx_setfont(1, "Arial", fs, fs >= 10 ? 'b' : 0);
       gfx_measurestr("0", tw, th);
       gfx_x = cx - tw / 2; gfx_y = cy - th / 2;
       gfx_drawnumber(g, 0);
     ) : (
-      gfx_setfont(1, "Arial", max(6, floor(sz * 0.50)), 'b');
+      fs = max(6, floor(sz * 0.50));
+      gfx_setfont(1, "Arial", fs, fs >= 10 ? 'b' : 0);
       sprintf(#rk_badge_num, "%d", g);
       gfx_measurestr(#rk_badge_num, tw, th);
       gfx_x = cx - tw / 2; gfx_y = cy - th / 2;
@@ -715,7 +718,9 @@ function rk_link_draw_menu(menu_x, menu_y, sc, ar, ag, ab, _mx, _my, _lmb)
     grp_y  = menu_y + floor(30 * sc);
     grp2_y = menu_y + floor(55 * sc);
     dot_r  = max(1, floor(2 * sc));
-    gfx_setfont(1, "Arial", font_sz, 'b');
+    // The cell numbers are bold from 10 px only (wiki 4.7): a host with
+    // sc < 1 (Reelism, Compressor) brings font_sz down to 8.
+    gfx_setfont(1, "Arial", font_sz, font_sz >= 10 ? 'b' : 0);
 
     i = 1;
     loop(16,

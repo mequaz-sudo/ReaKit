@@ -465,6 +465,11 @@ is_embedded ? (
   !emb_widget_active ? gfx_ext_flags |= 0x200;
 
 ) : (
+  // House rule 3 (wiki 4.5): window up -> arm 0x200 always. The flag only routes
+  // clicks on the EMBED, which runs no @gfx pass while a window is open, so this
+  // is the only pass that can set it; a click on the strip then closes the window.
+  // An idle pass (& 2) leaves the flag alone.
+  !(gfx_ext_flags & 2) ? gfx_ext_flags |= 0x200;
 // ══════════════════════════════════════════════════════════
 // FLOATING MODE — SSL-Style Dynamics
 // ══════════════════════════════════════════════════════════
@@ -718,7 +723,8 @@ is_embedded ? (
   gfx_rect(os_pill_x + os_pill_w - 1, pill_os_y, 1, os_pill_h);
   // label
   slider15 ? gfx_set(0.05,0.05,0.07,1) : gfx_set(0.65,0.65,0.67,0.6);
-  gfx_setfont(1, "Arial", floor(8*ret), 'b');
+  // Bold from 10 px only: text with digits in bold 8-9 px misreads (wiki 4.7).
+  gfx_setfont(1, "Arial", floor(8*ret), floor(8*ret) >= 10 ? 'b' : 0);
   gfx_measurestr("OS 2x", tw, th);
   gfx_x = os_pill_x + os_pill_w*0.5 - tw*0.5;
   gfx_y = pill_os_y + (os_pill_h - th) * 0.5;

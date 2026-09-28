@@ -13,6 +13,7 @@ slider7:1.0<0,5,0.1>-Lookahead (ms)
 slider8:0<0,1,1>-Monitor {Off,On}
 slider9:0<-24,24,0.1>-Output Gain (dB)
 slider10:0<0,16,1>-Link Group {Off,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}
+slider11:de_name_bar=0<0,1,1>-Name bar (internal; the THEME panel's NAME BAR row; 0 = borderless embed, house rule 1; persists via FX chunk, no @serialize touch)
 
 in_pin:left input
 in_pin:right input
@@ -36,7 +37,14 @@ gfx_ext_retina = 1;
 
 // Render the embedded UI without REAPER's frame/title-bar decoration
 // (REAPER 7.45+, gfx_ext_flags 0x100). Must be set in @init, not @gfx.
-gfx_ext_flags |= 0x100 | 0x400; // +0x400: no MCP hover tooltip (7.79+; older ignores)
+gfx_ext_flags |= 0x400; // 0x400 = no MCP hover tooltip (7.79+; older ignores)
+// 0x100 now follows the THEME panel's NAME BAR row (slider11), default
+// 0 = borderless, house rule 1 unchanged. REAPER documents 0x100 as an
+// @init decision, so it is applied HERE from the restored value; the
+// re-apply in the @gfx tail is what makes the row take effect without a
+// reload (measured both ways on 7.79 and 7.80).
+// ⚠️INVERTED SENSE: the row ON (bar SHOWN) means 0x100 CLEARED.
+de_name_bar ? ( gfx_ext_flags = (gfx_ext_flags | 0x100) - 0x100; ) : ( gfx_ext_flags |= 0x100; );
 
 cDenorm = pow(10,-30);
 
@@ -450,6 +458,11 @@ is_embedded ? (
   !emb_widget_active ? gfx_ext_flags |= 0x200;
 
 ) : (
+  // House rule 3 (wiki 4.5): window up -> arm 0x200 always. The flag only routes
+  // clicks on the EMBED, which runs no @gfx pass while a window is open, so this
+  // is the only pass that can set it; a click on the strip then closes the window.
+  // An idle pass (& 2) leaves the flag alone.
+  !(gfx_ext_flags & 2) ? gfx_ext_flags |= 0x200;
   // ── FLOATING ──────────────────────────────────────────────────────────────
   WIN_W = gfx_w; WIN_H = gfx_h;
   gfx_set(_th_bg_r, _th_bg_g, _th_bg_b, 1); gfx_rect(0, 0, WIN_W, WIN_H);
@@ -466,7 +479,14 @@ is_embedded ? (
   // ▸EON appearance cluster (shared lib): THEME · KNOB chips, no VU/SYNC
   // (has_vu = 0). Interaction runs INSIDE rkth_cluster FIRST — an open
   // panel swallows the click/wheel before the gear/badge or body widgets.
+  // NAME BAR row: opt-in, per instance. rkth_namebar() every frame so the
+  // chip tracks the slider even when it is changed from REAPER's own param
+  // list; the cluster never writes a host slider, it surfaces the pick.
+  rkth_namebar(de_name_bar);
   rkth_cluster_hdr(170*ret, 10*ret, 0, 0);
+  rkth_nb_pick >= 0 ? (
+    de_name_bar = rkth_nb_pick; slider_automate(de_name_bar); rkth_nb_pick = -1;
+  );
 
   // State LED + status text
   led_x = WIN_W - 100*ret; led_y = hdr_h / 2;
@@ -820,7 +840,8 @@ is_embedded ? (
 
   // GR readout below meter
   gr_disp < -0.3 ? (
-    gfx_setfont(1, "Arial", floor(9 * ret), 'b');
+    // Bold from 10 px only: a bold 8-9 px "5" draws as a "6" (wiki 4.7).
+    gfx_setfont(1, "Arial", floor(9 * ret), floor(9 * ret) >= 10 ? 'b' : 0);
     gfx_set(0.90, 0.38, 0.15, 0.90);
     sprintf(#gr_str, "%.1f", gr_disp);
     gfx_measurestr(#gr_str, tw, th);
@@ -842,6 +863,13 @@ is_embedded ? (
 // Theme list + KNOB panel on top of everything (floating only — the
 // bit-test gate lives inside rkth_cluster_overlay)
 rkth_cluster_overlay();
+
+// NAME BAR re-applied every VISIBLE pass — that, not the @init line, is what
+// makes the row take effect without a reload. An idle pass (& 2) leaves the
+// flag alone (house rule 4). ⚠️INVERTED SENSE: the row ON means 0x100 CLEARED.
+!(gfx_ext_flags & 2) ? (
+  de_name_bar ? ( gfx_ext_flags = (gfx_ext_flags | 0x100) - 0x100; ) : ( gfx_ext_flags |= 0x100; );
+);
 
 rk_link_on_gfx_change();
 

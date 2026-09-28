@@ -183,6 +183,38 @@ function rkth_lock_mem(mem) (
 // 0x100 CLEARED. The cluster only ever deals in 0 = hidden, 1 = shown.
 function rkth_namebar(cur) ( rkth_nb_ok = 1; rkth_nb_cur = cur | 0; );
 
+// ── STRIP (per-instance, opt-in) ──────────────────────────────────────────
+// What a face shows in its TCP/MCP strip: 0 METER (the face's own strip
+// layout), 1 KNOB (its hero knob alone, big), 2 VU (its meter alone, as big
+// as the slot allows; 2026-09-26). The chip steps METER -> VU -> KNOB ->
+// METER. Host hook, called EVERY FRAME
+// just before rkth_cluster/rkth_cluster_hdr, exactly like rkth_namebar:
+//   rkth_stripview(xx_strip_view);   // the host's own hidden 0/1 slider
+//   rkth_cluster_hdr(x, y, has_vu, cur_vu);
+//   rkth_sv_pick >= 0 ? (
+//     xx_strip_view = rkth_sv_pick; slider_automate(xx_strip_view); rkth_sv_pick = -1;
+//   );
+// ⛔OPT-IN, the NAME BAR contract (fe0d428): a host that never calls this
+// leaves rkth_sv_ok = 0, the row does not exist, and the panel measures, lays
+// out and paints exactly as before — this copy ships in the public ReaKit
+// library. The cluster never writes a host slider: the pick surfaces on
+// rkth_sv_pick and the HOST applies it. Live while LOCKED, like NAME BAR: it
+// is a display choice for this instance, not part of the frozen look.
+function rkth_stripview(cur) ( rkth_sv_ok = 1; rkth_sv_cur = cur | 0; );
+
+// ── NUMBERS (per-instance, opt-in) ────────────────────────────────────────
+// Whether the strip's meter carries its numerals: 0 SHOWN, 1 HIDDEN (ticks
+// only, rk_vu_set_numbers(0); the user, 2026-09-26: "the option to be no
+// numbers, just ticks"). The same contract as NAME BAR and STRIP, row after
+// STRIP:
+//   rkth_numbers(xx_strip_nums);
+//   rkth_nu_pick >= 0 ? (
+//     xx_strip_nums = rkth_nu_pick; slider_automate(xx_strip_nums); rkth_nu_pick = -1;
+//   );
+// ⛔OPT-IN: a host that never calls it has no row, and the panel is as before.
+// Live while LOCKED: a display choice, not part of the frozen look.
+function rkth_numbers(cur) ( rkth_nu_ok = 1; rkth_nu_cur = cur | 0; );
+
 // Host hook, called from @serialize so a locked look survives a project
 // reload. ⚠️APPEND-GUARDED: an old project's blob simply ends before this, and
 // file_avail(0) == 0 leaves the instance unlocked, which is the right default.
@@ -481,7 +513,8 @@ function rkth_vu_face_migrate(old) (
 // Dropdown / chip label. kind 2 = VU face (rows = the meter's faces, no AUTO —
 // the host slider stays a direct index; see rkth_vu_n), kind 3 = knob style
 // over the FULL dispatcher, row = style id (0 = Default, 9 = Rainbow Arc,
-// 19/20 = Pultec Cream / Neve Alt). Strings via
+// 19/20 = Pultec Cream / Neve Alt; 21 = SSL-G is named for a theme that
+// publishes it, the list itself offers 0..20). Strings via
 // strcpy(#buf).
 //
 // The rk_vu names below MIRROR rk_vu_theme_name in rk_vu.jsfx-inc and must
@@ -510,7 +543,7 @@ function rkth_cl_lbl(kind, r) (
       r == 9  ? "Rainbow"   : r == 10 ? "Spice"   : r == 11 ? "Encoder"   :
       r == 12 ? "Pultec"    : r == 13 ? "Ableton" : r == 14 ? "FL"        :
       r == 15 ? "Pro Tools" : r == 16 ? "FabFilter" : r == 17 ? "Serum"   :
-      r == 18 ? "Roland"    : r == 19 ? "Pultec Cream" : "Neve Alt");
+      r == 18 ? "Roland"    : r == 19 ? "Pultec Cream" : r == 20 ? "Neve Alt" : "SSL-G");
   );
 );
 // Row that carries the "current" mark: VU = the host's face (stashed in
@@ -519,6 +552,14 @@ function rkth_cl_lbl(kind, r) (
 function rkth_cl_currow() (
   rkth_dd_kind == 2 ? rkth_cl_vu
                     : (gmem[GS_THEME_KNOB_P] | 0);
+);
+// The knob style the face is DRAWING — the frozen one while LOCKED, else the
+// published one — which is what the KNOB chip must name. Fixed 2026-09-25: the
+// chip read the live cell even while locked, and still mapped styles above 8
+// down a row from before 3f099d4 put the Rainbow Arc at 9 (row = id since), so
+// an Ableton knob read "Pultec" and an FL knob read "Ableton".
+function rkth_knob_shown() (
+  (rkth_locked && rkth_lk_ok) ? (rkth_lk_buf[RKTH_LK_KP] | 0) : (gmem[GS_THEME_KNOB_P] | 0);
 );
 // Open at (ax, ay): width measured from the widest label (font set FIRST —
 // gfx_measurestr fails silently under a stale font), clamped into the window.
@@ -573,7 +614,7 @@ function rkth_cl_chipdraw(cx, cy, cw, ch, lbl_str) local(_f) (
 // slider itself — picks surface on rkth_vu_pick for the host to apply.
 function rkth_cluster(x, y, has_vu, cur_vu)
 local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid, _ch, _rh,
-      _capw, _pad, _gap, _cw, _lkw, _nbw) (
+      _capw, _pad, _gap, _cw, _lkw, _nbw, _svw, _nuw) (
   // Chip height and dropdown row height, scaled once and reused by EVERY hit
   // test, dropdown anchor and draw below — a chip whose hit rect and drawn rect
   // disagree is the bug this function's comments keep warning about, and two
@@ -638,8 +679,7 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
     strcpy(#rkth_clt, rkth_local_off ? "NATIVE" : rkth_name(rkth_cur() - 1));
     gfx_measurestr(#rkth_clt, _tw, _th);
     thw = _tw + 18*rkth_scale;
-    rkth_cl_lbl(3, (gmem[GS_THEME_KNOB_P] | 0) <= 8 ? (gmem[GS_THEME_KNOB_P] | 0)
-                                                    : (gmem[GS_THEME_KNOB_P] | 0) - 1);
+    rkth_cl_lbl(3, rkth_knob_shown());   // the knob on screen (row = id)
     gfx_measurestr(#rkth_ddl, _tw, _th);
     knw = _tw + 14*rkth_scale;
     vuw = 0; syw = 0;   // EEL2 locals survive the call — clear for has_vu = 0
@@ -668,6 +708,20 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
       gfx_measurestr("HIDDEN", _tw, _th); _nbw = _tw;
       gfx_measurestr("SHOWN", _tw, _th); _nbw = max(_nbw, _tw) + 14*rkth_scale;
     );
+    // And for STRIP: "METER", "VU" and "KNOB" take turns in its one chip; for
+    // NUMBERS, "SHOWN" and "HIDDEN". Only when the host asked for the row, so a
+    // host without it measures as before.
+    _svw = 0;
+    rkth_sv_ok ? (
+      gfx_measurestr("METER", _tw, _th); _svw = _tw;
+      gfx_measurestr("VU", _tw, _th); _svw = max(_svw, _tw);
+      gfx_measurestr("KNOB", _tw, _th); _svw = max(_svw, _tw) + 14*rkth_scale;
+    );
+    _nuw = 0;
+    rkth_nu_ok ? (
+      gfx_measurestr("HIDDEN", _tw, _th); _nuw = _tw;
+      gfx_measurestr("SHOWN", _tw, _th); _nuw = max(_nuw, _tw) + 14*rkth_scale;
+    );
     // ── DROPPED PANEL geometry (user 2026-08-12: "make it drop down not
     // across"). The chips used to FLOW horizontally along the header, which put
     // them on a collision course with each host's right-hand chrome and forced
@@ -684,19 +738,28 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
     // …unless NAME BAR is present, which is wider. Measured ONLY when the row
     // exists, so a host without one gets the identical left column it had.
     rkth_nb_ok ? ( gfx_measurestr("NAME BAR", _tw, _th); _capw = max(_capw, _tw); );
+    rkth_sv_ok ? ( gfx_measurestr("STRIP", _tw, _th); _capw = max(_capw, _tw); );
+    rkth_nu_ok ? ( gfx_measurestr("NUMBERS", _tw, _th); _capw = max(_capw, _tw); );
     _capw = _capw + 6*rkth_scale;
     _pad  = 6*rkth_scale;
     _gap  = 4*rkth_scale;
     _cw = max(thw, knw); has_vu ? ( _cw = max(_cw, max(vuw, syw)); ); _cw = max(_cw, _lkw); _cw = max(_cw, _nbw);
+    _cw = max(_cw, _svw); _cw = max(_cw, _nuw);
     // LOCK gets its own row, last, because it governs the WHOLE look rather
     // than any one chip. It is HIDDEN outright on a host that never called
     // rkth_lock_mem() — no buffer, no lock, and a dead control would be worse
     // than an absent one.
     // NAME BAR sits above LOCK: it is a per-instance display option, where LOCK
     // governs the whole look and keeps the last row for that reason.
+    // STRIP follows NAME BAR (both say what the strip shows), NUMBERS follows
+    // STRIP (it is about the strip's meter); LOCK stays last.
     rkth_clp_nbrow   = rkth_nb_ok ? (has_vu ? 4 : 2) : -1;
-    rkth_clp_lockrow = rkth_lk_ok ? (has_vu ? 4 : 2) + (rkth_nb_ok ? 1 : 0) : -1;
-    rkth_clp_rows  = (has_vu ? 4 : 2) + (rkth_nb_ok ? 1 : 0) + (rkth_lk_ok ? 1 : 0);
+    rkth_clp_svrow   = rkth_sv_ok ? (has_vu ? 4 : 2) + (rkth_nb_ok ? 1 : 0) : -1;
+    rkth_clp_nurow   = rkth_nu_ok ? (has_vu ? 4 : 2) + (rkth_nb_ok ? 1 : 0) + (rkth_sv_ok ? 1 : 0) : -1;
+    rkth_clp_lockrow = rkth_lk_ok ? (has_vu ? 4 : 2) + (rkth_nb_ok ? 1 : 0) + (rkth_sv_ok ? 1 : 0)
+                                  + (rkth_nu_ok ? 1 : 0) : -1;
+    rkth_clp_rows  = (has_vu ? 4 : 2) + (rkth_nb_ok ? 1 : 0) + (rkth_sv_ok ? 1 : 0) + (rkth_nu_ok ? 1 : 0)
+                   + (rkth_lk_ok ? 1 : 0);
     rkth_clp_pitch = _ch + _gap;
     rkth_clp_w = _pad + _capw + _cw + _pad;
     rkth_clp_h = _pad + rkth_clp_rows*_ch + (rkth_clp_rows - 1)*_gap + _pad;
@@ -786,6 +849,31 @@ local(thw, knw, vuw, syw, thx, thy, knx, kny, vux, vuy, syx, syy, _tw, _th, kid,
       my <  rkth_clp_r0 + rkth_clp_nbrow*rkth_clp_pitch + _ch ? (
       rkth_nb_pick = rkth_nb_cur ? 0 : 1;
       rkth_nb_cur  = rkth_nb_pick;
+      lmb_down = 0; rkth_consumed = 1;
+    );
+
+    // ── STRIP chip: METER -> VU -> KNOB, what this instance's TCP/MCP strip
+    // shows. A click steps it, for the same reasons NAME BAR is a toggle, and it
+    // is live while LOCKED for the same reason too. rkth_sv_cur advances here so
+    // the chip reads right in THIS frame's overlay; the host applies
+    // rkth_sv_pick after.
+    rkth_clp_svrow >= 0 && lmb_down &&
+      mx >= rkth_clp_cx && mx < rkth_clp_cx + rkth_clp_cw &&
+      my >= rkth_clp_r0 + rkth_clp_svrow*rkth_clp_pitch &&
+      my <  rkth_clp_r0 + rkth_clp_svrow*rkth_clp_pitch + _ch ? (
+      rkth_sv_pick = rkth_sv_cur == 0 ? 2 : rkth_sv_cur == 2 ? 1 : 0;
+      rkth_sv_cur  = rkth_sv_pick;
+      lmb_down = 0; rkth_consumed = 1;
+    );
+
+    // ── NUMBERS chip: SHOWN <-> HIDDEN, the strip meter's numerals. A toggle
+    // like NAME BAR, live while LOCKED like it too.
+    rkth_clp_nurow >= 0 && lmb_down &&
+      mx >= rkth_clp_cx && mx < rkth_clp_cx + rkth_clp_cw &&
+      my >= rkth_clp_r0 + rkth_clp_nurow*rkth_clp_pitch &&
+      my <  rkth_clp_r0 + rkth_clp_nurow*rkth_clp_pitch + _ch ? (
+      rkth_nu_pick = rkth_nu_cur ? 0 : 1;
+      rkth_nu_cur  = rkth_nu_pick;
       lmb_down = 0; rkth_consumed = 1;
     );
 
@@ -921,8 +1009,7 @@ function rkth_cluster_overlay() local(_k, _idx, _ry, _f7, _f9, _cy) (
       );
       // Chip faces. THEME reads its rect from the globals rkth_input stored.
       rkth_draw_chip(_f9);
-      rkth_cl_lbl(3, (gmem[GS_THEME_KNOB_P] | 0) <= 8 ? (gmem[GS_THEME_KNOB_P] | 0)
-                                                      : (gmem[GS_THEME_KNOB_P] | 0) - 1);
+      rkth_cl_lbl(3, rkth_knob_shown());   // the knob on screen (row = id)
       rkth_cl_chipdraw(rkth_clp_cx, rkth_clp_r0 + rkth_clp_pitch, rkth_clp_cw, rkth_clp_ch, #rkth_ddl);
       rkth_clp_vu ? (
         rkth_cl_lbl(2, rkth_cl_vu);
@@ -953,6 +1040,38 @@ function rkth_cluster_overlay() local(_k, _idx, _ry, _f7, _f9, _cy) (
         rkth_nb_cur ? gfx_set(0.10, 0.10, 0.12, 1) : rkth_setcol(2, 0.85, 0.87, 0.90, 1);
         gfx_x = rkth_clp_cx + 5*rkth_scale; gfx_y = _ry + (rkth_clp_ch - _f9) * 0.5;
         gfx_drawstr(rkth_nb_cur ? "SHOWN" : "HIDDEN");
+      );
+      // ── STRIP row: the same lit chip; lit = VU or KNOB, a non-default view.
+      // Absent unless the host called rkth_stripview() this frame.
+      rkth_clp_svrow >= 0 ? (
+        _ry = rkth_clp_r0 + rkth_clp_svrow*rkth_clp_pitch;
+        gfx_setfont(1, "Arial", _f7, 'b');
+        rkth_setcol(3, 0.62, 0.65, 0.70, 1);
+        gfx_x = rkth_clp_capx; gfx_y = _ry + _cy; gfx_drawstr("STRIP");
+        rkth_sv_cur ? ( rkth_setcol(4, 0.95, 0.65, 0.15, 0.9); )
+                    : ( rkth_setcol(1, 0.16, 0.18, 0.22, 1); );
+        gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch);
+        rkth_setcol(7, 0.32, 0.35, 0.42, 1); gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch, 0);
+        gfx_setfont(1, "Arial", _f9, 'b');
+        rkth_sv_cur ? gfx_set(0.10, 0.10, 0.12, 1) : rkth_setcol(2, 0.85, 0.87, 0.90, 1);
+        gfx_x = rkth_clp_cx + 5*rkth_scale; gfx_y = _ry + (rkth_clp_ch - _f9) * 0.5;
+        gfx_drawstr(rkth_sv_cur == 1 ? "KNOB" : rkth_sv_cur == 2 ? "VU" : "METER");
+      );
+      // ── NUMBERS row: the same lit chip; lit = HIDDEN, the non-default.
+      // Absent unless the host called rkth_numbers() this frame.
+      rkth_clp_nurow >= 0 ? (
+        _ry = rkth_clp_r0 + rkth_clp_nurow*rkth_clp_pitch;
+        gfx_setfont(1, "Arial", _f7, 'b');
+        rkth_setcol(3, 0.62, 0.65, 0.70, 1);
+        gfx_x = rkth_clp_capx; gfx_y = _ry + _cy; gfx_drawstr("NUMBERS");
+        rkth_nu_cur ? ( rkth_setcol(4, 0.95, 0.65, 0.15, 0.9); )
+                    : ( rkth_setcol(1, 0.16, 0.18, 0.22, 1); );
+        gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch);
+        rkth_setcol(7, 0.32, 0.35, 0.42, 1); gfx_rect(rkth_clp_cx, _ry, rkth_clp_cw, rkth_clp_ch, 0);
+        gfx_setfont(1, "Arial", _f9, 'b');
+        rkth_nu_cur ? gfx_set(0.10, 0.10, 0.12, 1) : rkth_setcol(2, 0.85, 0.87, 0.90, 1);
+        gfx_x = rkth_clp_cx + 5*rkth_scale; gfx_y = _ry + (rkth_clp_ch - _f9) * 0.5;
+        gfx_drawstr(rkth_nu_cur ? "HIDDEN" : "SHOWN");
       );
       // ── LOCK row: same lit-chip language as >ALL, so "engaged" reads the
       // same way everywhere in the panel. Absent entirely when the host never
@@ -1020,6 +1139,10 @@ rkth_nb_pick = -1;      // NAME BAR pick, surfaced for the host to apply
 rkth_nb_ok   = 0;       // host asked for the row? re-established every frame
                         // by the host's rkth_namebar() call, so re-zeroing on
                         // an @init rerun cannot strand the row
+rkth_sv_pick = -1;      // STRIP pick, the same contract
+rkth_sv_ok   = 0;       // re-established every frame by rkth_stripview()
+rkth_nu_pick = -1;      // NUMBERS pick, the same contract
+rkth_nu_ok   = 0;       // re-established every frame by rkth_numbers()
 rkth_vu_gen_seen = gmem[GS_THEME_VU_GEN];
 rkth_cl_open = 0;      // collapsible header starts closed (rkth_cluster_hdr)
 rkth_cl_paint = 0;     // per-frame "panel was requested"; set by rkth_cluster,

@@ -114,11 +114,13 @@ both from ReaTeam Extensions. MIT.
 
 ## Free FX
 
-Also free here: **ReaKit Free FX**, four classic REAPER effects with EON
-Studios interfaces — **Saturation**, **3-Band EQ** and **DDC** (Digital Drum
-Compressor) by LOSER, and a **De-Esser** on Liteon's. Install it from the
-ReaPack browser. The DSP keeps its authors' original terms; see
-`FX/LICENSE.md`.
+The free effects have their own repository now:
+[**ReaKit FX**](https://github.com/mequaz-sudo/ReaKit-FX) — **GainKit** (EON's gain
+staging on a VU), and **Saturation**, **3-Band EQ**, **DDC** by LOSER and a
+**De-Esser** on Liteon's, all with EON Studios interfaces drawn by this library.
+ReaPack: import `https://raw.githubusercontent.com/mequaz-sudo/ReaKit-FX/main/index.xml`
+and install ReaKit FX. The "ReaKit Free FX" package that used to ship from here is
+retired; if you installed it, ReaPack lists it as obsolete — install the new one.
 
 ## Use in your JSFX
 

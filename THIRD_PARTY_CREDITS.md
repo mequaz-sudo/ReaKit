@@ -32,19 +32,14 @@ meter in DSP", which is acknowledged here as the published reference for it.
 - **Joanny** — the green checkbox style.
 - **Spice** — the segmented-bar selector style.
 
-## Free FX (`FX/`)
+## The free effects
 
-The four free effects run their authors' own DSP and keep their original
-headers:
-
-- **Michael Gruhn (LOSER)** — Saturation, 3-Band EQ and DDC (Digital Drum
-  Compressor), (C) 2006–2007.
-- **Lubomir I. Ivanov (Liteon)** — the De-Esser's LR2 crossover and peak
-  compressor, (C) 2009.
-
-Both released these free with REAPER, for use "in the sense of the author's
-intention" and with acknowledgement, so they are free here and credited in
-each plugin. EON Studios wrote the interfaces. Details: `FX/LICENSE.md`.
+They have their own repository since 2026-09-28,
+[ReaKit FX](https://github.com/mequaz-sudo/ReaKit-FX), and their credits went
+with them: Saturation, 3-Band EQ and DDC by Michael Gruhn (LOSER), the
+De-Esser's crossover and peak compressor by Lubomir I. Ivanov (Liteon), each
+under its author's terms; GainKit by EON Studios (MIT). See that repository's
+`LICENSE.md` and `THIRD_PARTY_CREDITS.md`.
 
 ---
 

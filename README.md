@@ -42,14 +42,16 @@ frequency so the two axes agree however either is configured.*
 
 *Everything above is drawn by the library itself.*
 
-**20 knob styles** (SSL, SSL-G, Neve x2, API, Pultec x2, Ableton, Pro Tools,
+**21 knob styles** (SSL, SSL-G, Neve x2, API, Pultec x2, Ableton, Pro Tools,
 FabFilter, Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader
 types** (incl. an SSL / Neve / Pro Tools / MPC console pack) · **10 button
 styles** · **12 meter styles with the DSP included** (peak/RMS, GR, phase,
 goniometer, waveform, spectrum, LUFS) · **analog VU** (rk_vu) that meets the VU
 spec — 300 ms to 99%, 1.2% overshoot — with 20 faces, a GR face and a face
-picker · **drum pad grid** (any size, MPC pad order) · **piano keyboard**
-(horizontal or vertical, any note range).
+picker; since 1.7.0 it is right at every size (a small face keeps its numerals
+clear of the scale, a ticks-only option, and a flat dial that grows with a
+widened mixer strip) · **drum pad grid** (any size, MPC pad order) · **piano
+keyboard** (horizontal or vertical, any note range).
 
 Since 1.4.0, seven more:
 

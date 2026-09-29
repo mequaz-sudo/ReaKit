@@ -401,6 +401,31 @@ Fixed in the movement: the needle stops at the far end instead of hanging past i
         <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_colorpick.jsfx-inc</source>
         <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/404c4db9b6e4dd7427c787ed8d8f77c2d154fddb/Library/rk_adsr.jsfx-inc</source>
       </version>
+      <version name="1.7.1" author="Quaz (EON Studios)" time="2026-09-29T21:42:30Z">
+        <changelog><![CDATA[rk_vu: vu.rk_vu_set_label_font(face) prints the meter's label in another font (a font name; 0 = Arial, the default). The label fit measures whatever font is set, so a wide face is set smaller or cut with ".." exactly as Arial would be. Every existing call keeps its signature. GainKit (ReaKit FX) uses it for the name typed on its meter.]]></changelog>
+        <source main="true" file="ReaKit Elements.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/ReaKit%20Elements.jsfx</source>
+        <source file="ReaKit Starter.jsfx">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/ReaKit%20Starter.jsfx</source>
+        <source file="knobs_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/knobs_kbsg.jsfx-inc</source>
+        <source file="sliders_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/sliders_kbsg.jsfx-inc</source>
+        <source file="buttons_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/buttons_kbsg.jsfx-inc</source>
+        <source file="rk_vu.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_vu.jsfx-inc</source>
+        <source file="meters_kbsg.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/meters_kbsg.jsfx-inc</source>
+        <source file="rk_padgrid.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_padgrid.jsfx-inc</source>
+        <source file="rk_piano.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_piano.jsfx-inc</source>
+        <source file="rk_ui_math.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_ui_math.jsfx-inc</source>
+        <source file="rk_ui_core.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_ui_core.jsfx-inc</source>
+        <source file="rk_ui_knob.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_ui_knob.jsfx-inc</source>
+        <source file="rk_ui_button.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_ui_button.jsfx-inc</source>
+        <source file="rk_ui_slider.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_ui_slider.jsfx-inc</source>
+        <source file="rk_ui_meter.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_ui_meter.jsfx-inc</source>
+        <source file="rk_curve.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_curve.jsfx-inc</source>
+        <source file="rk_popup.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_popup.jsfx-inc</source>
+        <source file="rk_ink.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_ink.jsfx-inc</source>
+        <source file="rk_tooltip.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_tooltip.jsfx-inc</source>
+        <source file="rk_textfield.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_textfield.jsfx-inc</source>
+        <source file="rk_colorpick.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_colorpick.jsfx-inc</source>
+        <source file="rk_adsr.jsfx-inc">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/df4c57115ddb30b4ee8e99a661aee969f56cce76/Library/rk_adsr.jsfx-inc</source>
+      </version>
     </reapack>
   </category>
   <category name="Floatter">

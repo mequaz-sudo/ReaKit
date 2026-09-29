@@ -993,7 +993,10 @@ function _rk_vu_label(s, fsz) local(tw, th, ok, f, n, k, ri, lo, cm, c) (
     n = strlen(s);
     ok = 0; k = 0;
     while (!ok && k < 64) (
-      gfx_setfont(1, "Arial", f, f >= RKVU_BOLD ? 'b' : 0);
+      // the host's label font when it set one (rk_vu_set_label_font; rk_vu_draw
+      // copies the instance's pick into rkvu_lbl_font — an unprefixed call like
+      // this one binds this. to the function's own name, wiki 1.9), else Arial
+      gfx_setfont(1, rkvu_lbl_font ? rkvu_lbl_font : "Arial", f, f >= RKVU_BOLD ? 'b' : 0);
       tw = 0; th = 0; gfx_measurestr(#_rkvu_lb, tw, th);
       cm = sqr(ri) - sqr(tw * 0.5);
       cm = cm > 0 ? sqrt(cm) - th * 0.5 : -1;            // the highest centre clear of the marks
@@ -1098,6 +1101,14 @@ function rk_vu_set_text_scale(mult) ( rkvu_text_scale = min(max(mult, 0.5), 2); 
 // change from one draw to the next: a host may set it for its strip view and
 // clear it for its window.
 function rk_vu_set_numbers(on) ( this.nums = on ? 1 : 0; );
+
+// The label's font family: a string (a literal or a #string), 0 = Arial, the
+// default and the only face the library used before 2026-09-28. Geometry is
+// untouched: the label fit (_rk_vu_label) measures whatever face is set, so a
+// wide face is set smaller or cut exactly as Arial would be. Per instance
+// (this.), set once before the draw; GainKit hands it the THEME panel's FONT
+// row pick.
+function rk_vu_set_label_font(fnt) ( this.lbl_font = fnt; );
 
 // Flat: 1 lets a rect wider than RKVU_FLAT_A0:1 draw a bigger, flatter dial
 // whose pivot sinks below the plate, growing with the rect up to the flattest
@@ -1369,6 +1380,7 @@ function rk_vu_legacy_ratio(p) local(l) (
 function rk_vu_draw(x, y, w, h, mode, theme, label) local(v, pk) (
   rkvu_nums = this.nums;                   // this meter's numerals setting, for rk_vu_geom
   rkvu_flat = this.flat;                   // ...and whether a wide rect may flatten it
+  rkvu_lbl_font = this.lbl_font;           // ...and the label's face, for _rk_vu_label (0 = Arial)
   rk_vu_face(x, y, w, h, mode, theme, label);
   rkvu_hold_style = this.hold_style;
   this.legacy && mode == 0
@@ -1387,6 +1399,7 @@ function rk_vu_draw(x, y, w, h, mode, theme, label) local(v, pk) (
   );
   rkvu_nums = 1;                           // the defaults again, for rk_vu_face / rk_vu_geom callers
   rkvu_flat = 0;
+  rkvu_lbl_font = 0;
 );
 
 // Two movements, two plates, one rect — stereo or mid/side.

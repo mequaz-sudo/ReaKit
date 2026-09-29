@@ -112,6 +112,16 @@ Apply EON sizes to this project). Run it again to open the panel; closing
 the panel never stops it. Needs js_ReaScriptAPI; the panel needs ReaImGui,
 both from ReaTeam Extensions. MIT.
 
+![EON Floatter beside a plugin window it is resizing](screenshots/floatter_resize.png)
+
+*3-Band EQ's window dragged to 543 × 290. The panel follows the drag live; Capture keeps
+that size for every 3-Band EQ you open from then on, Reset returns it to EON's 418 × 228.*
+
+![EON Floatter with every EON size at 150 %](screenshots/floatter_scale_150.png)
+
+*The dial at 150 %: every EON size grows with it, 3-Band EQ's to 627 × 342. This window
+sits at a size of its owner's, 701 × 354, which the dial leaves alone.*
+
 ## Free FX
 
 The free effects have their own repository now:

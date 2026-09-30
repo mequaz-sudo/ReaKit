@@ -451,6 +451,10 @@ Needs js_ReaScriptAPI (ReaTeam Extensions). The panel needs ReaImGui; without it
         <changelog><![CDATA[Floatter no longer resizes a window you sized yourself. A window that stopped measuring what Floatter set was read as the host adjusting it, with no time limit on that reading - so a resize done by hand between two polls was adopted as Floatter's own size, and the next turn of the global dial moved it back. Adoption is now confined to the moment just after Floatter applies a size, and a window that measures exactly what was asked for closes it outright.]]></changelog>
         <source main="main" file="EON_Floatter.lua">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/dd8886183d129b32ea249e272b0318460cd9c3a5/Floatter/EON_Floatter.lua</source>
       </version>
+      <version name="1.0.2" author="Quaz (EON Studios)" time="2026-09-30T18:15:24Z">
+        <changelog><![CDATA[A window you resize by hand keeps that size until REAPER closes, that window only; Floatter's own sizing (an apply, Capture, the dial) ends the keep. The 3-Band EQ's designed size follows its taller strip. The start-up file handling is hardened: a stranded original is put back before anything reads or writes, a block is removed in whole lines so a neighbour's line is never glued to the next, and a read-only file is left alone.]]></changelog>
+        <source main="main" file="EON_Floatter.lua">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/a85e54226e3ed9bca47b80163fcbd535876a57ba/Floatter/EON_Floatter.lua</source>
+      </version>
     </reapack>
   </category>
   <metadata>

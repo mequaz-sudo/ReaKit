@@ -1,11 +1,12 @@
 -- @description EON Floatter
--- @version 1.0.1
+-- @version 1.0.2
 -- @author EON Studios
 -- @about
 --   Opens every EON plugin's floating window at the size EON designed for it,
 --   and lets you keep your own size for any JSFX. Run it once: it switches on,
 --   starts with REAPER from then on, and shows its panel. Run it again to open
---   the panel. Closing the panel never stops it.
+--   the panel. Closing the panel never stops it. A window you resize by hand
+--   keeps that size until REAPER closes.
 --
 --   Needs js_ReaScriptAPI (the window measuring). The panel needs ReaImGui;
 --   without it the sizing still works, silently.
@@ -299,7 +300,7 @@ end
 local SIZES = {
   -- EON SIZES BEGIN
   ["1175_ReaKit"] = { w = 545, h = 204, gfx_w = 464, gfx_h = 840 },
-  ["3BandEQ_ReaKit"] = { w = 418, h = 228, gfx_w = 460, gfx_h = 900 },
+  ["3BandEQ_ReaKit"] = { w = 418, h = 228, gfx_w = 460, gfx_h = 1380 },
   ["ChannelTool_ReaKit"] = { w = 350, h = 546, gfx_w = 450, gfx_h = 540 },
   ["DDC_ReaKit"] = { w = 573, h = 319, gfx_w = 600, gfx_h = 520 },
   ["DeEsser_ReaKit"] = { w = 465, h = 376, gfx_w = 540, gfx_h = 520 },
@@ -400,6 +401,15 @@ end
 -- purpose: same helper as the other EON self-registering scripts.
 function eon_write_startup(path, content)
   local tmp, prev = path .. ".eon-tmp", path .. ".eon-prev"
+  -- A stranded original goes back first (see eon_recover_startup). If it
+  -- cannot, nothing below may run: the os.remove(prev) further down would eat
+  -- the only copy of the shared file.
+  if not eon_recover_startup(path) then return false end
+  -- A read-only __startup.lua is the user's call. Windows would still let the
+  -- renames below replace it -- and strand a read-only .eon-prev that blocks
+  -- every later rewrite -- so refuse up front.
+  local ro = io.open(path, "r")
+  if ro then ro:close(); local ap = io.open(path, "a"); if not ap then return false end; ap:close() end
   local f = io.open(tmp, "w")
   if not f then return false end
   local wok = f:write(content)
@@ -407,7 +417,9 @@ function eon_write_startup(path, content)
   if not wok or not cok then os.remove(tmp) return false end
   -- Windows os.rename won't overwrite, so the old file steps aside first --
   -- and steps back if the new one cannot take its place. Nothing is ever
-  -- deleted before the replacement is in.
+  -- deleted before the replacement is in (2026-09-07: the old remove-then-
+  -- rename left the shared file GONE whenever the rename failed, e.g. an
+  -- antivirus hold on the freshly written tmp file).
   os.remove(prev)
   local had_old = os.rename(path, prev)
   if os.rename(tmp, path) then
@@ -417,6 +429,101 @@ function eon_write_startup(path, content)
   if had_old then os.rename(prev, path) end
   os.remove(tmp)
   return false
+end
+
+-- ⚠ A rewrite that fails half-way leaves __startup.lua GONE and the original
+-- in .eon-prev: the new file could not take the old one's place AND the old
+-- one could not step back (an antivirus hold on both the fresh tmp and the
+-- just-renamed .eon-prev -- the same hold the 2026-09-07 fix met on one side).
+-- Nothing runs at the next launch to notice, and the writer's first act on
+-- the retry used to be os.remove(prev): every vendor's startup lines gone,
+-- then a file written holding only our block. So the writer and every
+-- self_register put a stranded original back before reading or writing, and
+-- a .eon-prev is only ever removed while the real file exists. Returns false
+-- only when a stranded original is there and could not be put back. Global,
+-- identical in all five self-registering scripts.
+function eon_recover_startup(path)
+  local f = io.open(path, "r")
+  if f then f:close() return true end
+  -- No file. Put a stepped-aside original back. rename needs no read access,
+  -- so an unreadable-but-present .eon-prev is never mistaken for absent
+  -- (Codex 2026-09-23); ENOENT (2) is the one failure that means there is
+  -- nothing to recover.
+  local ok, _, code = os.rename(path .. ".eon-prev", path)
+  return (ok or code == 2) and true or false
+end
+
+-- ⭐ Strip one script's block from __startup.lua text, in WHOLE LINES. The file is
+-- shared with other vendors. The old gsub('\n?BEGIN.-END\n?') ate the newline on
+-- BOTH sides, gluing a neighbour line that had no trailing newline onto the next
+-- vendor's line (a comment then swallowed their command), and a stray BEGIN with
+-- no END stretched the match over foreign lines down to our real END. Here a block
+-- goes only when its BEGIN line is followed by its END line with no second BEGIN
+-- in between -- anything unmatched stays verbatim -- together with the one blank
+-- line we write above it, so re-registering never grows the file. The v1/v2 form
+-- (a bare "-- EON:<name>" line plus the line after it) goes too. Returns the text
+-- and whether anything was removed. Global, and identical in all five
+-- self-registering EON scripts: .dev_tests/startup_file_test.py holds them to it.
+function eon_strip_startup_block(text, name)
+  local B, E, OLD = "-- EON:" .. name .. " BEGIN", "-- EON:" .. name .. " END", "-- EON:" .. name
+  local out, pend, skip, hit = {}, nil, false, false
+  local nl = text:sub(-1) == "\n"
+  for l in (nl and text or text .. "\n"):gmatch("([^\n]*)\n") do
+    local k = l:gsub("\r$", "")
+    if skip then
+      skip, hit = false, true
+    elseif pend then
+      if k == E then
+        if out[#out] and out[#out]:gsub("\r$", "") == "" then out[#out] = nil end
+        pend, hit = nil, true
+      elseif k == B then
+        for _, x in ipairs(pend) do out[#out + 1] = x end
+        pend = { l }
+      else
+        pend[#pend + 1] = l
+      end
+    elseif k == B then
+      pend = { l }
+    elseif k == OLD then
+      skip = true
+    else
+      out[#out + 1] = l
+    end
+  end
+  if pend then for _, x in ipairs(pend) do out[#out + 1] = x end end
+  local s = table.concat(out, "\n")
+  if nl and #out > 0 then s = s .. "\n" end
+  return s, hit
+end
+
+-- The uninstall half of the block written into __startup.lua (the `else` branch,
+-- reached once the script's command no longer resolves). It removes the block by
+-- the same whole-line rule as eon_strip_startup_block -- inlined, because nothing
+-- of ours is left to call -- skips a read-only file, and clears the flag.
+function eon_startup_selfclean_src(name, section, key)
+  return
+    "  local p=reaper.GetResourcePath()..\"/Scripts/__startup.lua\"\n" ..
+    "  local f=io.open(p,'r'); local c=f and f:read('*a'); if f then f:close() end\n" ..
+    "  local w=c and io.open(p,'a'); if w then w:close()\n" ..
+    -- Markers assembled at run time: the literal "-- EON:<name> END" must never appear
+    -- INSIDE the block, or an older copy's lazy BEGIN.-END match would stop there and
+    -- leave half a block (broken Lua) behind.
+    "    local N='-- EON:'..'" .. name .. "'; local B,E,o,q=N..' BEGIN',N..' END',{}\n" ..
+    "    local nl=c:sub(-1)=='\\n'\n" ..
+    "    for l in (nl and c or c..'\\n'):gmatch('([^\\n]*)\\n') do local k=l:gsub('\\r$','')\n" ..
+    "      if q then\n" ..
+    "        if k==E then if o[#o] and o[#o]:gsub('\\r$','')=='' then o[#o]=nil end q=nil\n" ..
+    "        elseif k==B then for _,x in ipairs(q) do o[#o+1]=x end q={l}\n" ..
+    "        else q[#q+1]=l end\n" ..
+    "      elseif k==B then q={l} else o[#o+1]=l end\n" ..
+    "    end\n" ..
+    "    if q then for _,x in ipairs(q) do o[#o+1]=x end end\n" ..
+    "    c=table.concat(o,'\\n')..((nl and #o>0) and '\\n' or '')\n" ..
+    "    local t,b=p..'.eon-tmp',p..'.eon-prev'; local fw=io.open(t,'w'); local ok=false\n" ..
+    "    if fw then ok=fw:write(c) and true or false; if not fw:close() then ok=false end end\n" ..
+    "    if ok then os.remove(b); local h=os.rename(p,b); if os.rename(t,p) then os.remove(b) elseif h then os.rename(b,p) end end\n" ..
+    "    os.remove(t) end\n" ..
+    "  reaper.SetExtState('" .. section .. "','" .. key .. "','',true)\n"
 end
 
 local function startup_path()
@@ -432,10 +539,7 @@ end
 
 -- Strip one "-- EON:<name> BEGIN ... -- EON:<name> END" block.
 function S.strip_block(content, name)
-  local marker = "-- EON:" .. name
-  if not content:find(marker .. " BEGIN", 1, true) then return content, false end
-  local esc = marker:gsub("([%-%.%+%*%?%[%]%^%$%(%)%%])", "%%%1")
-  return (content:gsub("\n?" .. esc .. " BEGIN.-" .. esc .. " END\n?", "")), true
+  return eon_strip_startup_block(content, name)
 end
 
 function S.autostart_on()
@@ -459,9 +563,16 @@ function S.autostart_forget() autostart_cache.t = -1 end
 -- instance it starts knows to stay quiet (no panel at REAPER launch). If
 -- NamedCommandLookup ever stops resolving, the block strips ITSELF out.
 function S.self_register()
-  local key    = SCRIPT_NAME .. "_registered_v1"
+  local key    = SCRIPT_NAME .. "_registered_v2"
   local marker = "-- EON:" .. SCRIPT_NAME
   local path   = startup_path()
+  -- A rewrite that failed half-way may have left the file stepped aside as
+  -- .eon-prev; put it back before anything below reads it. If it cannot be put
+  -- back, do NOTHING this run: registering anyway would read an empty file
+  -- and, once the hold lifts, the writer's own recovery would restore the
+  -- original only for the write to replace it with a file holding just our
+  -- block (Codex 2026-09-23). The next run retries.
+  if not eon_recover_startup(path) then return false end
 
   if r.GetExtState(EXT_F, key) == "1" and S.autostart_on() then return true end
 
@@ -483,11 +594,7 @@ function S.self_register()
     "  reaper.SetExtState('" .. EXT_F .. "','" .. LAUNCH_KEY .. "','startup:'..reaper.time_precise(),false)\n" ..
     "  reaper.Main_OnCommand(id,0)\n" ..
     "else\n" ..
-    "  local p=reaper.GetResourcePath()..\"/Scripts/__startup.lua\"\n" ..
-    "  local f=io.open(p,'r'); if f then local c=f:read('*a'); f:close()\n" ..
-    "    c=c:gsub('\\n?%-%- EON:" .. SCRIPT_NAME .. " BEGIN.-%-%- EON:" .. SCRIPT_NAME .. " END\\n?','')\n" ..
-    "    local fw=io.open(p,'w'); if fw then fw:write(c); fw:close() end end\n" ..
-    "  reaper.SetExtState('" .. EXT_F .. "','" .. key .. "','',true)\n" ..
+    eon_startup_selfclean_src(SCRIPT_NAME, EXT_F, key) ..
     "end end\n" ..
     marker .. " END\n"
 
@@ -505,7 +612,7 @@ function S.unregister_startup()
     local stripped, had = S.strip_block(c, SCRIPT_NAME)
     if had then eon_write_startup(path, stripped) end
   end
-  r.SetExtState(EXT_F, SCRIPT_NAME .. "_registered_v1", "", true)
+  r.SetExtState(EXT_F, SCRIPT_NAME .. "_registered_v2", "", true)
 end
 
 -- ── Retiring the pair this script replaced ───────────────────────────────────
@@ -549,6 +656,7 @@ W.scale_session = nil -- the scale read off a fresh window this session
 W.open_n    = 0
 W.ADOPT_WINDOW = 2.0  -- seconds after an apply in which a mismatch is the host,
                       -- not the user. Past it, a mismatch is somebody dragging.
+W.KEPT_PFX  = "kept_" -- + FX GUID, in EXT_F, never persisted: see W.keep
 
 local function round(v) return math.floor(v + 0.5) end
 
@@ -591,10 +699,45 @@ function W.effective(key)
   return nil
 end
 
+-- A window resized by hand keeps that size until REAPER closes: THAT window
+-- only (the user, 2026-09-29: "that one window"), never the other copies of
+-- the plugin, and never written to disk -- the next REAPER start puts the
+-- stored sizes back. Keyed by the FX's GUID, because a float gets a new HWND
+-- every time it opens, and held in a NON-persisted ExtState, because running
+-- the action again (to open the panel) restarts this script and a Lua table
+-- would be gone with it. REAPER reopens a float at its last size by itself,
+-- so keeping it means leaving it alone at first sight. Floatter's own buttons
+-- (Apply to this project, Show all, Reset, Capture) still size it, and that
+-- ends the keep.
+function W.guid(e)
+  if not (e and e.tr and e.fx and r.TrackFX_GetFXGUID) then return nil end
+  local g = r.TrackFX_GetFXGUID(e.tr, e.fx)
+  return (g and g ~= "") and g or nil
+end
+
+function W.is_kept(e)
+  local g = W.guid(e)
+  return g ~= nil and r.GetExtState(EXT_F, W.KEPT_PFX .. g) == "1"
+end
+
+-- True the first time this window is kept, so the caller can say so once.
+function W.keep(e)
+  local g = W.guid(e)
+  if not g or r.GetExtState(EXT_F, W.KEPT_PFX .. g) == "1" then return false end
+  r.SetExtState(EXT_F, W.KEPT_PFX .. g, "1", false)
+  return true
+end
+
+function W.unkeep(e)
+  local g = W.guid(e)
+  if g then r.DeleteExtState(EXT_F, W.KEPT_PFX .. g, false) end
+end
+
 local function apply(e, w, h, src)
   if not e.canvas then return false end
   if not L.set_canvas(e.hwnd, e.canvas, w, h) then return false end
   e.src, e.applied, e.applied_t, e.adopted = src, { w = round(w), h = round(h) }, r.time_precise(), false
+  W.unkeep(e)                                     -- sized by Floatter: the hand size is over
   W.rev = W.rev + 1
   return true
 end
@@ -643,6 +786,14 @@ function W.first_sight(e)
     e.force = nil
     learn_scale(e, rc)
     if W.force_apply(e) then return true end
+  end
+
+  -- 0. Resized by hand earlier this session (W.keep): REAPER has reopened it
+  --    at that size, so it stays as it is.
+  if W.is_kept(e) then
+    e.src = "manual"
+    W.rev = W.rev + 1
+    return true
   end
 
   local key = e.key
@@ -695,6 +846,7 @@ function W.detect_manual(e, now)
       e.applied, e.adopted = { w = rc.w, h = rc.h }, true
     else
       e.src, e.applied = "manual", nil
+      if W.keep(e) then S.say(("%s: this window keeps your size until REAPER closes"):format(L.pretty(e.key))) end
       W.rev = W.rev + 1
     end
   else
@@ -837,6 +989,7 @@ function W.quiet_tick(now)
       local w, h = W.effective(q.key)
       if w then
         L.set_canvas(q.hwnd, canvas, w, h)
+        W.unkeep(q)                               -- sized by the pass: the hand size is over
         W.quiet_sized = (W.quiet_sized or 0) + 1
       end
       quiet_finish(a, q)
@@ -906,6 +1059,7 @@ function W.capture(e)
   if not rc or rc.w < 40 or rc.h < 40 then return false end
   L.set_capture(e.key, rc.w, rc.h, L.fx_ident(e.tr, e.fx))
   e.src, e.applied, e.applied_t = "yours", { w = rc.w, h = rc.h }, r.time_precise()
+  W.unkeep(e)                                     -- the hand size is stored now, for good
   W.rev = W.rev + 1
   S.say(("%s: kept %d x %d as yours"):format(L.pretty(e.key), rc.w, rc.h))
   return true
@@ -1488,8 +1642,9 @@ function UI.proxy(ImGui, ctx, e, cur)
   if ImGui.IsItemDeactivated(ctx) and UI.drag then
     UI.drag = nil
     e.src, e.applied = "manual", nil
+    W.keep(e)
     W.rev = W.rev + 1
-    S.say(("%s resized to %d × %d - Capture to keep it"):format(L.pretty(e.key), cur.w, cur.h))
+    S.say(("%s resized to %d × %d - kept until REAPER closes"):format(L.pretty(e.key), cur.w, cur.h))
   end
   ImGui.SetCursorScreenPos(ctx, x0, y0 + BH)
   ImGui.Dummy(ctx, BW, 4)
@@ -1580,6 +1735,7 @@ function UI.focus_panel(ImGui, ctx)
     if (dw ~= 0 or dh ~= 0) and e.canvas then
       L.set_canvas(e.hwnd, e.canvas, math.max(40, cur.w + dw), math.max(40, cur.h + dh))
       e.src, e.applied = "manual", nil
+      W.keep(e)
       W.rev = W.rev + 1
     end
     local dl = ImGui.GetWindowDrawList(ctx)

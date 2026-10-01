@@ -1009,6 +1009,8 @@ function _rk_vu_label(s, fsz) local(tw, th, ok, f, n, k, ri, lo, cm, c) (
           // lose one character per pass and run out of passes (64) still too
           // wide, and drew nothing (Codex delta audit, 2026-09-28).
           n = min(n - 1, max(1, floor(n * rkvu_r / max(tw, 1))));
+          // never inside a UTF-8 letter: a track name from REAPER 7.81 keeps its accents
+          while (n > 1 && (str_getchar(s, n, 'cu') & 0xC0) == 0x80) ( n -= 1; );
           strcpy_substr(#_rkvu_lb, s, 0, n); strcat(#_rkvu_lb, "..");
         ) : (
           k = 64;                                         // no room: no label

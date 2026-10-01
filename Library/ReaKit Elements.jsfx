@@ -2,30 +2,10 @@ desc:ReaKit Elements
 options:gfx_hz=60 no_meter want_all_kb
 // @description ReaKit - UI widget library for JSFX (knobs, faders, buttons, meters, VU, pads, piano)
 // @author Quaz (EON Studios)
-// @version 1.7.0
+// @version 1.7.2
 // @changelog
-//   The analog VU (rk_vu), audited to be right at every size. A small face
-//   shrinks its dial so the numerals stay clear of the scale and the red zone
-//   (a default mixer strip reads -20 -10 -3 0 1 2 3, and -7 comes back as the
-//   face widens); the tick marks are at least 9 and 6 px long on every face; a
-//   long mark is one solid bar; the face label sits where the marks leave room,
-//   smaller or cut with ".." when they do not; digits under 10 px draw regular,
-//   because bold Arial at 8 and 9 px turns a 5 into a 6.
-//
-//   New: vu.rk_vu_set_numbers(0) draws the ticks only, with the bigger dial
-//   that leaves room for; vu.rk_vu_set_flat(1) lets a face wider than 1.7:1
-//   grow into a flatter dial instead of keeping a 1.6:1 face in the middle of
-//   the rect (a widened mixer strip). Every existing call keeps its signature.
-//
-//   Fixed in the movement: the needle stops at the far end instead of hanging
-//   past it; a host that keeps its state across a reload gets the 300 ms
-//   movement, not a faster one; a window resize or DPI change no longer
-//   doubles the text scale; the numerals no longer blink while the window is
-//   dragged; a NaN in the audio reads as silence instead of freezing the
-//   meter; the peak readout and the warn LED take the true sample value; the
-//   GR scale's labels drop like the level scale's when the face is small.
-//   rk_curve: a node name with a digit draws regular under 10 px. This header
-//   now says 21 knob styles, which is what the library has.
+//   rk_vu: a label cut to fit with ".." never ends inside a UTF-8 letter, so a
+//   name with accents (a track name from REAPER 7.81) keeps them.
 // @about
 //   21 procedural knob styles, 17 slider/fader types, 10 button styles,
 //   12 meter styles with DSP included, an analog VU with 20 face themes,

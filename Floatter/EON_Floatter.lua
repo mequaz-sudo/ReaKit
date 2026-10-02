@@ -1,5 +1,5 @@
 -- @description EON Floatter
--- @version 1.0.2
+-- @version 1.0.3
 -- @author EON Studios
 -- @about
 --   Opens every EON plugin's floating window at the size EON designed for it,
@@ -39,7 +39,7 @@
 
 local r = reaper
 
-local VERSION   = "1.0.0"
+local VERSION   = "1.0.3"   -- shown in the panel; keep with @version above
 local EXT_D     = "EON_FloatSize"      -- captures / scale / global (the keys the pair used)
 local EXT_F     = "EON_Floatter"       -- this script's own state
 -- ⚠ Mirrored in rk_lua_core.lua (core.ALIVE_FLOATTER_*) for the Kit Bridge,
@@ -332,7 +332,7 @@ do
   r.DeleteExtState(EXT_F, LAUNCH_KEY, false)
   local kind, t = src:match("^(%a+):([%d%.]+)$")
   S.launch = (kind and (S.now - (tonumber(t) or 0)) < 5) and kind or "user"
-  S.quiet  = S.launch ~= "user"
+  S.quiet  = S.launch ~= "user" and S.launch ~= "setup"   -- setup = a person ran the start action: messages show
 end
 
 -- Was an instance alive a moment ago? REAPER runs the old instance's atexit
@@ -372,6 +372,10 @@ end
 if r.set_action_options then r.set_action_options(1 | 2) end
 
 S.first_run  = r.GetExtState(EXT_F, "setup_v1") ~= "1"
+-- "setup" = the ReaKit FX start action's one launch (it stamps launch_src): the panel shows that
+-- Floatter is on, then closes by itself (UI.PEEK_S) unless the pointer goes over it (the user,
+-- 2026-10-02: "open, and then close after loading the first time with the ReaKit FX").
+S.peek       = S.launch == "setup"
 S.want_panel = not S.quiet
 S.msg, S.msg_t = nil, 0
 
@@ -1115,13 +1119,15 @@ UI.warned      = false
 UI.dial_drag   = nil
 UI.drag        = nil
 UI.welcome     = false
+UI.peek_t      = nil     -- seconds shown, while the start action's launch has the panel open (S.peek)
+UI.PEEK_S      = 4       -- seconds of frames it shows before closing by itself
 
 local function alpha(col, a)           -- col with its alpha replaced (a in 0..1)
   return (col & 0xFFFFFF00) | math.floor(a * 255 + 0.5)
 end
 
 function UI.open()
-  if UI.on then return true end
+  if UI.on then UI.peek_t = nil; return true end   -- asked to open while it peeks: it stays
   if not r.ImGui_GetBuiltinPath then
     if not UI.warned then
       UI.warned = true
@@ -1152,6 +1158,11 @@ function UI.open()
   end
   UI.on, UI.dirty = true, true
   UI.welcome = r.GetExtState(EXT_F, "welcomed_v1") ~= "1"
+  -- the start action's launch: this one opening closes itself (UI.draw); any later open stays.
+  -- peek_t counts the seconds of frames shown; peek_mx/my is where the pointer started.
+  UI.peek_t = S.peek and 0 or nil
+  UI.peek_last, UI.peek_mx, UI.peek_my = nil, nil, nil
+  S.peek = false
   return true
 end
 
@@ -1878,6 +1889,35 @@ function UI.draw(ImGui, ctx)
     if ImGui.IsWindowFocused(ctx, ImGui.FocusedFlags_RootAndChildWindows)
        and ImGui.IsKeyPressed(ctx, ImGui.Key_Escape) then
       open = false
+    end
+    -- the start action's peek: closes after UI.PEEK_S seconds of frames (a gap between frames
+    -- counts 0.25 s at most, so a held loop cannot eat the time: the start action shows its
+    -- summary from a deferred callback, which holds every script's loop, so the panel waits behind
+    -- the box and closes about 4 s after OK -- measured 2026-10-02) and stays open once the pointer
+    -- MOVES over it, clicks it or turns the wheel on it. Merely being under the pointer does not
+    -- count: the panel opens where the action list's Run button just was.
+    if UI.peek_t then
+      local now = r.time_precise()
+      UI.peek_t = UI.peek_t + math.min(now - (UI.peek_last or now), 0.25)
+      UI.peek_last = now
+      -- the first frame has no pointer yet (-FLT_MAX), which would read as a huge move: only a
+      -- real position starts the reference
+      local moved = false
+      if ImGui.IsMousePosValid(ctx) then
+        local mx, my = ImGui.GetMousePos(ctx)
+        if UI.peek_mx then
+          moved = math.abs(mx - UI.peek_mx) + math.abs(my - UI.peek_my) > 6
+        else
+          UI.peek_mx, UI.peek_my = mx, my
+        end
+      end
+      if ImGui.IsWindowHovered(ctx, ImGui.HoveredFlags_RootAndChildWindows)
+         and (moved or ImGui.IsMouseClicked(ctx, 0) or ImGui.IsMouseClicked(ctx, 1)
+              or ImGui.GetMouseWheel(ctx) ~= 0) then
+        UI.peek_t = nil
+      elseif UI.peek_t > UI.PEEK_S then
+        UI.peek_t, open = nil, false
+      end
     end
     ImGui.End(ctx)
   end

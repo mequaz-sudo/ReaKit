@@ -1,5 +1,5 @@
 -- @description EON Floatter
--- @version 1.0.3
+-- @version 1.0.4
 -- @author EON Studios
 -- @about
 --   Opens every EON plugin's floating window at the size EON designed for it,
@@ -39,7 +39,7 @@
 
 local r = reaper
 
-local VERSION   = "1.0.3"   -- shown in the panel; keep with @version above
+local VERSION   = "1.0.4"   -- shown in the panel; keep with @version above
 local EXT_D     = "EON_FloatSize"      -- captures / scale / global (the keys the pair used)
 local EXT_F     = "EON_Floatter"       -- this script's own state
 -- ⚠ Mirrored in rk_lua_core.lua (core.ALIVE_FLOATTER_*) for the Kit Bridge,
@@ -150,32 +150,53 @@ function L.snap_scale(ratio)
   return nil
 end
 
-local function bottom_on_edge(hwnd)
+-- The screen bent the float SHORTER: its bottom sits on the screen's edge, or it
+-- is as tall as the screen's work area wherever REAPER placed it (a fresh 3-Band
+-- at 100 % opens 1032 tall at y 52 on a 1032-high work area, its bottom off the
+-- screen -- measured 2026-10-02).
+local function screen_short(hwnd)
   if not r.JS_Window_GetViewportFromRect then return false end
   local o = L.rect(hwnd)
   if not o or o.inv then return false end
   local bottom = o.y + o.h
-  local _, _, _, vb  = r.JS_Window_GetViewportFromRect(o.x, o.y, o.x + o.w, bottom, true)
-  local _, _, _, vb2 = r.JS_Window_GetViewportFromRect(o.x, o.y, o.x + o.w, bottom, false)
-  return (vb and math.abs(bottom - vb) <= 2) or (vb2 and math.abs(bottom - vb2) <= 2) or false
+  for _, work in ipairs({ true, false }) do
+    local _, vt, _, vb = r.JS_Window_GetViewportFromRect(o.x, o.y, o.x + o.w, bottom, work)
+    if vb and (math.abs(bottom - vb) <= 2 or (vt and math.abs(o.h - (vb - vt)) <= 2)) then return true end
+  end
+  return false
 end
 
 -- The scale a FRESH float reveals, or nil when the window is not fresh. What
 -- REAPER opens is @gfx x scale, bent two ways and only two: WIDER (the float's
 -- minimum width; never narrower, so sw >= true scale) and SHORTER (the screen;
 -- never taller, so sh <= true scale). When both snap to the same step that is
--- the scale; when they differ, the bottom edge on the screen says which side
--- was bent.
-function L.fresh_scale(hwnd, c, gfx_w, gfx_h)
+-- the scale; when they differ, the screen bend says which side was bent.
+-- `known` (optional) is a scale measured or remembered before, for the one case
+-- below that can be ambiguous.
+function L.fresh_scale(hwnd, c, gfx_w, gfx_h, known)
   if not c or not gfx_w or gfx_w <= 0 or not gfx_h or gfx_h <= 0 then return nil end
   local sw, sh  = L.snap_scale(c.w / gfx_w), L.snap_scale(c.h / gfx_h)
-  local h_short = bottom_on_edge(hwnd)
+  local h_short = screen_short(hwnd)
   local s
   if sw and sh then
     if sw == sh then s = sw
     else s = h_short and sw or sh end
   else
     s = sh or sw
+  end
+  if not s and h_short then
+    -- Bent BOTH ways at once: a @gfx narrower than the float's minimum AND taller
+    -- than the screen, so neither side is exact (the 3-Band at 100 %: 489 x 966
+    -- for 460 x 1380; it was never sized -- the user, 2026-10-02: "my 3 band
+    -- ain't resizing"). The scale is then the step both bends allow (canvas at
+    -- least @gfx wide, at most @gfx tall); with several, the known one among them.
+    local cand = {}
+    for _, st in ipairs(STEPS) do
+      if c.w >= gfx_w * st - 2 and c.h <= gfx_h * st + 2 then cand[#cand + 1] = st end
+    end
+    if #cand == 1 then return cand[1] end
+    for _, st in ipairs(cand) do if st == known then return st end end
+    return nil
   end
   if not s then return nil end
   local h_ok = (sh == s) or h_short
@@ -751,7 +772,8 @@ end
 local function learn_scale(e, rc)
   local ship = SIZES[e.key]
   if not ship or not rc then return nil end
-  local s = L.fresh_scale(e.hwnd, rc, ship.gfx_w, ship.gfx_h)
+  local ks, ksrc = W.scale_now()                  -- a scale seen before settles an ambiguous double bend
+  local s = L.fresh_scale(e.hwnd, rc, ship.gfx_w, ship.gfx_h, ksrc ~= "assumed" and ks or nil)
   if s then
     if s ~= W.scale_session then W.rev = W.rev + 1 end
     W.scale_session = s

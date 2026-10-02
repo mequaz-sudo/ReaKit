@@ -126,8 +126,9 @@ sits at a size of its owner's, 701 × 354, which the dial leaves alone.*
 
 The free effects have their own repository now:
 [**ReaKit FX**](https://github.com/mequaz-sudo/ReaKit-FX) — **GainKit** (EON's gain
-staging on a VU), and **Saturation**, **3-Band EQ**, **DDC** by LOSER and a
-**De-Esser** on Liteon's, all with EON Studios interfaces drawn by this library.
+staging on a VU, one meter or two) and **Stereo Width**, and **Saturation**, **3-Band
+EQ**, **DDC** by LOSER and a **De-Esser** on Liteon's, all with EON Studios interfaces
+drawn by this library.
 ReaPack: import `https://raw.githubusercontent.com/mequaz-sudo/ReaKit-FX/main/index.xml`
 and install ReaKit FX. The "ReaKit Free FX" package that used to ship from here is
 retired; if you installed it, ReaPack lists it as obsolete — install the new one.

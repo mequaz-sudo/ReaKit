@@ -484,6 +484,10 @@ Needs js_ReaScriptAPI (ReaTeam Extensions). The panel needs ReaImGui; without it
         <changelog><![CDATA[Started by ReaKit FX - Start with REAPER, the panel opens to show Floatter is on and closes by itself after a few seconds; move the mouse over it, click or scroll in it to keep it open. Floatter keeps running either way. Its messages, such as a missing js_ReaScriptAPI, now show for that launch too. The panel shows the right version.]]></changelog>
         <source main="main" file="EON_Floatter.lua">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/bccdff7696171e04b3d3baa3af9777303321acee/Floatter/EON_Floatter.lua</source>
       </version>
+      <version name="1.0.4" author="Quaz (EON Studios)" time="2026-10-02T22:59:17Z">
+        <changelog><![CDATA[A new 3-Band EQ window now opens at its designed size on screens too short for its full window. Floatter used to leave it at the size REAPER picked. The same goes for any EON plugin whose window is both wider and shorter than it asks for when it first opens.]]></changelog>
+        <source main="main" file="EON_Floatter.lua">https://raw.githubusercontent.com/mequaz-sudo/ReaKit/74b94f1953453e1568cfdffd8bd962eb4a9920ea/Floatter/EON_Floatter.lua</source>
+      </version>
     </reapack>
   </category>
   <metadata>

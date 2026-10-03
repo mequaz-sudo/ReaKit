@@ -465,11 +465,18 @@ end
 -- then a file written holding only our block. So the writer and every
 -- self_register put a stranded original back before reading or writing, and
 -- a .eon-prev is only ever removed while the real file exists. Returns false
--- only when a stranded original is there and could not be put back. Global,
--- identical in all five self-registering scripts.
+-- when a stranded original is there and could not be put back, or when
+-- __startup.lua is there but cannot be read. Global, identical in all five
+-- self-registering scripts.
 function eon_recover_startup(path)
-  local f = io.open(path, "r")
+  local f, _, ocode = io.open(path, "r")
   if f then f:close() return true end
+  -- Present but unreadable (a lock, a permission) is not absent: nothing is
+  -- put back over it. On macOS / Linux rename REPLACES an existing file, so a
+  -- stale .eon-prev overwrote the current one (outside audit 2026-10-02; on
+  -- Windows the rename failed). ENOENT (2) is the one open failure that means
+  -- there is no file.
+  if ocode ~= 2 then return false end
   -- No file. Put a stepped-aside original back. rename needs no read access,
   -- so an unreadable-but-present .eon-prev is never mistaken for absent
   -- (Codex 2026-09-23); ENOENT (2) is the one failure that means there is

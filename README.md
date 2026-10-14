@@ -4,8 +4,8 @@ A free UI / widget library for REAPER JSFX. Every knob, fader, button, meter,
 VU needle, EQ curve, drum pad and piano key is drawn procedurally in code, so
 your plugin UI is crisp at any size and re-themable with one call.
 
-The ReaKit Elements showcase (installable below) organizes every widget into
-six category tabs:
+The ReaKit Elements showcase (installable below) organizes every widget family
+into six category tabs:
 
 ![ReaKit Elements — Knobs tab](screenshots/tab_knobs.png)
 
@@ -44,9 +44,10 @@ frequency so the two axes agree however either is configured.*
 
 **21 knob styles** (SSL, SSL-G, Neve x2, API, Pultec x2, Ableton, Pro Tools,
 FabFilter, Serum, Roland, MPC, encoders, jog wheels, ...) · **17 slider/fader
-types** (incl. an SSL / Neve / Pro Tools / MPC console pack) · **10 button
-styles** · **12 meter styles with the DSP included** (peak/RMS, GR, phase,
-goniometer, waveform, spectrum, LUFS) · **analog VU** (rk_vu) that meets the VU
+types** (incl. an SSL / Neve / Pro Tools / MPC console pack) · **14 button
+types** (the showcase shows ten) · **12 meter styles** (peak/RMS, phase,
+goniometer, waveform, spectrum and LUFS measure the signal themselves; the GR
+meter shows the figure your compressor hands it) · **analog VU** (rk_vu) that meets the VU
 spec — 300 ms to 99%, 1.2% overshoot — with 20 faces, a GR face and a face
 picker; since 1.7.0 it is right at every size (a small face keeps its numerals
 clear of the scale, a ticks-only option, and a flat dial that grows with a
@@ -75,7 +76,7 @@ frame rate and one key per frame silently drops characters. Put `want_all_kb`
 on your `options:` line, or REAPER keeps the spacebar for its transport and the
 field never sees a space.
 **Envelope** (rk_adsr) — drag it by its corners. Each segment owns a fixed slice
-of the width, so moving one parameter never shifts the others, and time is
+of the width, so a long attack never squeezes the release, and time is
 logarithmic in both the drawing and the drag, so 1–50 ms is actually reachable.
 **Colour picker** (rk_colorpick) — swatches and a rainbow strip. It holds a hue
 and takes saturation and lightness from you, so the swatches match your panel
@@ -98,8 +99,9 @@ https://raw.githubusercontent.com/mequaz-sudo/ReaKit/main/index.xml
 
 Then install **ReaKit Elements** from the browser — it brings the library incs
 with it and doubles as the element showcase, organized into category tabs
-(Knobs / Buttons / Sliders / Meters / Pads & Keys — drop it on a track to see
-and feel every widget).
+(Knobs / Buttons / Sliders / Meters / Pads & Keys / Curve — drop it on a track
+to see and feel nearly every widget; SSL-G and the range slider are the two it
+leaves out).
 
 ## EON Floatter
 
